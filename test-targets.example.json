@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://example.com/",
+  "allowDomains": ["example.com", "*.example.com"],
+  "formFields": {},
+  "submitSelector": null
+}

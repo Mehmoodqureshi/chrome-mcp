@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chrome MCP — Pairing</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.2rem; }
+      label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+      input { width: 100%; padding: 0.5rem; box-sizing: border-box; font: inherit; }
+      button { margin-top: 1rem; padding: 0.5rem 1rem; font: inherit; cursor: pointer; }
+      .status { margin-top: 1rem; padding: 0.5rem 0.75rem; border-radius: 0.4rem; background: #eef; }
+      code { background: #f3f3f3; padding: 0 0.25rem; }
+      .hint { color: #555; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Pair with chrome-mcp</h1>
+    <p class="hint">
+      Run <code>npx chrome-mcp --print-pairing</code>, open the printed
+      <code>handshake.json</code>, and paste its <code>port</code> and
+      <code>token</code> below.
+    </p>
+    <label for="port">Port</label>
+    <input id="port" type="number" inputmode="numeric" placeholder="38017" />
+    <label for="token">Token</label>
+    <input id="token" type="password" placeholder="paste the handshake token" />
+    <button id="save">Save & connect</button>
+    <div class="status" id="status">Status: unknown</div>
+    <script src="options.js"></script>
+  </body>
+</html>

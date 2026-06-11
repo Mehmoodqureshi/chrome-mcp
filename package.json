@@ -1,0 +1,69 @@
+{
+  "name": "@mehmoodqureshi/chrome-mcp",
+  "version": "0.1.0",
+  "description": "Drive a real Chrome browser over MCP. A stdio MCP server (CLI) plus an MV3 extension, behind one pluggable Executor (extension via chrome.scripting, or a Playwright CDP fallback).",
+  "author": "Mehmood Ur Rehman Qureshi",
+  "license": "MIT",
+  "homepage": "https://github.com/Mehmoodqureshi/chrome-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mehmoodqureshi/chrome-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mehmoodqureshi/chrome-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "chrome-mcp": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src/**/*.js",
+    "dist/src/**/*.d.ts",
+    "dist/shared/**/*.js",
+    "dist/shared/**/*.d.ts",
+    "extension-dist",
+    "scripts/postinstall.js",
+    "README.md",
+    "LICENSE",
+    "docs/BLUEPRINT.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chrome",
+    "chrome-extension",
+    "browser-automation",
+    "cdp",
+    "playwright",
+    "claude"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:ext": "node extension/scripts/build-ext.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:ext": "tsc -p tsconfig.ext.json",
+    "clean": "rimraf dist extension-dist",
+    "test": "npm run clean && npm run build && npm run build:ext && node --test dist/test",
+    "test:hitl": "npm run build && node dist/hitl/index.js",
+    "prepack": "npm run clean && npm run build && npm run build:ext",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "playwright": "^1.49.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^20.17.10",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.24.0",
+    "rimraf": "^5.0.10",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

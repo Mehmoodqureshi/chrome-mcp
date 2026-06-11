@@ -1,0 +1,7 @@
+{
+  "allowDomains": ["example.com", "*.wikipedia.org"],
+  "allowEval": false,
+  "allowDownloads": false,
+  "allowAllTabs": false,
+  "enableMutations": true
+}

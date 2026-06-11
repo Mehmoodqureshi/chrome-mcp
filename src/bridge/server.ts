@@ -1,0 +1,220 @@
+/**
+ * src/bridge/server.ts — the localhost WebSocket bridge.
+ *
+ * The server is the WS SERVER; the extension dials in as the single privileged
+ * CLIENT. The token is the ONLY trust boundary (the loopback bind is merely
+ * defense-in-depth; Origin is NOT a gate). Flow:
+ *   1. Accept any loopback upgrade.
+ *   2. Require a valid `hello` (matching version + token) within HELLO_TIMEOUT;
+ *      otherwise send `unauthorized` and close 4401.
+ *   3. On success, send `welcome`, promote to the single ACTIVE connection
+ *      (superseding any prior one — a security-relevant displacement event).
+ */
+
+import { WebSocketServer, type WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
+
+import {
+  BRIDGE_HOST,
+  CLOSE_SUPERSEDED,
+  CLOSE_UNAUTHORIZED,
+  PROTOCOL_VERSION,
+  type HelloFrame,
+  type ServerFrame,
+  type UnauthFrame,
+  type WelcomeFrame,
+  type WireEvent,
+  type WireMethod,
+} from '../../shared/protocol';
+import { ExecutorError } from '../executor/types';
+import { ExtensionConnection } from './connection';
+import { tokensMatch } from './auth';
+
+const HELLO_TIMEOUT_MS = 5_000;
+const DEFAULT_HEARTBEAT_MS = 15_000;
+
+export interface DisplacementInfo {
+  oldExtId: string;
+  newExtId: string;
+  /** True when a DIFFERENT extension id supplanted the active one (suspicious). */
+  differentId: boolean;
+}
+
+export interface BridgeOptions {
+  token: string;
+  serverVersion: string;
+  port?: number;
+  host?: string;
+  heartbeatMs?: number;
+  /** Diagnostics — MUST never receive the token (a test asserts this). */
+  onLog?: (message: string) => void;
+  onDisplacement?: (info: DisplacementInfo) => void;
+  onEvent?: (event: WireEvent, data: Record<string, unknown>) => void;
+}
+
+export class BridgeServer {
+  private wss: WebSocketServer | null = null;
+  private active: ExtensionConnection | null = null;
+  private boundPort = 0;
+  private readonly heartbeatMs: number;
+
+  constructor(private readonly opts: BridgeOptions) {
+    this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+  }
+
+  /** Bind and start listening. Returns the actual port (useful with port 0). */
+  async start(): Promise<number> {
+    if (this.wss) return this.boundPort;
+    const wss = new WebSocketServer({ host: this.opts.host ?? BRIDGE_HOST, port: this.opts.port ?? 0 });
+    wss.on('connection', (ws) => this.handleConnection(ws));
+    await new Promise<void>((resolve, reject) => {
+      wss.once('listening', resolve);
+      wss.once('error', reject);
+    });
+    const addr = wss.address();
+    this.boundPort = typeof addr === 'object' && addr ? addr.port : (this.opts.port ?? 0);
+    this.wss = wss;
+    this.log(`bridge listening on ${this.opts.host ?? BRIDGE_HOST}:${this.boundPort}`);
+    return this.boundPort;
+  }
+
+  async stop(): Promise<void> {
+    this.active?.close(1001, 'server stopping');
+    this.active = null;
+    const wss = this.wss;
+    this.wss = null;
+    if (wss) await new Promise<void>((resolve) => wss.close(() => resolve()));
+  }
+
+  get port(): number {
+    return this.boundPort;
+  }
+
+  hasActiveExtension(): boolean {
+    return this.active?.isOpen() ?? false;
+  }
+
+  /** Send a command to the active extension, or reject if none is connected. */
+  async sendCommand(
+    method: WireMethod,
+    params: Record<string, unknown>,
+    opts?: { tabId?: string; timeoutMs?: number },
+  ): Promise<unknown> {
+    if (!this.active || !this.active.isOpen()) {
+      throw new ExecutorError('EXTENSION_DISCONNECTED', 'no extension is paired');
+    }
+    return this.active.sendCommand(method, params, opts);
+  }
+
+  status(): { extensionConnected: boolean; port: number; sessionId: string | null } {
+    return {
+      extensionConnected: this.hasActiveExtension(),
+      port: this.boundPort,
+      sessionId: this.active?.sessionId ?? null,
+    };
+  }
+
+  // -- internals ----------------------------------------------------------
+
+  private handleConnection(ws: WebSocket): void {
+    let authed = false;
+    const helloTimer = setTimeout(() => {
+      if (authed) return;
+      this.reject(ws, 'timeout');
+    }, HELLO_TIMEOUT_MS);
+    helloTimer.unref?.();
+
+    const onMessage = (raw: import('ws').RawData): void => {
+      if (authed) return;
+      let frame: Partial<HelloFrame>;
+      try {
+        frame = JSON.parse(raw.toString()) as Partial<HelloFrame>;
+      } catch {
+        clearTimeout(helloTimer);
+        this.reject(ws, 'bad_token');
+        return;
+      }
+      if (frame.type !== 'hello') return; // ignore noise until a hello arrives
+      if (frame.v !== PROTOCOL_VERSION) {
+        clearTimeout(helloTimer);
+        this.reject(ws, 'bad_version');
+        return;
+      }
+      if (typeof frame.token !== 'string' || !tokensMatch(frame.token, this.opts.token)) {
+        clearTimeout(helloTimer);
+        this.reject(ws, 'bad_token');
+        return;
+      }
+      // Authenticated. Hand the socket to an ExtensionConnection.
+      authed = true;
+      clearTimeout(helloTimer);
+      ws.off('message', onMessage);
+      this.promote(ws, frame.ext ?? { id: 'unknown', version: '0', chrome: '0' });
+    };
+
+    ws.on('message', onMessage);
+    ws.on('error', () => {
+      /* pre-auth socket errors are non-fatal; the close will clean up */
+    });
+  }
+
+  private reject(ws: WebSocket, reason: UnauthFrame['reason']): void {
+    this.send(ws, { type: 'unauthorized', v: PROTOCOL_VERSION, reason });
+    this.log(`rejected a connection: ${reason}`);
+    try {
+      ws.close(CLOSE_UNAUTHORIZED, reason);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private promote(ws: WebSocket, ext: HelloFrame['ext']): void {
+    const sessionId = randomUUID();
+
+    if (this.active && this.active.isOpen()) {
+      const prev = this.active;
+      const differentId = prev.extId !== ext.id;
+      this.log(
+        `extension "${ext.id}" superseded active connection "${prev.extId}"` +
+          (differentId ? ' (DIFFERENT id — possible hijack; surfaced to status)' : ''),
+      );
+      this.opts.onDisplacement?.({ oldExtId: prev.extId, newExtId: ext.id, differentId });
+      prev.close(CLOSE_SUPERSEDED, 'superseded');
+    }
+
+    const conn = new ExtensionConnection({
+      ws,
+      extId: ext.id,
+      sessionId,
+      heartbeatMs: this.heartbeatMs,
+      onEvent: this.opts.onEvent,
+      onLog: (m) => this.log(m),
+      onClose: () => {
+        if (this.active?.sessionId === sessionId) this.active = null;
+      },
+    });
+    this.active = conn;
+
+    const welcome: WelcomeFrame = {
+      type: 'welcome',
+      v: PROTOCOL_VERSION,
+      serverVersion: this.opts.serverVersion,
+      sessionId,
+      heartbeatMs: this.heartbeatMs,
+    };
+    this.send(ws, welcome);
+    this.log(`extension paired (session ${sessionId}, id "${ext.id}")`);
+  }
+
+  private send(ws: WebSocket, frame: ServerFrame): void {
+    try {
+      ws.send(JSON.stringify(frame));
+    } catch {
+      /* socket already gone */
+    }
+  }
+
+  private log(message: string): void {
+    this.opts.onLog?.(message);
+  }
+}

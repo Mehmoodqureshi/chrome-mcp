@@ -1,0 +1,14 @@
+node_modules/
+dist/
+extension-dist/
+*.tsbuildinfo
+
+# Local, secret, or machine-specific
+.chrome-mcp/
+*.handshake
+handshake.json
+test-targets.json
+policy.json
+.env
+.env.*
+.DS_Store
