@@ -10,13 +10,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 
 import { BridgeServer, type DisplacementInfo } from '../src/bridge/server';
-import { generateToken, readHandshake, tokensMatch, writeHandshake } from '../src/bridge/auth';
+import {
+  generateToken,
+  readHandshake,
+  readPersistedToken,
+  resolveToken,
+  tokenPath,
+  tokensMatch,
+  writeHandshake,
+  writePersistedToken,
+} from '../src/bridge/auth';
 import { CLOSE_SUPERSEDED, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from '../shared/protocol';
 import { ExecutorError } from '../src/executor/types';
 
@@ -255,4 +264,41 @@ test('the token never appears in any log line', async () => {
   } finally {
     await h.server.stop();
   }
+});
+
+test('token persistence: --persist-token reuses one stable token at 0600', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  delete process.env.CHROME_MCP_TOKEN;
+
+  // First boot with persistence: mints + saves a token.
+  const first = resolveToken(dir, { persist: true });
+  assert.ok(first.length >= 32, 'expected a real token');
+  assert.equal((statSync(tokenPath(dir)).mode & 0o077), 0, 'token file must be 0600');
+
+  // Second boot with persistence: SAME token (no re-pair needed).
+  const second = resolveToken(dir, { persist: true });
+  assert.equal(second, first, 'persisted token must be stable across boots');
+  assert.equal(readPersistedToken(dir), first);
+
+  // Without persistence (the default): a fresh per-boot token, ignoring the file.
+  const fresh = resolveToken(dir, { persist: false });
+  assert.notEqual(fresh, first, 'default must be a fresh per-boot token');
+});
+
+test('token persistence: CHROME_MCP_TOKEN env pins the token and is never written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  process.env.CHROME_MCP_TOKEN = '  pinned-token-xyz  ';
+  try {
+    assert.equal(resolveToken(dir, { persist: true }), 'pinned-token-xyz', 'env pin wins and is trimmed');
+    assert.equal(readPersistedToken(dir), null, 'env-pinned token must not be persisted to disk');
+  } finally {
+    delete process.env.CHROME_MCP_TOKEN;
+  }
+});
+
+test('token persistence: a group/other-readable token file fails closed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  writePersistedToken(dir, 'sometoken');
+  chmodSync(tokenPath(dir), 0o644);
+  assert.throws(() => readPersistedToken(dir), /group\/other-accessible/);
 });

@@ -58,6 +58,10 @@ export type WireMethod =
   | 'screenshot'
   | 'get_text'
   | 'get_html'
+  | 'snapshot'
+  | 'select_option'
+  | 'get_cookies'
+  | 'storage'
   | 'eval'
   | 'wait_for'
   | 'download_file'
@@ -81,6 +85,10 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'screenshot',
   'get_text',
   'get_html',
+  'snapshot',
+  'select_option',
+  'get_cookies',
+  'storage',
   'eval',
   'wait_for',
   'download_file',

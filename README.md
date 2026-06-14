@@ -34,6 +34,30 @@ By default everything is **deny-all** (no domains, no eval, no mutations). Grant
 exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutations`,
 `--enable-downloads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
 
+**Drive only your real Chrome (recommended for the extension).** Add
+`--no-cdp-fallback` so the server never launches a separate Chromium, and
+`--persist-token` so the pairing token survives restarts — **pair once, never
+again**:
+
+```jsonc
+{
+  "mcpServers": {
+    "chrome-mcp": {
+      "command": "npx",
+      "args": ["-y", "@mehmoodqureshi/chrome-mcp",
+               "--allow-domain", "example.com", "--enable-mutations",
+               "--no-cdp-fallback", "--persist-token"]
+    }
+  }
+}
+```
+
+Without `--persist-token` a fresh token is minted every boot (the secure
+default), which means re-pairing the extension on each restart. With it, the
+token is stored 0600 at `~/.chrome-mcp/token` and reused; the extension's
+keepalive auto-reconnects with no manual step. `CHROME_MCP_TOKEN` pins the token
+explicitly (and is never written to disk).
+
 **2. Load the extension** (to drive your *real* Chrome): build it, then
 `chrome://extensions` → enable Developer mode → **Load unpacked** → select
 `extension-dist/`.
@@ -43,15 +67,24 @@ print its path, open the extension's **Options** page, and paste the `port` +
 `token` from `~/.chrome-mcp/handshake.json`. (Without the extension, the CLI
 falls back to a Playwright-driven Chromium automatically.)
 
-The 26 tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
-`scroll`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`), helpers
-(`extract_links`/`read_as_markdown`/`fill_form`/`download_file`), and `chrome_status`.
+The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
+`scroll`/`select_option`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`),
+an accessibility `snapshot` (interactive elements with stable `ref`s the model can
+target instead of guessing CSS selectors), session access (`get_cookies`/`storage`),
+helpers (`extract_links`/`read_as_markdown`/`fill_form`/`download_file`), and
+`chrome_status`.
+
+`click`/`type` accept `trusted: true` for real OS-level input (works on
+React/Vue controlled inputs); interactions auto-wait for the target to appear.
 
 ## Status
 
-v0.1.0 — all six build phases complete and green (50 automated tests + a gated
+v0.2.0 — all six build phases complete and green (57 automated tests + a gated
 headed extension smoke). End-to-end working: `npx chrome-mcp` ⇄ bridge ⇄
-extension ⇄ your real Chrome, with a Playwright CDP fallback.
+extension ⇄ your real Chrome, with a Playwright CDP fallback. v0.2 adds the
+accessibility `snapshot` + element refs, auto-wait, cookies/storage/`select_option`,
+trusted input (`chrome.debugger`), a toolbar status badge, and a stable pairing
+token (`--persist-token`).
 
 - [x] **Phase 0 — Contracts & skeleton:** `shared/protocol.ts` (wire contract),
       `src/executor/types.ts` (Executor interface), `src/security/policy.ts`

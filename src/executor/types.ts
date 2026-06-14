@@ -80,6 +80,43 @@ export interface DownloadResult {
   suggestedName?: string;
 }
 
+/** One interactive/landmark element in an accessibility snapshot. `ref` is stable until the tab navigates. */
+export interface SnapshotNode {
+  ref: string;
+  role: string;
+  name: string;
+  tag: string;
+  value?: string;
+  disabled?: boolean;
+  checked?: boolean;
+}
+
+export interface SnapshotResult {
+  url: string;
+  title: string;
+  nodes: SnapshotNode[];
+  truncated: boolean;
+}
+
+export interface CookieItem {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  expires?: number;
+}
+
+export type StorageOp = 'get' | 'set' | 'remove' | 'clear';
+export interface StorageResult {
+  ok: boolean;
+  /** For `get`: the value (or null if absent). For others: omitted. */
+  value?: string | null;
+  /** For a keyless `get`: the whole store as a flat object. */
+  entries?: Record<string, string>;
+}
+
 export interface ExecutorStatus {
   ready: boolean;
   backend: BackendKind | null;
@@ -127,13 +164,15 @@ export interface Executor {
   // --- interaction (Target = {selector} XOR {ref}) ---
   click(
     t: Target,
-    opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number },
+    opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean },
   ): Promise<ActionOk>;
   type(
     t: Target,
     text: string,
-    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean },
+    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean },
   ): Promise<ActionOk>;
+  /** Choose option(s) of a <select> by value or visible label. */
+  selectOption(t: Target, values: string[], opts?: { tabId?: TabId }): Promise<ActionOk>;
   /** Value-set + input/change events (used by fill_form). */
   fill(t: Target, value: string, opts?: { tabId?: TabId }): Promise<ActionOk>;
   press(key: string, opts?: { tabId?: TabId; modifiers?: KeyModifier[] }): Promise<ActionOk>;
@@ -150,6 +189,12 @@ export interface Executor {
   // --- read (policy-gated by current tab URL) ---
   getText(t?: Target, opts?: { tabId?: TabId }): Promise<{ text: string; ref?: string }>;
   getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean }): Promise<{ html: string }>;
+  /** Accessibility snapshot: interactive/landmark elements with stable refs the model can target. */
+  snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult>;
+  /** Read cookies visible to the active tab's URL (or a given url). */
+  getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }>;
+  /** localStorage/sessionStorage get/set/remove/clear for the active tab. */
+  storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult>;
   screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult>;
   eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean }): Promise<EvalResult>;
   waitFor(opts: {

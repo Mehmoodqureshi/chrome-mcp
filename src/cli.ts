@@ -17,7 +17,7 @@ import { configureManager } from './executor/manager';
 import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
 import { ensureDataDir } from './bridge/datadir';
-import { generateToken, removeHandshake, writeHandshake } from './bridge/auth';
+import { removeHandshake, resolveToken, writeHandshake } from './bridge/auth';
 import { logErr, startMcpServer, stopMcpServer } from './mcp/server';
 
 function version(): string {
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   }
 
   const dataDir = ensureDataDir(cfg.dataDir);
-  const token = generateToken();
+  const token = resolveToken(dataDir, { persist: cfg.persistToken });
 
   const bridge = new BridgeServer({
     token,
@@ -57,6 +57,11 @@ async function main(): Promise<void> {
   const port = await bridge.start();
   const handshakePath = writeHandshake(dataDir, { port, token });
   logErr(`pairing handshake written to ${handshakePath} (mode 0600; token not logged)`);
+  if (process.env.CHROME_MCP_TOKEN) {
+    logErr('token: pinned from CHROME_MCP_TOKEN (stable; pair once, never again).');
+  } else if (cfg.persistToken) {
+    logErr('token: persisted across restarts (--persist-token; pair once, never again).');
+  }
 
   const cleanup = (): void => {
     removeHandshake(dataDir);

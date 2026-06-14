@@ -109,3 +109,53 @@ test('a read tool (tabs_list) works with no policy grant (management, not conten
   const r = await dispatchToolCall('tabs_list', {});
   assert.notEqual(r.isError, true);
 });
+
+test('snapshot is a content read: gated by domain, returns nodes when allowed', async () => {
+  configure({ allowDomains: ['example.com'] }, { activeUrl: 'https://evil.com' });
+  const denied = await dispatchToolCall('snapshot', {});
+  assert.equal(denied.isError, true);
+
+  configure(OPEN, { activeUrl: 'https://example.com' });
+  const ok = await dispatchToolCall('snapshot', {});
+  assert.notEqual(ok.isError, true);
+  assert.match(textOf(ok), /"ref": "e1"/);
+});
+
+test('select_option needs values and is a mutation (blocked in safe-mode)', async () => {
+  configure({ allowDomains: ['*'] }, { activeUrl: 'https://example.com' }); // mutations OFF
+  const blocked = await dispatchToolCall('select_option', { selector: 'select', values: ['a'] });
+  assert.equal(blocked.isError, true);
+  assert.match(textOf(blocked), /disabled \(safe-mode\)/i);
+
+  configure(OPEN, { activeUrl: 'https://example.com' });
+  const noVals = await dispatchToolCall('select_option', { selector: 'select' });
+  assert.equal(noVals.isError, true);
+  assert.match(textOf(noVals), /non-empty array/i);
+
+  const ok = await dispatchToolCall('select_option', { selector: 'select', values: ['a'] });
+  assert.notEqual(ok.isError, true);
+});
+
+test('storage: get is a read, set requires a key and is a mutation', async () => {
+  configure({ allowDomains: ['*'] }, { activeUrl: 'https://example.com' }); // mutations OFF
+  const getOk = await dispatchToolCall('storage', { op: 'get', key: 'k' });
+  assert.notEqual(getOk.isError, true); // reads allowed
+  const setBlocked = await dispatchToolCall('storage', { op: 'set', key: 'k', value: 'v' });
+  assert.equal(setBlocked.isError, true); // mutation blocked in safe-mode
+
+  configure(OPEN, { activeUrl: 'https://example.com' });
+  const setNoKey = await dispatchToolCall('storage', { op: 'set', value: 'v' });
+  assert.equal(setNoKey.isError, true);
+  assert.match(textOf(setNoKey), /requires a "key"/);
+});
+
+test('get_cookies is a domain-gated read', async () => {
+  configure({ allowDomains: ['example.com'] }, { activeUrl: 'https://evil.com' });
+  const denied = await dispatchToolCall('get_cookies', {});
+  assert.equal(denied.isError, true);
+
+  configure(OPEN, { activeUrl: 'https://example.com' });
+  const ok = await dispatchToolCall('get_cookies', {});
+  assert.notEqual(ok.isError, true);
+  assert.match(textOf(ok), /"name": "stub"/);
+});

@@ -34,6 +34,8 @@ export interface CliConfig {
   headless: boolean;
   /** `--print-pairing`: write the handshake and print its path (never the token). */
   printPairing: boolean;
+  /** `--persist-token`: reuse a stable on-disk token so the extension never re-pairs. */
+  persistToken: boolean;
   showHelp: boolean;
   showVersion: boolean;
   logLevel: LogLevel;
@@ -60,11 +62,14 @@ function readPolicyFile(path: string): Partial<Policy> {
  */
 export function parseArgs(argv: string[]): CliConfig {
   let wsPort = envInt('CHROME_MCP_WS_PORT') ?? DEFAULT_WS_PORT;
-  let cdpFallback = true;
+  // Extension-only by default: never launch/attach a Chromium of our own unless
+  // the operator explicitly opts in with --cdp-fallback (or --prefer cdp / --cdp-endpoint).
+  let cdpFallback = false;
   let cdpEndpoint: string | undefined;
   let prefer: BackendPreference = 'extension';
   let headless = false;
   let printPairing = false;
+  let persistToken = false;
   let showHelp = false;
   let showVersion = false;
   let logLevel: LogLevel = 'info';
@@ -111,7 +116,10 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--allow-all-tabs':
         policyFlags.allowAllTabs = true;
         break;
-      case '--no-cdp-fallback':
+      case '--cdp-fallback':
+        cdpFallback = true;
+        break;
+      case '--no-cdp-fallback': // still accepted; fallback is already off by default
         cdpFallback = false;
         break;
       case '--cdp-endpoint':
@@ -125,6 +133,9 @@ export function parseArgs(argv: string[]): CliConfig {
         break;
       case '--print-pairing':
         printPairing = true;
+        break;
+      case '--persist-token':
+        persistToken = true;
         break;
       case '--log-level':
         logLevel = requireLogLevel(argv[++i]);
@@ -146,6 +157,7 @@ export function parseArgs(argv: string[]): CliConfig {
     prefer,
     headless,
     printPairing,
+    persistToken,
     showHelp,
     showVersion,
     logLevel,
@@ -194,9 +206,15 @@ Connection:
   --port <n>             WebSocket bridge port (default ${DEFAULT_WS_PORT}; 0 = ephemeral)
   --data-dir <path>      Override the data dir (default ~/.chrome-mcp)
   --print-pairing        Write the handshake and print its path, then exit
+  --persist-token        Reuse a stable on-disk token across restarts so the
+                         extension never has to re-pair (default: fresh per boot).
+                         CHROME_MCP_TOKEN env, if set, pins the token explicitly.
 
 Backend:
-  --no-cdp-fallback      Do not launch/attach Chromium when no extension is paired
+  --cdp-fallback         Opt in to launching/attaching Chromium when no extension
+                         is paired. OFF by default — extension-only, never opens
+                         a browser of its own.
+  --no-cdp-fallback      Explicitly disable the fallback (already the default).
   --cdp-endpoint <url>   Attach to an existing Chrome (e.g. http://127.0.0.1:9222)
   --prefer <which>       "extension" (default) or "cdp"
   --headless             Run the CDP-fallback Chromium headless
