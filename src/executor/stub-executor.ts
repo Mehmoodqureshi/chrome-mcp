@@ -11,12 +11,16 @@
 import {
   type ActionOk,
   type BackendKind,
+  type CookieItem,
   type DownloadResult,
   type EvalResult,
   type Executor,
   type ExecutorStatus,
   type NavResult,
   type ScreenshotResult,
+  type SnapshotResult,
+  type StorageOp,
+  type StorageResult,
   type TabId,
   type TabInfo,
   type Target,
@@ -114,6 +118,9 @@ export class StubExecutor implements Executor {
   async hover(): Promise<ActionOk> {
     return ok;
   }
+  async selectOption(): Promise<ActionOk> {
+    return ok;
+  }
   async scroll(): Promise<ActionOk> {
     return ok;
   }
@@ -123,6 +130,21 @@ export class StubExecutor implements Executor {
   }
   async getHtml(): Promise<{ html: string }> {
     return { html: '<html><body><a href="https://example.com">Example</a></body></html>' };
+  }
+  async snapshot(): Promise<SnapshotResult> {
+    return {
+      url: this.url,
+      title: 'Stub Page',
+      nodes: [{ ref: 'e1', role: 'link', name: 'Example', tag: 'a' }],
+      truncated: false,
+    };
+  }
+  async getCookies(): Promise<{ cookies: CookieItem[] }> {
+    return { cookies: [{ name: 'stub', value: '1', domain: 'example.com', path: '/', secure: true, httpOnly: false }] };
+  }
+  async storage(args: { op: StorageOp; key?: string }): Promise<StorageResult> {
+    if (args.op === 'get') return { ok: true, value: args.key ? 'stub-value' : null, entries: args.key ? undefined : { k: 'stub-value' } };
+    return { ok: true };
   }
   async screenshot(): Promise<ScreenshotResult> {
     return { dataBase64: TINY_PNG, mimeType: 'image/png', width: 1, height: 1, truncated: false };

@@ -26,9 +26,11 @@ import {
 } from 'playwright';
 
 import { MAX_DOWNLOAD_BYTES, isWithinSizeCap, sanitizeDownloadName } from '../../shared/download';
+import { collectSnapshot } from '../../shared/snapshot';
 import {
   type ActionOk,
   type BackendKind,
+  type CookieItem,
   type DownloadResult,
   type EvalResult,
   type Executor,
@@ -37,6 +39,9 @@ import {
   type KeyModifier,
   type NavResult,
   type ScreenshotResult,
+  type SnapshotResult,
+  type StorageOp,
+  type StorageResult,
   type TabId,
   type TabInfo,
   type Target,
@@ -47,6 +52,11 @@ import {
 const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 const STEALTH = `Object.defineProperty(navigator,'webdriver',{get:()=>undefined});`;
 const NON_CONTENT = /^(file|data|devtools|chrome|about):/i;
+
+/** Minimal CSS attribute-value escape for ref selectors (refs are `e\d+`, but be safe). */
+function cssEscape(s: string): string {
+  return s.replace(/["\\]/g, '\\$&');
+}
 
 export interface CdpOptions {
   mode: 'connect' | 'launch';
@@ -268,7 +278,11 @@ export class CdpExecutor implements Executor {
 
   private locator(page: Page, t: Target) {
     if ('selector' in t && t.selector !== undefined) return page.locator(t.selector).first();
-    throw new ExecutorError('SELECTOR_NOT_FOUND', 'the CDP fallback supports selectors, not refs (use the extension backend)');
+    if ('ref' in t && t.ref !== undefined) {
+      // Refs are minted by snapshot() as data-mcp-ref attributes on the page.
+      return page.locator(`[data-mcp-ref="${cssEscape(t.ref)}"]`).first();
+    }
+    throw new ExecutorError('SELECTOR_NOT_FOUND', 'provide a selector or a ref from snapshot()');
   }
 
   // -- tabs ---------------------------------------------------------------
@@ -327,18 +341,30 @@ export class CdpExecutor implements Executor {
 
   // -- interaction --------------------------------------------------------
   private ok: ActionOk = { ok: true };
-  async click(t: Target, opts?: { tabId?: TabId; button?: 'left' | 'right' | 'middle'; clickCount?: number }): Promise<ActionOk> {
+  async click(t: Target, opts?: { tabId?: TabId; button?: 'left' | 'right' | 'middle'; clickCount?: number; trusted?: boolean }): Promise<ActionOk> {
     const p = await this.resolveTab(opts?.tabId);
+    // Playwright already drives real (trusted) input, so `trusted` is a no-op here.
     await this.locator(p, t).click({ button: opts?.button, clickCount: opts?.clickCount });
     return this.ok;
   }
-  async type(t: Target, text: string, opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean }): Promise<ActionOk> {
+  async type(t: Target, text: string, opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean }): Promise<ActionOk> {
     const p = await this.resolveTab(opts?.tabId);
     const loc = this.locator(p, t);
     if (opts?.clear) await loc.fill('');
     if (opts?.keyEvents) await loc.pressSequentially(text);
     else await loc.fill((opts?.clear ? '' : '') + text);
     if (opts?.pressEnter) await loc.press('Enter');
+    return this.ok;
+  }
+  async selectOption(t: Target, values: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {
+    const p = await this.resolveTab(opts?.tabId);
+    // Try by value, then fall back to visible label.
+    const loc = this.locator(p, t);
+    try {
+      await loc.selectOption(values);
+    } catch {
+      await loc.selectOption(values.map((label) => ({ label })));
+    }
     return this.ok;
   }
   async fill(t: Target, value: string, opts?: { tabId?: TabId }): Promise<ActionOk> {
@@ -377,6 +403,44 @@ export class CdpExecutor implements Executor {
     const loc = this.locator(p, t);
     const html = opts?.outer ? await loc.evaluate((el) => (el as Element).outerHTML) : await loc.innerHTML();
     return { html };
+  }
+  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult> {
+    const p = await this.resolveTab(opts?.tabId);
+    // Inject collectSnapshot's source and run it in the page (it can't close over module scope).
+    const raw = await p.evaluate(
+      ([fnSrc, interactiveOnly, max]) => {
+        // eslint-disable-next-line no-eval
+        const fn = (0, eval)(`(${fnSrc})`) as (i: boolean, m: number) => unknown;
+        return fn(interactiveOnly as boolean, max as number);
+      },
+      [collectSnapshot.toString(), opts?.interactiveOnly ?? true, opts?.max ?? 200] as const,
+    );
+    return raw as SnapshotResult;
+  }
+  async getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }> {
+    const p = await this.resolveTab(opts?.tabId);
+    const url = opts?.url ?? p.url();
+    const ctx = await this.getContext();
+    const raw = await ctx.cookies(url);
+    return {
+      cookies: raw.map((c) => ({
+        name: c.name, value: c.value, domain: c.domain, path: c.path,
+        secure: c.secure, httpOnly: c.httpOnly, expires: c.expires >= 0 ? c.expires : undefined,
+      })),
+    };
+  }
+  async storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult> {
+    const p = await this.resolveTab(args.tabId);
+    return p.evaluate((a) => {
+      const store = a.session ? window.sessionStorage : window.localStorage;
+      if (a.op === 'set') { store.setItem(String(a.key), String(a.value ?? '')); return { ok: true }; }
+      if (a.op === 'remove') { store.removeItem(String(a.key)); return { ok: true }; }
+      if (a.op === 'clear') { store.clear(); return { ok: true }; }
+      if (a.key) return { ok: true, value: store.getItem(a.key) };
+      const entries: Record<string, string> = {};
+      for (let i = 0; i < store.length; i++) { const k = store.key(i); if (k) entries[k] = store.getItem(k) ?? ''; }
+      return { ok: true, entries };
+    }, args) as Promise<StorageResult>;
   }
   async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult> {
     const p = await this.resolveTab(opts?.tabId);

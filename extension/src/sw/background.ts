@@ -36,13 +36,34 @@ const router = new CommandRouter({
 
 async function getConfig(): Promise<PairConfig | null> {
   const { wsPort, token } = await chrome.storage.local.get(['wsPort', 'token']);
-  if (typeof wsPort === 'number' && typeof token === 'string' && token.length > 0) {
+  // wsPort must be > 0 — a stored 0 would dial ws://127.0.0.1:0 (ERR_UNSAFE_PORT).
+  if (typeof wsPort === 'number' && wsPort > 0 && typeof token === 'string' && token.length > 0) {
     return { wsPort, token };
   }
   return null;
 }
 
+const BADGE: Record<ConnState, { text: string; color: string; title: string }> = {
+  connected: { text: '●', color: '#16a34a', title: 'Chrome MCP — connected' },
+  connecting: { text: '…', color: '#ca8a04', title: 'Chrome MCP — connecting' },
+  unauthorized: { text: '!', color: '#dc2626', title: 'Chrome MCP — rejected (bad/stale token; re-pair)' },
+  idle: { text: '○', color: '#6b7280', title: 'Chrome MCP — not connected (open options to pair)' },
+};
+
+function reflectBadge(state: ConnState): void {
+  const b = BADGE[state] ?? BADGE.idle;
+  // Best-effort: chrome.action may be unavailable in some contexts.
+  try {
+    void chrome.action.setBadgeText({ text: b.text });
+    void chrome.action.setBadgeBackgroundColor({ color: b.color });
+    void chrome.action.setTitle({ title: b.title });
+  } catch {
+    /* no action surface */
+  }
+}
+
 async function persistState(state: ConnState): Promise<void> {
+  reflectBadge(state);
   await chrome.storage.local.set({ connState: state });
 }
 

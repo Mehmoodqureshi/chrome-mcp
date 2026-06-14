@@ -34,6 +34,8 @@ export interface CliConfig {
   headless: boolean;
   /** `--print-pairing`: write the handshake and print its path (never the token). */
   printPairing: boolean;
+  /** `--persist-token`: reuse a stable on-disk token so the extension never re-pairs. */
+  persistToken: boolean;
   showHelp: boolean;
   showVersion: boolean;
   logLevel: LogLevel;
@@ -65,6 +67,7 @@ export function parseArgs(argv: string[]): CliConfig {
   let prefer: BackendPreference = 'extension';
   let headless = false;
   let printPairing = false;
+  let persistToken = false;
   let showHelp = false;
   let showVersion = false;
   let logLevel: LogLevel = 'info';
@@ -126,6 +129,9 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--print-pairing':
         printPairing = true;
         break;
+      case '--persist-token':
+        persistToken = true;
+        break;
       case '--log-level':
         logLevel = requireLogLevel(argv[++i]);
         break;
@@ -146,6 +152,7 @@ export function parseArgs(argv: string[]): CliConfig {
     prefer,
     headless,
     printPairing,
+    persistToken,
     showHelp,
     showVersion,
     logLevel,
@@ -194,6 +201,9 @@ Connection:
   --port <n>             WebSocket bridge port (default ${DEFAULT_WS_PORT}; 0 = ephemeral)
   --data-dir <path>      Override the data dir (default ~/.chrome-mcp)
   --print-pairing        Write the handshake and print its path, then exit
+  --persist-token        Reuse a stable on-disk token across restarts so the
+                         extension never has to re-pair (default: fresh per boot).
+                         CHROME_MCP_TOKEN env, if set, pins the token explicitly.
 
 Backend:
   --no-cdp-fallback      Do not launch/attach Chromium when no extension is paired

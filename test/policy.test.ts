@@ -114,6 +114,7 @@ test('parseArgs: safe defaults and flag overrides', () => {
   const def = parseArgs([]);
   assert.equal(def.wsPort, DEFAULT_WS_PORT);
   assert.equal(def.cdpFallback, true);
+  assert.equal(def.persistToken, false);
   assert.equal(def.policy.enableMutations, false);
   assert.equal(def.policy.allowEval, false);
 
@@ -121,6 +122,11 @@ test('parseArgs: safe defaults and flag overrides', () => {
   assert.deepEqual(loud.policy.allowDomains, ['*']);
   assert.equal(loud.policy.enableMutations, true);
   assert.equal(loud.wsPort, 40000);
+
+  // The "your Chrome, every time, no re-pair" combo.
+  const pinned = parseArgs(['--no-cdp-fallback', '--persist-token']);
+  assert.equal(pinned.cdpFallback, false);
+  assert.equal(pinned.persistToken, true);
 
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
 });

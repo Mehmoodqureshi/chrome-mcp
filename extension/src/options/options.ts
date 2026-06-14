@@ -4,6 +4,8 @@
  * to (re)connect. Also reflects the live connection state.
  */
 
+import { DEFAULT_WS_PORT } from '../../../shared/protocol';
+
 const portEl = document.getElementById('port') as HTMLInputElement;
 const tokenEl = document.getElementById('token') as HTMLInputElement;
 const saveEl = document.getElementById('save') as HTMLButtonElement;
@@ -11,7 +13,9 @@ const statusEl = document.getElementById('status') as HTMLDivElement;
 
 async function loadExisting(): Promise<void> {
   const { wsPort, connState } = await chrome.storage.local.get(['wsPort', 'connState']);
-  if (typeof wsPort === 'number') portEl.value = String(wsPort);
+  // Prefill a real value (not just the placeholder) so an empty Save can never
+  // store port 0 → ws://127.0.0.1:0 → ERR_UNSAFE_PORT. Defaults to the server's port.
+  portEl.value = typeof wsPort === 'number' && wsPort > 0 ? String(wsPort) : String(DEFAULT_WS_PORT);
   render(typeof connState === 'string' ? connState : 'idle');
 }
 
@@ -28,8 +32,8 @@ function render(state: string): void {
 saveEl.addEventListener('click', async () => {
   const wsPort = Number(portEl.value);
   const token = tokenEl.value.trim();
-  if (!Number.isInteger(wsPort) || wsPort < 0 || !token) {
-    statusEl.textContent = 'Status: enter a valid port and token';
+  if (!Number.isInteger(wsPort) || wsPort <= 0 || !token) {
+    statusEl.textContent = 'Status: enter a valid port (> 0) and token';
     return;
   }
   await chrome.storage.local.set({ wsPort, token });

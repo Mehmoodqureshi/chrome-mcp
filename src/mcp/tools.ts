@@ -69,8 +69,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'forward', description: 'Go forward in history.', inputSchema: obj({ tabId: { type: 'string' } }) },
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: obj({ tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }) },
 
-  { name: 'click', description: 'Click an element.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' }, button: { type: 'string', enum: ['left', 'right', 'middle'] }, clickCount: { type: 'number' } }) },
-  { name: 'type', description: 'Type text into an element.', inputSchema: obj({ ...TARGET_PROPS, text: { type: 'string' }, tabId: { type: 'string' }, clear: { type: 'boolean' }, pressEnter: { type: 'boolean' }, keyEvents: { type: 'boolean' } }, ['text']) },
+  { name: 'click', description: 'Click an element (target by selector or a snapshot ref). trusted=true uses real OS-level input.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' }, button: { type: 'string', enum: ['left', 'right', 'middle'] }, clickCount: { type: 'number' }, trusted: { type: 'boolean' } }) },
+  { name: 'type', description: 'Type text into an element. trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: obj({ ...TARGET_PROPS, text: { type: 'string' }, tabId: { type: 'string' }, clear: { type: 'boolean' }, pressEnter: { type: 'boolean' }, keyEvents: { type: 'boolean' }, trusted: { type: 'boolean' } }, ['text']) },
+  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: obj({ ...TARGET_PROPS, values: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['values']) },
   { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: obj({ key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['key']) },
   { name: 'hover', description: 'Hover over an element.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' } }) },
   { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: obj({ ...TARGET_PROPS, x: { type: 'number' }, y: { type: 'number' }, deltaX: { type: 'number' }, deltaY: { type: 'number' }, tabId: { type: 'string' } }) },
@@ -78,6 +79,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: obj({ ...TARGET_PROPS, fullPage: { type: 'boolean' }, tabId: { type: 'string' } }) },
   { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' } }) },
   { name: 'get_html', description: 'Get HTML of the page or an element.', inputSchema: obj({ ...TARGET_PROPS, outer: { type: 'boolean' }, tabId: { type: 'string' } }) },
+  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with stable refs to target by `ref` (more reliable than guessing CSS selectors).', inputSchema: obj({ interactiveOnly: { type: 'boolean' }, max: { type: 'number' }, tabId: { type: 'string' } }) },
+  { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: obj({ url: { type: 'string' }, tabId: { type: 'string' } }) },
+  { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: obj({ op: { type: 'string', enum: ['get', 'set', 'remove', 'clear'] }, key: { type: 'string' }, value: { type: 'string' }, session: { type: 'boolean' }, tabId: { type: 'string' } }, ['op']) },
   { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: obj({ expression: { type: 'string' }, awaitPromise: { type: 'boolean' }, tabId: { type: 'string' } }, ['expression']) },
   { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: obj({ selector: { type: 'string' }, textContains: { type: 'string' }, gone: { type: 'boolean' }, timeoutMs: { type: 'number' }, tabId: { type: 'string' } }) },
 
@@ -162,6 +166,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
         tabId: tabId(a),
         button: optionalString(a, 'button') as 'left' | 'right' | 'middle' | undefined,
         clickCount: optionalNumber(a, 'clickCount', { min: 1, max: 3 }),
+        trusted: optionalBoolean(a, 'trusted'),
       }),
     );
   },
@@ -174,8 +179,16 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
         clear: optionalBoolean(a, 'clear'),
         pressEnter: optionalBoolean(a, 'pressEnter'),
         keyEvents: optionalBoolean(a, 'keyEvents'),
+        trusted: optionalBoolean(a, 'trusted'),
       }),
     );
+  },
+  select_option: async (a, ctx) => {
+    const t = requireTarget(a);
+    await gate(ctx, 'type'); // mutating
+    const values = optionalStringArray(a, 'values');
+    if (!values || values.length === 0) throw new McpToolError('"values" must be a non-empty array of strings');
+    return jsonResult(await ctx.ex.selectOption(t, values, { tabId: tabId(a) }));
   },
   press: async (a, ctx) => {
     await gate(ctx, 'press');
@@ -223,6 +236,37 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     await gate(ctx, 'get_html');
     return jsonResult(
       await ctx.ex.getHtml(optionalTarget(a), { tabId: tabId(a), outer: optionalBoolean(a, 'outer') }),
+    );
+  },
+  snapshot: async (a, ctx) => {
+    await gate(ctx, 'get_text'); // read of page structure
+    return jsonResult(
+      await ctx.ex.snapshot({
+        tabId: tabId(a),
+        interactiveOnly: optionalBoolean(a, 'interactiveOnly'),
+        max: optionalNumber(a, 'max', { min: 1, max: 1000 }),
+      }),
+    );
+  },
+  get_cookies: async (a, ctx) => {
+    await gate(ctx, 'get_text'); // reads tab-scoped secrets; same domain gate as content reads
+    return jsonResult(await ctx.ex.getCookies({ tabId: tabId(a), url: optionalString(a, 'url') }));
+  },
+  storage: async (a, ctx) => {
+    const op = requireString(a, 'op') as 'get' | 'set' | 'remove' | 'clear';
+    // get is a read; set/remove/clear mutate.
+    await gate(ctx, op === 'get' ? 'get_text' : 'type');
+    if ((op === 'set' || op === 'remove') && !optionalString(a, 'key')) {
+      throw new McpToolError(`storage "${op}" requires a "key"`);
+    }
+    return jsonResult(
+      await ctx.ex.storage({
+        op,
+        key: optionalString(a, 'key'),
+        value: optionalString(a, 'value'),
+        session: optionalBoolean(a, 'session'),
+        tabId: tabId(a),
+      }),
     );
   },
   eval: async (a, ctx) => {

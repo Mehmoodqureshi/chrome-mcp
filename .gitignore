@@ -4,11 +4,20 @@ extension-dist/
 *.tsbuildinfo
 
 # Local, secret, or machine-specific
+.claude/settings.local.json
 .chrome-mcp/
+token
 *.handshake
 handshake.json
 test-targets.json
 policy.json
+
+# Session scratch (ad-hoc drivers / command logs)
+.persistent.cjs
+.wpos_harness.mjs
+.search_driver.mjs
+.cmds.jsonl
+.results.jsonl
 .env
 .env.*
 .DS_Store

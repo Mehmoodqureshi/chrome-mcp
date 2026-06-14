@@ -11,6 +11,7 @@
 import {
   type ActionOk,
   type BackendKind,
+  type CookieItem,
   type DownloadResult,
   type EvalResult,
   type Executor,
@@ -19,6 +20,9 @@ import {
   type MouseButton,
   type NavResult,
   type ScreenshotResult,
+  type SnapshotResult,
+  type StorageOp,
+  type StorageResult,
   type TabId,
   type TabInfo,
   type Target,
@@ -105,19 +109,22 @@ export class ExtensionExecutor implements Executor {
   }
 
   // -- interaction --------------------------------------------------------
-  async click(t: Target, opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number }): Promise<ActionOk> {
-    return (await this.send('click', { ...targetParams(t), button: opts?.button, clickCount: opts?.clickCount }, { tabId: opts?.tabId })) as ActionOk;
+  async click(t: Target, opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean }): Promise<ActionOk> {
+    return (await this.send('click', { ...targetParams(t), button: opts?.button, clickCount: opts?.clickCount, trusted: opts?.trusted }, { tabId: opts?.tabId })) as ActionOk;
   }
   async type(
     t: Target,
     text: string,
-    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean },
+    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean },
   ): Promise<ActionOk> {
     return (await this.send(
       'type',
-      { ...targetParams(t), text, clear: opts?.clear, pressEnter: opts?.pressEnter, keyEvents: opts?.keyEvents },
+      { ...targetParams(t), text, clear: opts?.clear, pressEnter: opts?.pressEnter, keyEvents: opts?.keyEvents, trusted: opts?.trusted },
       { tabId: opts?.tabId },
     )) as ActionOk;
+  }
+  async selectOption(t: Target, values: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {
+    return (await this.send('select_option', { ...targetParams(t), values }, { tabId: opts?.tabId })) as ActionOk;
   }
   async fill(t: Target, value: string, opts?: { tabId?: TabId }): Promise<ActionOk> {
     // No dedicated wire method: a cleared insertText is the fill primitive.
@@ -150,6 +157,15 @@ export class ExtensionExecutor implements Executor {
   }
   async getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean }): Promise<{ html: string }> {
     return (await this.send('get_html', { ...targetParams(t), outer: opts?.outer }, { tabId: opts?.tabId })) as { html: string };
+  }
+  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult> {
+    return (await this.send('snapshot', { interactiveOnly: opts?.interactiveOnly, max: opts?.max }, { tabId: opts?.tabId })) as SnapshotResult;
+  }
+  async getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }> {
+    return (await this.send('get_cookies', { url: opts?.url }, { tabId: opts?.tabId })) as { cookies: CookieItem[] };
+  }
+  async storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult> {
+    return (await this.send('storage', { op: args.op, key: args.key, value: args.value, session: args.session }, { tabId: args.tabId })) as StorageResult;
   }
   async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult> {
     return (await this.send('screenshot', { fullPage: opts?.fullPage, ...targetParams(opts?.target) }, { tabId: opts?.tabId })) as ScreenshotResult;

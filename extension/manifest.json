@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Chrome MCP Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lets a local chrome-mcp server drive this browser. Pair it with the server's handshake token.",
   "minimum_chrome_version": "116",
   "background": { "service_worker": "background.js" },
-  "permissions": ["tabs", "scripting", "activeTab", "downloads", "storage", "alarms"],
+  "permissions": ["tabs", "scripting", "activeTab", "downloads", "storage", "alarms", "cookies", "debugger"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "options_page": "options.html",
   "action": { "default_title": "Chrome MCP — open options to pair" }
