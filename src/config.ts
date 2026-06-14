@@ -62,7 +62,9 @@ function readPolicyFile(path: string): Partial<Policy> {
  */
 export function parseArgs(argv: string[]): CliConfig {
   let wsPort = envInt('CHROME_MCP_WS_PORT') ?? DEFAULT_WS_PORT;
-  let cdpFallback = true;
+  // Extension-only by default: never launch/attach a Chromium of our own unless
+  // the operator explicitly opts in with --cdp-fallback (or --prefer cdp / --cdp-endpoint).
+  let cdpFallback = false;
   let cdpEndpoint: string | undefined;
   let prefer: BackendPreference = 'extension';
   let headless = false;
@@ -114,7 +116,10 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--allow-all-tabs':
         policyFlags.allowAllTabs = true;
         break;
-      case '--no-cdp-fallback':
+      case '--cdp-fallback':
+        cdpFallback = true;
+        break;
+      case '--no-cdp-fallback': // still accepted; fallback is already off by default
         cdpFallback = false;
         break;
       case '--cdp-endpoint':
@@ -206,7 +211,10 @@ Connection:
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.
 
 Backend:
-  --no-cdp-fallback      Do not launch/attach Chromium when no extension is paired
+  --cdp-fallback         Opt in to launching/attaching Chromium when no extension
+                         is paired. OFF by default — extension-only, never opens
+                         a browser of its own.
+  --no-cdp-fallback      Explicitly disable the fallback (already the default).
   --cdp-endpoint <url>   Attach to an existing Chrome (e.g. http://127.0.0.1:9222)
   --prefer <which>       "extension" (default) or "cdp"
   --headless             Run the CDP-fallback Chromium headless
