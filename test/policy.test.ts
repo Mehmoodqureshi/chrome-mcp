@@ -113,7 +113,7 @@ test('wire constants are sane and singular', () => {
 test('parseArgs: safe defaults and flag overrides', () => {
   const def = parseArgs([]);
   assert.equal(def.wsPort, DEFAULT_WS_PORT);
-  assert.equal(def.cdpFallback, true);
+  assert.equal(def.cdpFallback, false); // extension-only by default: never launches a browser
   assert.equal(def.persistToken, false);
   assert.equal(def.policy.enableMutations, false);
   assert.equal(def.policy.allowEval, false);
@@ -123,8 +123,13 @@ test('parseArgs: safe defaults and flag overrides', () => {
   assert.equal(loud.policy.enableMutations, true);
   assert.equal(loud.wsPort, 40000);
 
+  // Opt back into the CDP fallback explicitly.
+  assert.equal(parseArgs(['--cdp-fallback']).cdpFallback, true);
+  // --no-cdp-fallback still accepted (now a no-op vs the default).
+  assert.equal(parseArgs(['--no-cdp-fallback']).cdpFallback, false);
+
   // The "your Chrome, every time, no re-pair" combo.
-  const pinned = parseArgs(['--no-cdp-fallback', '--persist-token']);
+  const pinned = parseArgs(['--persist-token']);
   assert.equal(pinned.cdpFallback, false);
   assert.equal(pinned.persistToken, true);
 
