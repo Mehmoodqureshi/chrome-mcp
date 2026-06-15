@@ -176,7 +176,7 @@ export const HANDLED: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'click', 'type', 'press', 'hover', 'scroll',
   'screenshot', 'get_text', 'get_html', 'snapshot',
   'select_option', 'get_cookies', 'storage', 'eval', 'wait_for',
-  'download_file', 'ping_probe',
+  'download_file', 'upload_file', 'ping_probe',
 ]);
 
 export class ChromeExecutor {
@@ -197,8 +197,19 @@ export class ChromeExecutor {
       }
       case 'tab_new': {
         const url = typeof cmd.params.url === 'string' ? cmd.params.url : undefined;
+        // Reuse an existing blank tab (about:blank / new-tab page) instead of
+        // spawning a fresh one, so callers don't pile up tabs. `reused: true`
+        // tells the caller to RESET (not close) the tab when finished.
+        const BLANK = /^(about:blank|chrome:\/\/newtab|chrome:\/\/new-tab-page|edge:\/\/newtab)/i;
+        const blank = (await chrome.tabs.query({})).find(
+          (t) => t.id !== undefined && (BLANK.test(t.url ?? '') || (t.url ?? '') === '' || t.pendingUrl === 'about:blank'),
+        );
+        if (blank?.id !== undefined) {
+          if (url) { await chrome.tabs.update(blank.id, { url }); await waitComplete(blank.id); }
+          return { ...(await tabInfo(await chrome.tabs.get(blank.id))), reused: true };
+        }
         const t = await chrome.tabs.create({ url, active: false });
-        return tabInfo(t);
+        return { ...(await tabInfo(t)), reused: false };
       }
       case 'tab_close': {
         const id = parseTabId(String(cmd.tabId));
@@ -532,6 +543,24 @@ export class ChromeExecutor {
         );
         const downloadId = await chrome.downloads.download({ url, filename: name });
         return { path: `(downloads)/${name}`, backend: 'extension', bytes: 0, suggestedName: name };
+      }
+
+      // -- upload: set local file(s) on a file <input> via CDP DOM.setFileInputFiles --
+      case 'upload_file': {
+        const id = await targetTab(cmd);
+        const sel = requireSelector(cmd);
+        const files = Array.isArray(cmd.params.files) ? cmd.params.files.map(String) : [];
+        if (files.length === 0) throw new CmdError('BAD_ARGS', 'upload_file requires a non-empty "files" array');
+        if (!(await waitForSelector(id, sel))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        await withDebugger(id, async (t) => {
+          const doc = (await chrome.debugger.sendCommand(t, 'DOM.getDocument', { depth: 0 })) as { root?: { nodeId: number } };
+          const rootId = doc.root?.nodeId;
+          if (!rootId) throw new CmdError('CDP_ERROR', 'could not read the document root');
+          const found = (await chrome.debugger.sendCommand(t, 'DOM.querySelector', { nodeId: rootId, selector: sel })) as { nodeId?: number };
+          if (!found.nodeId) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+          await chrome.debugger.sendCommand(t, 'DOM.setFileInputFiles', { files, nodeId: found.nodeId });
+        });
+        return { ok: true };
       }
 
       default:

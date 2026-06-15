@@ -26,6 +26,7 @@ import {
   type TabId,
   type TabInfo,
   type Target,
+  truncateEvalResult,
   type WaitResult,
   type WaitUntil,
 } from './types';
@@ -171,7 +172,8 @@ export class ExtensionExecutor implements Executor {
     return (await this.send('screenshot', { fullPage: opts?.fullPage, ...targetParams(opts?.target) }, { tabId: opts?.tabId })) as ScreenshotResult;
   }
   async eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean }): Promise<EvalResult> {
-    return (await this.send('eval', { expression, awaitPromise: opts?.awaitPromise }, { tabId: opts?.tabId })) as EvalResult;
+    const result = (await this.send('eval', { expression, awaitPromise: opts?.awaitPromise }, { tabId: opts?.tabId })) as EvalResult;
+    return truncateEvalResult(result);
   }
   async waitFor(opts: {
     tabId?: TabId;
@@ -194,5 +196,9 @@ export class ExtensionExecutor implements Executor {
       { url: args.url, ...targetParams(args.target), suggestedName: args.suggestedName },
       { tabId: args.tabId },
     )) as DownloadResult;
+  }
+
+  async uploadFile(t: Target, files: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {
+    return (await this.send('upload_file', { ...targetParams(t), files }, { tabId: opts?.tabId })) as ActionOk;
   }
 }

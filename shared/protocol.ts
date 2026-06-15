@@ -65,6 +65,7 @@ export type WireMethod =
   | 'eval'
   | 'wait_for'
   | 'download_file'
+  | 'upload_file'
   | 'ping_probe';
 
 /** Runtime list of every WireMethod, for boot-time drift assertions on both ends. */
@@ -92,6 +93,7 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'eval',
   'wait_for',
   'download_file',
+  'upload_file',
   'ping_probe',
 ] as const;
 
@@ -112,6 +114,7 @@ export type ExecutorErrorCode =
   | 'CDP_ERROR'
   | 'POLICY_DENIED'
   | 'DOWNLOAD_FAILED'
+  | 'UPLOAD_FAILED'
   | 'UNKNOWN_METHOD';
 
 // ---------------------------------------------------------------------------

@@ -246,6 +246,44 @@ test('a second valid client supersedes the first (close 4000 + displacement even
   }
 });
 
+test('FIX 7: a throwing onDisplacement callback does NOT crash the bridge', async () => {
+  const logs: string[] = [];
+  const server = new BridgeServer({
+    token: TOKEN,
+    serverVersion: 'test',
+    port: 0,
+    heartbeatMs: 0,
+    onLog: (m) => logs.push(m),
+    onDisplacement: () => {
+      throw new Error('callback boom');
+    },
+  });
+  const port = await server.start();
+  try {
+    const fe1 = await FakeExtension.open(port);
+    fe1.hello(TOKEN, 'ext-a');
+    await fe1.welcomed;
+
+    // ext-b displaces ext-a, firing the throwing callback. The server must survive.
+    const fe2 = await FakeExtension.open(port);
+    fe2.hello(TOKEN, 'ext-b');
+    await fe2.welcomed;
+
+    assert.equal(await fe1.waitClose(), CLOSE_SUPERSEDED);
+    assert.equal(server.hasActiveExtension(), true);
+
+    // And the bridge still drives commands on the surviving connection.
+    fe2.onCommand = (cmd) => fe2.result(cmd.id, { ok: true });
+    assert.deepEqual(await server.sendCommand('get_text', {}), { ok: true });
+
+    // The throw was swallowed + logged, and no secret leaked.
+    assert.ok(logs.some((l) => /onDisplacement/i.test(l)), 'the swallowed throw is logged');
+    assert.ok(!logs.some((l) => l.includes(TOKEN)), 'the token never appears in logs');
+  } finally {
+    await server.stop();
+  }
+});
+
 test('the token never appears in any log line', async () => {
   const h = await startServer();
   try {

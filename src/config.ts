@@ -113,6 +113,9 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--enable-downloads':
         policyFlags.allowDownloads = true;
         break;
+      case '--enable-uploads':
+        policyFlags.allowUploads = true;
+        break;
       case '--allow-all-tabs':
         policyFlags.allowAllTabs = true;
         break;
@@ -226,6 +229,7 @@ Security (default: deny-all safe mode):
   --enable-mutations     Enable click/type/navigate/… (off by default)
   --unsafe-enable-eval   Enable the eval primitive (off by default)
   --enable-downloads     Enable download_file (off by default)
+  --enable-uploads       Enable upload_file — sends local files to a page (off by default)
   --allow-all-tabs       Relax tab list/select to all tabs
 
 Misc:

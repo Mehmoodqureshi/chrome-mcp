@@ -35,7 +35,26 @@ export function collectSnapshot(interactiveOnly = true, max = 200): RawSnapshot 
     const r = (el as HTMLElement).getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return false;
     const s = window.getComputedStyle(el as HTMLElement);
-    return s.visibility !== 'hidden' && s.display !== 'none';
+    if (s.visibility === 'hidden' || s.display === 'none') return false;
+    // Prefer the native check (accounts for ancestors, content-visibility, etc.).
+    const cv = (el as HTMLElement & { checkVisibility?: (opts?: object) => boolean }).checkVisibility;
+    if (typeof cv === 'function') {
+      try {
+        return cv.call(el, { checkOpacity: false, checkVisibilityCSS: true });
+      } catch {
+        /* fall through to manual ancestor walk */
+      }
+    }
+    // Fallback: walk ancestors for display:none / visibility:hidden. An element
+    // with no offsetParent (and not position:fixed) is detached/hidden.
+    let p: Element | null = el.parentElement;
+    while (p) {
+      const ps = window.getComputedStyle(p as HTMLElement);
+      if (ps.display === 'none' || ps.visibility === 'hidden') return false;
+      p = p.parentElement;
+    }
+    if ((el as HTMLElement).offsetParent === null && s.position !== 'fixed') return false;
+    return true;
   };
 
   const accName = (el: Element): string => {
@@ -74,7 +93,39 @@ export function collectSnapshot(interactiveOnly = true, max = 200): RawSnapshot 
     return tag;
   };
 
-  const els = Array.from(document.querySelectorAll(sel)).filter(visible);
+  // Collect candidates across the light DOM *and* open shadow roots, descending
+  // recursively. Defensive against null/closed shadow roots and re-visits.
+  const seen = new Set<Element>();
+  const candidates: Element[] = [];
+  const collect = (root: Document | DocumentFragment | ShadowRoot): void => {
+    if (candidates.length >= max) return;
+    let matched: Element[];
+    try {
+      matched = Array.from(root.querySelectorAll(sel));
+    } catch {
+      matched = [];
+    }
+    for (const el of matched) {
+      if (candidates.length >= max) break;
+      if (seen.has(el)) continue;
+      seen.add(el);
+      candidates.push(el);
+    }
+    // Descend into any open shadow roots hosted under this root.
+    let hosts: Element[];
+    try {
+      hosts = Array.from(root.querySelectorAll('*'));
+    } catch {
+      hosts = [];
+    }
+    for (const host of hosts) {
+      if (candidates.length >= max) break;
+      const sr = (host as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+      if (sr) collect(sr);
+    }
+  };
+  collect(document);
+  const els = candidates.filter(visible);
   const nodes: RawSnapshotNode[] = [];
   let n = 0;
   for (const el of els) {

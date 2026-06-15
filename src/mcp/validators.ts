@@ -19,6 +19,23 @@ export class McpToolError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Input size limits — defend against runaway callers passing huge strings.
+// ---------------------------------------------------------------------------
+
+/** Max length for CSS selector strings. Real selectors are tiny; cap generously. */
+export const MAX_SELECTOR_LEN = 2_000;
+/** Max length for free-text input (type text, fill_form values). ~100KB. */
+export const MAX_TEXT_LEN = 100_000;
+
+/** Throw if `value` exceeds `max` chars. `key` names the field for the message. */
+export function requireWithinLength(value: string, key: string, max: number): string {
+  if (value.length > max) {
+    throw new McpToolError(`"${key}" is too long (${value.length} chars; max ${max})`);
+  }
+  return value;
+}
+
 /** Coerce raw tool args into a plain object, rejecting non-objects. */
 export function asArgs(raw: unknown): Record<string, unknown> {
   if (raw === undefined || raw === null) return {};
@@ -84,7 +101,10 @@ export function requireTarget(args: Record<string, unknown>): Target {
   if (hasSel === hasRef) {
     throw new McpToolError('provide exactly one of "selector" or "ref"');
   }
-  return hasSel ? { selector: args.selector as string } : { ref: args.ref as string };
+  if (hasSel) {
+    return { selector: requireWithinLength(args.selector as string, 'selector', MAX_SELECTOR_LEN) };
+  }
+  return { ref: requireWithinLength(args.ref as string, 'ref', MAX_SELECTOR_LEN) };
 }
 
 /** Like `requireTarget` but the target is optional (whole-page reads). */

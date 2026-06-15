@@ -166,4 +166,8 @@ export class StubExecutor implements Executor {
       bytes: 0,
     };
   }
+
+  async uploadFile(): Promise<ActionOk> {
+    return ok;
+  }
 }

@@ -20,6 +20,29 @@ import { ensureDataDir } from './bridge/datadir';
 import { removeHandshake, resolveToken, writeHandshake } from './bridge/auth';
 import { logErr, startMcpServer, stopMcpServer } from './mcp/server';
 
+/** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
+const SHUTDOWN_DEADLINE_MS = 3000;
+
+/**
+ * Race a best-effort shutdown against a hard deadline, then exit. The timer is
+ * unref'd so it never itself keeps the process alive; if it fires first we log a
+ * brief note that clean shutdown did not complete in time.
+ */
+function exitWithDeadline(work: Promise<unknown>): void {
+  let timer: NodeJS.Timeout;
+  const deadline = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), SHUTDOWN_DEADLINE_MS);
+    timer.unref();
+  });
+  void Promise.race([work.then(() => 'clean' as const), deadline]).then((outcome) => {
+    clearTimeout(timer);
+    if (outcome === 'timeout') {
+      logErr(`shutdown deadline (${SHUTDOWN_DEADLINE_MS}ms) hit before clean shutdown; forcing exit.`);
+    }
+    process.exit(0);
+  });
+}
+
 function version(): string {
   try {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8')) as {
@@ -73,7 +96,7 @@ async function main(): Promise<void> {
     logErr('pairing mode — bridge is up; open the extension and pair, then Ctrl-C.');
     process.on('SIGINT', () => {
       cleanup();
-      void bridge.stop().finally(() => process.exit(0));
+      exitWithDeadline(bridge.stop());
     });
     return;
   }
@@ -96,12 +119,12 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     cleanup();
-    void Promise.allSettled([stopMcpServer(), bridge.stop()]).finally(() => process.exit(0));
+    exitWithDeadline(Promise.allSettled([stopMcpServer(), bridge.stop()]));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  await startMcpServer();
+  await startMcpServer(version());
 }
 
 main().catch((err) => {

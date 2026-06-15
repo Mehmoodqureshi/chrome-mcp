@@ -29,6 +29,8 @@ export interface Policy {
   allowEval: boolean;
   /** Allow `download_file`. */
   allowDownloads: boolean;
+  /** Allow `upload_file` (sends local files to the page — exfiltration risk). */
+  allowUploads: boolean;
   /** Allow acting on / reading tabs whose URL is not in `allowDomains` is governed
    *  by `allowDomains`; this flag instead relaxes tab *management* (list/select)
    *  to all tabs regardless of their URL. Default false. */
@@ -42,6 +44,7 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   allowDomains: [],
   allowEval: false,
   allowDownloads: false,
+  allowUploads: false,
   allowAllTabs: false,
   enableMutations: false,
 });
@@ -52,6 +55,7 @@ export function resolvePolicy(partial?: Partial<Policy>): Policy {
     allowDomains: partial?.allowDomains ?? [...DEFAULT_POLICY.allowDomains],
     allowEval: partial?.allowEval ?? DEFAULT_POLICY.allowEval,
     allowDownloads: partial?.allowDownloads ?? DEFAULT_POLICY.allowDownloads,
+    allowUploads: partial?.allowUploads ?? DEFAULT_POLICY.allowUploads,
     allowAllTabs: partial?.allowAllTabs ?? DEFAULT_POLICY.allowAllTabs,
     enableMutations: partial?.enableMutations ?? DEFAULT_POLICY.enableMutations,
   };
@@ -105,7 +109,13 @@ export function isMutatingMethod(method: WireMethod): boolean {
 
 /** Whether the method touches a specific URL that must be allowlisted. */
 function isUrlGated(method: WireMethod): boolean {
-  return READ_CONTENT.has(method) || MUTATE_CONTENT.has(method) || NAVIGATION.has(method) || method === 'eval';
+  return (
+    READ_CONTENT.has(method) ||
+    MUTATE_CONTENT.has(method) ||
+    NAVIGATION.has(method) ||
+    method === 'eval' ||
+    method === 'upload_file'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +174,13 @@ export function assertUrlAllowed(url: string, method: WireMethod, policy: Policy
     throw new ExecutorError(
       'POLICY_DENIED',
       'downloads are disabled. Pass --enable-downloads or set allowDownloads.',
+    );
+  }
+  if (method === 'upload_file' && !policy.allowUploads) {
+    throw new ExecutorError(
+      'POLICY_DENIED',
+      'uploads are disabled (sending local files to a page is an exfiltration risk). ' +
+        'Pass --enable-uploads or set allowUploads.',
     );
   }
   if (isMutatingMethod(method) && !policy.enableMutations) {

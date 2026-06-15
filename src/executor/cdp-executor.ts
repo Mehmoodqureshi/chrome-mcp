@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -45,6 +45,7 @@ import {
   type TabId,
   type TabInfo,
   type Target,
+  truncateEvalResult,
   type WaitResult,
   type WaitUntil,
 } from './types';
@@ -52,6 +53,8 @@ import {
 const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 const STEALTH = `Object.defineProperty(navigator,'webdriver',{get:()=>undefined});`;
 const NON_CONTENT = /^(file|data|devtools|chrome|about):/i;
+/** Playwright errors that mean the page/context/browser died under us → DETACHED. */
+const CLOSED_TARGET = /Target closed|Browser has been closed|Target page, context or browser has been closed|Execution context was destroyed/i;
 
 /** Minimal CSS attribute-value escape for ref selectors (refs are `e\d+`, but be safe). */
 function cssEscape(s: string): string {
@@ -285,6 +288,26 @@ export class CdpExecutor implements Executor {
     throw new ExecutorError('SELECTOR_NOT_FOUND', 'provide a selector or a ref from snapshot()');
   }
 
+  /**
+   * Run a live-page operation, converting an opaque "target closed"/crashed
+   * error from Playwright into a clean DETACHED. On such a failure we also drop
+   * the cached context/tabs so the next call relaunches or reconnects cleanly.
+   * Any other error is rethrown unchanged.
+   */
+  private async guard<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (CLOSED_TARGET.test(msg)) {
+        this.context = null;
+        this.tabs.clear();
+        throw new ExecutorError('DETACHED', 'browser target closed or crashed; reconnect and retry');
+      }
+      throw err;
+    }
+  }
+
   // -- tabs ---------------------------------------------------------------
   async tabsList(): Promise<TabInfo[]> {
     const ctx = await this.getContext();
@@ -319,103 +342,131 @@ export class CdpExecutor implements Executor {
     return w ?? 'load';
   }
   async navigate(args: { url: string; tabId?: TabId; waitUntil?: WaitUntil }): Promise<NavResult> {
-    const p = await this.resolveTab(args.tabId);
-    const resp = await p.goto(args.url, { waitUntil: this.toState(args.waitUntil) });
-    return { url: p.url(), title: await p.title().catch(() => ''), httpStatus: resp?.status() };
+    return this.guard(async () => {
+      const p = await this.resolveTab(args.tabId);
+      const resp = await p.goto(args.url, { waitUntil: this.toState(args.waitUntil) });
+      return { url: p.url(), title: await p.title().catch(() => ''), httpStatus: resp?.status() };
+    });
   }
   async back(tabId?: TabId): Promise<NavResult> {
-    const p = await this.resolveTab(tabId);
-    await p.goBack().catch(() => undefined);
-    return { url: p.url(), title: await p.title().catch(() => '') };
+    return this.guard(async () => {
+      const p = await this.resolveTab(tabId);
+      await p.goBack().catch(() => undefined);
+      return { url: p.url(), title: await p.title().catch(() => '') };
+    });
   }
   async forward(tabId?: TabId): Promise<NavResult> {
-    const p = await this.resolveTab(tabId);
-    await p.goForward().catch(() => undefined);
-    return { url: p.url(), title: await p.title().catch(() => '') };
+    return this.guard(async () => {
+      const p = await this.resolveTab(tabId);
+      await p.goForward().catch(() => undefined);
+      return { url: p.url(), title: await p.title().catch(() => '') };
+    });
   }
   async reload(args?: { tabId?: TabId; waitUntil?: WaitUntil }): Promise<NavResult> {
-    const p = await this.resolveTab(args?.tabId);
-    await p.reload({ waitUntil: this.toState(args?.waitUntil) });
-    return { url: p.url(), title: await p.title().catch(() => '') };
+    return this.guard(async () => {
+      const p = await this.resolveTab(args?.tabId);
+      await p.reload({ waitUntil: this.toState(args?.waitUntil) });
+      return { url: p.url(), title: await p.title().catch(() => '') };
+    });
   }
 
   // -- interaction --------------------------------------------------------
   private ok: ActionOk = { ok: true };
   async click(t: Target, opts?: { tabId?: TabId; button?: 'left' | 'right' | 'middle'; clickCount?: number; trusted?: boolean }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    // Playwright already drives real (trusted) input, so `trusted` is a no-op here.
-    await this.locator(p, t).click({ button: opts?.button, clickCount: opts?.clickCount });
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      // Playwright already drives real (trusted) input, so `trusted` is a no-op here.
+      await this.locator(p, t).click({ button: opts?.button, clickCount: opts?.clickCount });
+      return this.ok;
+    });
   }
   async type(t: Target, text: string, opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    const loc = this.locator(p, t);
-    if (opts?.clear) await loc.fill('');
-    if (opts?.keyEvents) await loc.pressSequentially(text);
-    else await loc.fill((opts?.clear ? '' : '') + text);
-    if (opts?.pressEnter) await loc.press('Enter');
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      const loc = this.locator(p, t);
+      if (opts?.clear) await loc.fill('');
+      if (opts?.keyEvents) await loc.pressSequentially(text);
+      else await loc.fill(text);
+      if (opts?.pressEnter) await loc.press('Enter');
+      return this.ok;
+    });
   }
   async selectOption(t: Target, values: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    // Try by value, then fall back to visible label.
-    const loc = this.locator(p, t);
-    try {
-      await loc.selectOption(values);
-    } catch {
-      await loc.selectOption(values.map((label) => ({ label })));
-    }
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      // Try by value, then fall back to visible label.
+      const loc = this.locator(p, t);
+      try {
+        await loc.selectOption(values);
+      } catch {
+        await loc.selectOption(values.map((label) => ({ label })));
+      }
+      return this.ok;
+    });
   }
   async fill(t: Target, value: string, opts?: { tabId?: TabId }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    await this.locator(p, t).fill(value);
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      await this.locator(p, t).fill(value);
+      return this.ok;
+    });
   }
   async press(key: string, opts?: { tabId?: TabId; modifiers?: KeyModifier[] }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    const combo = [...(opts?.modifiers ?? []), key].join('+');
-    await p.keyboard.press(combo);
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      const combo = [...(opts?.modifiers ?? []), key].join('+');
+      await p.keyboard.press(combo);
+      return this.ok;
+    });
   }
   async hover(t: Target, opts?: { tabId?: TabId }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts?.tabId);
-    await this.locator(p, t).hover();
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      await this.locator(p, t).hover();
+      return this.ok;
+    });
   }
   async scroll(opts: { tabId?: TabId; x?: number; y?: number; deltaX?: number; deltaY?: number; target?: Target }): Promise<ActionOk> {
-    const p = await this.resolveTab(opts.tabId);
-    if (opts.target) await this.locator(p, opts.target).scrollIntoViewIfNeeded();
-    else if (opts.x !== undefined || opts.y !== undefined) await p.evaluate(([x, y]) => window.scrollTo(x ?? 0, y ?? 0), [opts.x, opts.y]);
-    else await p.mouse.wheel(opts.deltaX ?? 0, opts.deltaY ?? 0);
-    return this.ok;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts.tabId);
+      if (opts.target) await this.locator(p, opts.target).scrollIntoViewIfNeeded();
+      else if (opts.x !== undefined || opts.y !== undefined) await p.evaluate(([x, y]) => window.scrollTo(x ?? 0, y ?? 0), [opts.x, opts.y]);
+      else await p.mouse.wheel(opts.deltaX ?? 0, opts.deltaY ?? 0);
+      return this.ok;
+    });
   }
 
   // -- read ---------------------------------------------------------------
   async getText(t?: Target, opts?: { tabId?: TabId }): Promise<{ text: string; ref?: string }> {
-    const p = await this.resolveTab(opts?.tabId);
-    const text = t ? await this.locator(p, t).innerText() : await p.locator('body').innerText();
-    return { text };
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      const text = t ? await this.locator(p, t).innerText() : await p.locator('body').innerText();
+      return { text };
+    });
   }
   async getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean }): Promise<{ html: string }> {
-    const p = await this.resolveTab(opts?.tabId);
-    if (!t) return { html: await p.content() };
-    const loc = this.locator(p, t);
-    const html = opts?.outer ? await loc.evaluate((el) => (el as Element).outerHTML) : await loc.innerHTML();
-    return { html };
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      if (!t) return { html: await p.content() };
+      const loc = this.locator(p, t);
+      const html = opts?.outer ? await loc.evaluate((el) => (el as Element).outerHTML) : await loc.innerHTML();
+      return { html };
+    });
   }
   async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult> {
-    const p = await this.resolveTab(opts?.tabId);
-    // Inject collectSnapshot's source and run it in the page (it can't close over module scope).
-    const raw = await p.evaluate(
-      ([fnSrc, interactiveOnly, max]) => {
-        // eslint-disable-next-line no-eval
-        const fn = (0, eval)(`(${fnSrc})`) as (i: boolean, m: number) => unknown;
-        return fn(interactiveOnly as boolean, max as number);
-      },
-      [collectSnapshot.toString(), opts?.interactiveOnly ?? true, opts?.max ?? 200] as const,
-    );
-    return raw as SnapshotResult;
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      // Inject collectSnapshot's source and run it in the page (it can't close over module scope).
+      const raw = await p.evaluate(
+        ([fnSrc, interactiveOnly, max]) => {
+          // eslint-disable-next-line no-eval
+          const fn = (0, eval)(`(${fnSrc})`) as (i: boolean, m: number) => unknown;
+          return fn(interactiveOnly as boolean, max as number);
+        },
+        [collectSnapshot.toString(), opts?.interactiveOnly ?? true, opts?.max ?? 200] as const,
+      );
+      return raw as SnapshotResult;
+    });
   }
   async getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }> {
     const p = await this.resolveTab(opts?.tabId);
@@ -430,56 +481,70 @@ export class CdpExecutor implements Executor {
     };
   }
   async storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult> {
-    const p = await this.resolveTab(args.tabId);
-    return p.evaluate((a) => {
-      const store = a.session ? window.sessionStorage : window.localStorage;
-      if (a.op === 'set') { store.setItem(String(a.key), String(a.value ?? '')); return { ok: true }; }
-      if (a.op === 'remove') { store.removeItem(String(a.key)); return { ok: true }; }
-      if (a.op === 'clear') { store.clear(); return { ok: true }; }
-      if (a.key) return { ok: true, value: store.getItem(a.key) };
-      const entries: Record<string, string> = {};
-      for (let i = 0; i < store.length; i++) { const k = store.key(i); if (k) entries[k] = store.getItem(k) ?? ''; }
-      return { ok: true, entries };
-    }, args) as Promise<StorageResult>;
+    return this.guard(async () => {
+      const p = await this.resolveTab(args.tabId);
+      return p.evaluate((a) => {
+        const store = a.session ? window.sessionStorage : window.localStorage;
+        if (a.op === 'set') { store.setItem(String(a.key), String(a.value ?? '')); return { ok: true }; }
+        if (a.op === 'remove') { store.removeItem(String(a.key)); return { ok: true }; }
+        if (a.op === 'clear') { store.clear(); return { ok: true }; }
+        if (a.key) return { ok: true, value: store.getItem(a.key) };
+        const entries: Record<string, string> = {};
+        for (let i = 0; i < store.length; i++) { const k = store.key(i); if (k) entries[k] = store.getItem(k) ?? ''; }
+        return { ok: true, entries };
+      }, args) as Promise<StorageResult>;
+    });
   }
   async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult> {
-    const p = await this.resolveTab(opts?.tabId);
-    const buf = opts?.target
-      ? await this.locator(p, opts.target).screenshot()
-      : await p.screenshot({ fullPage: opts?.fullPage });
-    const size = p.viewportSize() ?? { width: 0, height: 0 };
-    return { dataBase64: buf.toString('base64'), mimeType: 'image/png', width: size.width, height: size.height, truncated: false };
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      const buf = opts?.target
+        ? await this.locator(p, opts.target).screenshot()
+        : await p.screenshot({ fullPage: opts?.fullPage });
+      const size = p.viewportSize() ?? { width: 0, height: 0 };
+      return { dataBase64: buf.toString('base64'), mimeType: 'image/png', width: size.width, height: size.height, truncated: false };
+    });
   }
   async eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean }): Promise<EvalResult> {
-    const p = await this.resolveTab(opts?.tabId);
-    try {
-      const value = await p.evaluate((expr) => {
-        // eslint-disable-next-line no-eval
-        return (0, eval)(expr);
-      }, expression);
-      return { ok: true, value, type: typeof value };
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      try {
+        const value = await p.evaluate((expr) => {
+          // eslint-disable-next-line no-eval
+          return (0, eval)(expr);
+        }, expression);
+        return truncateEvalResult({ ok: true, value, type: typeof value });
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        // A dead/crashed target must surface as DETACHED, not a swallowed EvalResult error.
+        if (CLOSED_TARGET.test(msg)) throw err;
+        return { ok: false, error: msg };
+      }
+    });
   }
   async waitFor(opts: { tabId?: TabId; selector?: string; textContains?: string; gone?: boolean; timeoutMs?: number }): Promise<WaitResult> {
-    const p = await this.resolveTab(opts.tabId);
-    const timeout = opts.timeoutMs ?? 30_000;
-    const start = Date.now();
-    try {
-      if (opts.selector) {
-        await p.locator(opts.selector).first().waitFor({ state: opts.gone ? 'detached' : 'visible', timeout });
-      } else if (opts.textContains) {
-        await p.waitForFunction(
-          (needle) => document.body?.innerText.includes(needle) ?? false,
-          opts.textContains,
-          { timeout },
-        );
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts.tabId);
+      const timeout = opts.timeoutMs ?? 30_000;
+      const start = Date.now();
+      try {
+        if (opts.selector) {
+          await p.locator(opts.selector).first().waitFor({ state: opts.gone ? 'detached' : 'visible', timeout });
+        } else if (opts.textContains) {
+          await p.waitForFunction(
+            (needle) => document.body?.innerText.includes(needle) ?? false,
+            opts.textContains,
+            { timeout },
+          );
+        }
+        return { matched: true, waitedMs: Date.now() - start };
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        // Crashed target must escalate to DETACHED; a plain timeout stays a non-match.
+        if (CLOSED_TARGET.test(msg)) throw err;
+        return { matched: false, waitedMs: Date.now() - start };
       }
-      return { matched: true, waitedMs: Date.now() - start };
-    } catch {
-      return { matched: false, waitedMs: Date.now() - start };
-    }
+    });
   }
 
   // -- privileged ---------------------------------------------------------
@@ -503,7 +568,37 @@ export class CdpExecutor implements Executor {
     const target = args.target;
     if (!target) throw new ExecutorError('DOWNLOAD_FAILED', 'provide a url or a target');
     const [dl] = await Promise.all([p.waitForEvent('download'), this.locator(p, target).click()]);
-    await dl.saveAs(dest);
-    return { path: dest, backend: this.backend, bytes: 0, suggestedName: dl.suggestedFilename() };
+    let bytes = 0;
+    try {
+      // Surface a cancelled/interrupted download instead of reporting a phantom success.
+      const failure = await dl.failure();
+      if (failure) throw new ExecutorError('DOWNLOAD_FAILED', `download failed: ${failure}`);
+      await dl.saveAs(dest);
+      bytes = statSync(dest).size;
+    } catch (err) {
+      if (err instanceof ExecutorError) throw err;
+      throw new ExecutorError('DOWNLOAD_FAILED', `failed to save download: ${(err as Error).message}`);
+    }
+    return { path: dest, backend: this.backend, bytes, suggestedName: dl.suggestedFilename() };
+  }
+
+  async uploadFile(t: Target, files: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {
+    return this.guard(async () => {
+      for (const f of files) {
+        try {
+          statSync(f);
+        } catch {
+          throw new ExecutorError('UPLOAD_FAILED', `file not found: ${f}`);
+        }
+      }
+      const p = await this.resolveTab(opts?.tabId);
+      try {
+        await this.locator(p, t).setInputFiles(files);
+      } catch (err) {
+        if (err instanceof ExecutorError) throw err;
+        throw new ExecutorError('UPLOAD_FAILED', `could not set files on the input: ${(err as Error).message}`);
+      }
+      return this.ok;
+    });
   }
 }

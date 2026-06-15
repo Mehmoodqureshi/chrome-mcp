@@ -26,6 +26,7 @@ import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
 import {
   asArgs,
+  MAX_TEXT_LEN,
   McpToolError,
   optionalBoolean,
   optionalNumber,
@@ -34,6 +35,7 @@ import {
   optionalTarget,
   requireString,
   requireTarget,
+  requireWithinLength,
 } from './validators';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +91,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: obj({ selector: { type: 'string' }, tabId: { type: 'string' } }) },
   { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: obj({ fields: { type: 'object' }, submitSelector: { type: 'string' }, tabId: { type: 'string' } }, ['fields']) },
   { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: obj({ url: { type: 'string' }, ...TARGET_PROPS, suggestedName: { type: 'string' }, tabId: { type: 'string' } }) },
+  { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: obj({ ...TARGET_PROPS, files: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['files']) },
 
   { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: obj({}) },
 ];
@@ -174,7 +177,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     const t = requireTarget(a);
     await gate(ctx, 'type');
     return jsonResult(
-      await ctx.ex.type(t, requireString(a, 'text'), {
+      await ctx.ex.type(t, requireWithinLength(requireString(a, 'text'), 'text', MAX_TEXT_LEN), {
         tabId: tabId(a),
         clear: optionalBoolean(a, 'clear'),
         pressEnter: optionalBoolean(a, 'pressEnter'),
@@ -311,6 +314,9 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
       throw new McpToolError('"fields" must be an object mapping selector -> string|boolean');
     }
+    for (const [sel, val] of Object.entries(fields as Record<string, unknown>)) {
+      if (typeof val === 'string') requireWithinLength(val, `fields["${sel}"]`, MAX_TEXT_LEN);
+    }
     return jsonResult(
       await fillForm(ctx.ex, {
         fields: fields as Record<string, string | boolean>,
@@ -328,6 +334,13 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       await ctx.ex.download({ url, target, tabId: tabId(a), suggestedName: optionalString(a, 'suggestedName') }),
     );
   },
+  upload_file: async (a, ctx) => {
+    const t = requireTarget(a);
+    await gate(ctx, 'upload_file');
+    const files = optionalStringArray(a, 'files');
+    if (!files || files.length === 0) throw new McpToolError('"files" must be a non-empty array of absolute local paths');
+    return jsonResult(await ctx.ex.uploadFile(t, files, { tabId: tabId(a) }));
+  },
 
   chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
 };
@@ -342,9 +355,43 @@ function errMessage(err: unknown): string {
   return `internal error: ${String(err)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Rate limiting — a sliding window over tool calls for the active session.
+// Generous by default so normal use and the test suite are unaffected; tune
+// via the constants below.
+// ---------------------------------------------------------------------------
+
+/** Max tool calls permitted within `RATE_WINDOW_MS`. */
+const RATE_MAX_CALLS = 600;
+/** Sliding-window length, in milliseconds. */
+const RATE_WINDOW_MS = 60_000;
+
+/** Timestamps (ms) of recent dispatches; older entries are evicted lazily. */
+let rateWindow: number[] = [];
+
+/** Reset limiter state — for tests that exercise the ceiling. */
+export function resetRateLimiter(): void {
+  rateWindow = [];
+}
+
+/**
+ * Record one call and report whether it is within the ceiling. Evicts entries
+ * older than the window so the array stays bounded.
+ */
+function allowCall(now: number): boolean {
+  const cutoff = now - RATE_WINDOW_MS;
+  if (rateWindow.length > 0 && rateWindow[0] <= cutoff) {
+    rateWindow = rateWindow.filter((t) => t > cutoff);
+  }
+  if (rateWindow.length >= RATE_MAX_CALLS) return false;
+  rateWindow.push(now);
+  return true;
+}
+
 export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<CallToolResult> {
   const handler = TOOL_HANDLERS[name];
   if (!handler) return errorResult(`unknown tool: ${name}`);
+  if (!allowCall(Date.now())) return errorResult('rate limit exceeded; slow down');
   try {
     const mgr = getManager();
     const ex = await mgr.ensureReady();

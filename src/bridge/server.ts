@@ -32,6 +32,8 @@ import { tokensMatch } from './auth';
 
 const HELLO_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_MS = 15_000;
+/** Max pre-auth frames a socket may send before a valid hello (anti-idle-hold). */
+const MAX_PREAUTH_FRAMES = 10;
 
 export interface DisplacementInfo {
   oldExtId: string;
@@ -118,6 +120,9 @@ export class BridgeServer {
 
   private handleConnection(ws: WebSocket): void {
     let authed = false;
+    // Cap pre-auth frames so a peer can't hold a socket idle by streaming
+    // non-hello noise until HELLO_TIMEOUT_MS.
+    let preAuthFrames = 0;
     const helloTimer = setTimeout(() => {
       if (authed) return;
       this.reject(ws, 'timeout');
@@ -126,6 +131,11 @@ export class BridgeServer {
 
     const onMessage = (raw: import('ws').RawData): void => {
       if (authed) return;
+      if (++preAuthFrames > MAX_PREAUTH_FRAMES) {
+        clearTimeout(helloTimer);
+        this.reject(ws, 'bad_token');
+        return;
+      }
       let frame: Partial<HelloFrame>;
       try {
         frame = JSON.parse(raw.toString()) as Partial<HelloFrame>;
@@ -178,7 +188,12 @@ export class BridgeServer {
         `extension "${ext.id}" superseded active connection "${prev.extId}"` +
           (differentId ? ' (DIFFERENT id — possible hijack; surfaced to status)' : ''),
       );
-      this.opts.onDisplacement?.({ oldExtId: prev.extId, newExtId: ext.id, differentId });
+      try {
+        this.opts.onDisplacement?.({ oldExtId: prev.extId, newExtId: ext.id, differentId });
+      } catch {
+        // A throwing displacement callback must not take down the bridge.
+        this.log('onDisplacement callback threw; ignored');
+      }
       prev.close(CLOSE_SUPERSEDED, 'superseded');
     }
 

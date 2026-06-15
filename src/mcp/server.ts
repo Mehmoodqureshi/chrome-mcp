@@ -15,6 +15,9 @@ import { registerTools } from './tools';
 const SERVER_NAME = 'chrome-mcp';
 const SERVER_VERSION = '0.1.0';
 
+/** Default version reported when no explicit version is passed in (legacy callers/tests). */
+const DEFAULT_VERSION = SERVER_VERSION;
+
 let server: Server | null = null;
 let transport: StdioServerTransport | null = null;
 
@@ -24,9 +27,9 @@ export function logErr(message: string): void {
 }
 
 /** Build a fresh `Server` with the full tool surface registered (no transport). */
-export function createServer(): Server {
+export function createServer(version: string = DEFAULT_VERSION): Server {
   const srv = new Server(
-    { name: SERVER_NAME, version: SERVER_VERSION },
+    { name: SERVER_NAME, version },
     { capabilities: { tools: {} } },
   );
   registerTools(srv);
@@ -37,12 +40,12 @@ export function createServer(): Server {
 }
 
 /** Start over stdio. Idempotent. */
-export async function startMcpServer(): Promise<void> {
+export async function startMcpServer(version: string = DEFAULT_VERSION): Promise<void> {
   if (server) {
     logErr('startMcpServer called but already running; ignoring.');
     return;
   }
-  const srv = createServer();
+  const srv = createServer(version);
   const tx = new StdioServerTransport();
   try {
     await srv.connect(tx);
@@ -54,7 +57,7 @@ export async function startMcpServer(): Promise<void> {
   }
   server = srv;
   transport = tx;
-  logErr(`${SERVER_NAME} v${SERVER_VERSION} connected over stdio.`);
+  logErr(`${SERVER_NAME} v${version} connected over stdio.`);
 }
 
 /** Stop and release the transport. Idempotent, best-effort. */

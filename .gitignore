@@ -6,6 +6,7 @@ extension-dist/
 # Local, secret, or machine-specific
 .claude/settings.local.json
 .chrome-mcp/
+profile-photo.png
 token
 *.handshake
 handshake.json
@@ -14,10 +15,18 @@ policy.json
 
 # Session scratch (ad-hoc drivers / command logs)
 .persistent.cjs
-.wpos_harness.mjs
+.*_harness.mjs
 .search_driver.mjs
+.capture_*.mjs
+.shot.mjs
 .cmds.jsonl
 .results.jsonl
+capture/
+scaffold/
 .env
 .env.*
 .DS_Store
+
+# Research deliverables — keep local only, never commit
+wordpress-research/
+react-research/

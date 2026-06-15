@@ -50,6 +50,33 @@ export interface EvalResult {
   value?: unknown;
   type?: string;
   error?: string;
+  /** Set when `value` exceeded MAX_EVAL_BYTES and was replaced by a truncated JSON string. */
+  truncated?: boolean;
+}
+
+/** Hard cap on a serialized eval result before it is truncated (see `truncateEvalResult`). */
+export const MAX_EVAL_BYTES = 256 * 1024;
+
+/**
+ * Enforce the EvalResult size cap uniformly across backends. Attempts to
+ * JSON-serialize `value`; if the UTF-8 byte length exceeds MAX_EVAL_BYTES the
+ * value is replaced by the JSON sliced to the cap with a `...[truncated]`
+ * marker and `truncated: true` is set. Non-serializable values (stringify
+ * throws or yields undefined) are left untouched — this never throws.
+ */
+export function truncateEvalResult(result: EvalResult): EvalResult {
+  if (!result.ok || result.value === undefined) return result;
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(result.value);
+  } catch {
+    return result; // not serializable — leave value as-is
+  }
+  if (json === undefined) return result;
+  if (Buffer.byteLength(json, 'utf8') <= MAX_EVAL_BYTES) return result;
+  // Slice by bytes, then trim any partial trailing UTF-8 char before appending the marker.
+  const sliced = Buffer.from(json, 'utf8').subarray(0, MAX_EVAL_BYTES).toString('utf8');
+  return { ...result, value: `${sliced}...[truncated]`, truncated: true };
 }
 
 export interface WaitResult {
@@ -212,6 +239,14 @@ export interface Executor {
     tabId?: TabId;
     suggestedName?: string;
   }): Promise<DownloadResult>;
+
+  /**
+   * Set the files on a file `<input>` (target by selector or ref) from local
+   * absolute paths — the upload equivalent of a file-picker, without the OS
+   * dialog. Privileged: sends local files to the page, so it is gated by
+   * `allowUploads` and the destination domain allowlist.
+   */
+  uploadFile(t: Target, files: string[], opts?: { tabId?: TabId }): Promise<ActionOk>;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +273,7 @@ export type ExecutorErrorCodeLocal =
   | 'POLICY_DENIED'
   | 'DEVTOOLS_OPEN'
   | 'DOWNLOAD_FAILED'
+  | 'UPLOAD_FAILED'
   | 'BACKPRESSURE';
 
 export class ExecutorError extends Error {
