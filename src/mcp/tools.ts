@@ -10,6 +10,8 @@
  * `Error` as an `isError` result.
  */
 
+import { resolve as pathResolve, sep } from 'node:path';
+
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
@@ -339,6 +341,17 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     await gate(ctx, 'upload_file');
     const files = optionalStringArray(a, 'files');
     if (!files || files.length === 0) throw new McpToolError('"files" must be a non-empty array of absolute local paths');
+    // Path restriction: if uploadsDir is configured, every file must resolve to a
+    // location inside it (blocks `..` traversal and arbitrary-file exfiltration).
+    if (ctx.policy.uploadsDir) {
+      const dir = pathResolve(ctx.policy.uploadsDir);
+      for (const f of files) {
+        const abs = pathResolve(f);
+        if (abs !== dir && !abs.startsWith(dir + sep)) {
+          throw new McpToolError(`upload denied: "${f}" is outside the allowed uploads dir (${dir})`);
+        }
+      }
+    }
     return jsonResult(await ctx.ex.uploadFile(t, files, { tabId: tabId(a) }));
   },
 

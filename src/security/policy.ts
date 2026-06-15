@@ -31,6 +31,8 @@ export interface Policy {
   allowDownloads: boolean;
   /** Allow `upload_file` (sends local files to the page — exfiltration risk). */
   allowUploads: boolean;
+  /** If set, `upload_file` may only read files inside this directory (absolute path). */
+  uploadsDir?: string;
   /** Allow acting on / reading tabs whose URL is not in `allowDomains` is governed
    *  by `allowDomains`; this flag instead relaxes tab *management* (list/select)
    *  to all tabs regardless of their URL. Default false. */
@@ -45,6 +47,7 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   allowEval: false,
   allowDownloads: false,
   allowUploads: false,
+  uploadsDir: undefined,
   allowAllTabs: false,
   enableMutations: false,
 });
@@ -56,6 +59,7 @@ export function resolvePolicy(partial?: Partial<Policy>): Policy {
     allowEval: partial?.allowEval ?? DEFAULT_POLICY.allowEval,
     allowDownloads: partial?.allowDownloads ?? DEFAULT_POLICY.allowDownloads,
     allowUploads: partial?.allowUploads ?? DEFAULT_POLICY.allowUploads,
+    uploadsDir: partial?.uploadsDir ?? DEFAULT_POLICY.uploadsDir,
     allowAllTabs: partial?.allowAllTabs ?? DEFAULT_POLICY.allowAllTabs,
     enableMutations: partial?.enableMutations ?? DEFAULT_POLICY.enableMutations,
   };

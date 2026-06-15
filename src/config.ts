@@ -8,7 +8,7 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { readFileSync } from 'node:fs';
 
 import { DEFAULT_WS_PORT } from '../shared/protocol';
@@ -115,6 +115,9 @@ export function parseArgs(argv: string[]): CliConfig {
         break;
       case '--enable-uploads':
         policyFlags.allowUploads = true;
+        break;
+      case '--uploads-dir':
+        policyFlags.uploadsDir = resolvePath(requireValue(argv[++i], '--uploads-dir'));
         break;
       case '--allow-all-tabs':
         policyFlags.allowAllTabs = true;
@@ -230,6 +233,7 @@ Security (default: deny-all safe mode):
   --unsafe-enable-eval   Enable the eval primitive (off by default)
   --enable-downloads     Enable download_file (off by default)
   --enable-uploads       Enable upload_file — sends local files to a page (off by default)
+  --uploads-dir <path>   Restrict upload_file to files inside <path> (recommended with --enable-uploads)
   --allow-all-tabs       Relax tab list/select to all tabs
 
 Misc:

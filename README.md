@@ -36,7 +36,9 @@ exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutat
 
 > `--enable-uploads` permits `upload_file` (setting local file(s) on a page's file
 > `<input>`). It is **off by default** because sending local files to a page is an
-> exfiltration risk; it is also gated by the destination-domain allowlist.
+> exfiltration risk; it is also gated by the destination-domain allowlist. Pair it
+> with `--uploads-dir <path>` to restrict uploads to files inside that directory
+> (`..` traversal is blocked) — strongly recommended for unattended use.
 
 **Drive only your real Chrome (recommended for the extension).** Add
 `--no-cdp-fallback` so the server never launches a separate Chromium, and

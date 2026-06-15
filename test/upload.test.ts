@@ -84,6 +84,41 @@ test('upload_file happy path through the stub returns ok', async () => {
   assert.notEqual(r.isError, true);
 });
 
+function configureWithDir(uploadsDir: string): void {
+  resetManagerForTesting();
+  resetRateLimiter();
+  configureManager({
+    policy: resolvePolicy({ allowDomains: ['*'], allowUploads: true, uploadsDir }),
+    makeExecutor: () => new StubExecutor({ activeUrl: 'https://example.com' }),
+  });
+}
+
+test('uploads-dir: a file INSIDE the allowed dir is accepted', async () => {
+  configureWithDir('/srv/uploads');
+  const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/srv/uploads/paper.pdf'] });
+  assert.notEqual(r.isError, true);
+});
+
+test('uploads-dir: a file OUTSIDE the allowed dir is a clean isError', async () => {
+  configureWithDir('/srv/uploads');
+  const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/etc/passwd'] });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /outside the allowed uploads dir/i);
+});
+
+test('uploads-dir: a ".." traversal escape is blocked', async () => {
+  configureWithDir('/srv/uploads');
+  const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/srv/uploads/../../etc/shadow'] });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /outside the allowed uploads dir/i);
+});
+
+test('uploads-dir: a sibling-prefix dir does NOT count as inside', async () => {
+  configureWithDir('/srv/uploads');
+  const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/srv/uploads-evil/x.pdf'] });
+  assert.equal(r.isError, true);
+});
+
 // --- C. Live CDP (skipped when Chromium isn't installed) --------------------
 
 let hasChromium = false;
