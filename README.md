@@ -32,7 +32,11 @@ Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
 
 By default everything is **deny-all** (no domains, no eval, no mutations). Grant
 exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutations`,
-`--enable-downloads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
+`--enable-downloads`, `--enable-uploads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
+
+> `--enable-uploads` permits `upload_file` (setting local file(s) on a page's file
+> `<input>`). It is **off by default** because sending local files to a page is an
+> exfiltration risk; it is also gated by the destination-domain allowlist.
 
 **Drive only your real Chrome (recommended for the extension).** Add
 `--no-cdp-fallback` so the server never launches a separate Chromium, and
@@ -71,8 +75,9 @@ The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
 `scroll`/`select_option`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`),
 an accessibility `snapshot` (interactive elements with stable `ref`s the model can
 target instead of guessing CSS selectors), session access (`get_cookies`/`storage`),
-helpers (`extract_links`/`read_as_markdown`/`fill_form`/`download_file`), and
-`chrome_status`.
+helpers (`extract_links`/`read_as_markdown`/`fill_form`/`download_file`/`upload_file`),
+and `chrome_status`. `upload_file` sets local file(s) on a file `<input>` without the
+OS dialog (requires `--enable-uploads`).
 
 `click`/`type` accept `trusted: true` for real OS-level input (works on
 React/Vue controlled inputs); interactions auto-wait for the target to appear.
@@ -91,7 +96,7 @@ token (`--persist-token`).
       (default-deny policy + capability gates), `src/config.ts` (CLI/env/policy
       resolution), build + test harness.
 - [x] **Phase 1 — MCP server + StubExecutor:** `mcp/server.ts` (clean-stdout
-      stdio), `mcp/tools.ts` (23-tool catalog + never-throw dispatch +
+      stdio), `mcp/tools.ts` (28-tool catalog + never-throw dispatch +
       drift-check), validators/envelopes/helpers, `ExecutorManager` +
       `StubExecutor`, `cli.ts`. Point an MCP host at `node dist/src/cli.js` today.
 - [x] **Phase 2 — WebSocket bridge + auth:** `bridge/server.ts` (loopback WS,
