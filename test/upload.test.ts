@@ -56,7 +56,9 @@ function configure(stub: StubOptions = {}): void {
   resetManagerForTesting();
   resetRateLimiter();
   configureManager({
-    policy: resolvePolicy({ allowDomains: ['*'], allowUploads: true }),
+    // uploads now REQUIRE a confinement dir; the generic happy-path tests below
+    // use /tmp so file paths under it are accepted.
+    policy: resolvePolicy({ allowDomains: ['*'], allowUploads: true, uploadsDir: '/tmp' }),
     makeExecutor: () => new StubExecutor(stub),
   });
 }
@@ -82,6 +84,18 @@ test('upload_file happy path through the stub returns ok', async () => {
   configure({ activeUrl: 'https://example.com' });
   const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/tmp/x.pdf'] });
   assert.notEqual(r.isError, true);
+});
+
+test('upload_file is denied when uploads are enabled but no uploads-dir is configured', async () => {
+  resetManagerForTesting();
+  resetRateLimiter();
+  configureManager({
+    policy: resolvePolicy({ allowDomains: ['*'], allowUploads: true }), // no uploadsDir
+    makeExecutor: () => new StubExecutor({ activeUrl: 'https://example.com' }),
+  });
+  const r = await dispatchToolCall('upload_file', { selector: '#f', files: ['/tmp/x.pdf'] });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /require.*uploads-dir|uploads require/i);
 });
 
 function configureWithDir(uploadsDir: string): void {

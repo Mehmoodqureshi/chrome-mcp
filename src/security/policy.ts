@@ -6,9 +6,16 @@
  * threat, so the policy:
  *   - is ON by default with a SAFE default (empty allowlist, no eval, no
  *     downloads, mutations disabled),
- *   - gates READS as well as writes (reads are the exfil payload),
- *   - is enforced at BOTH ends — the executor dispatch (server) AND the
- *     extension router — before any attach/navigate/eval/read.
+ *   - gates READS as well as writes (reads are the exfil payload).
+ *
+ * SCOPE OF ENFORCEMENT: this policy is enforced SERVER-SIDE ONLY, at the executor
+ * dispatch chokepoint (`assertUrlAllowed` in src/mcp/tools.ts). The extension does
+ * NOT independently re-check the policy, so the bridge token is the sole trust
+ * boundary for the WebSocket: any client holding the token can issue commands the
+ * extension will execute, regardless of this policy. The policy constrains the
+ * official MCP server (and thus the LLM driving it); it is not a second line of
+ * defense against a rogue token-holding client. (A future hardening would mirror
+ * this gate inside the extension router via a policy delivered in the welcome frame.)
  *
  * `assertUrlAllowed(url, method, policy)` is the single chokepoint. It throws an
  * `ExecutorError('POLICY_DENIED', …)` which the never-throw dispatch firewall

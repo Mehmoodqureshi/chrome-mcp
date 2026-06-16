@@ -341,15 +341,18 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     await gate(ctx, 'upload_file');
     const files = optionalStringArray(a, 'files');
     if (!files || files.length === 0) throw new McpToolError('"files" must be a non-empty array of absolute local paths');
-    // Path restriction: if uploadsDir is configured, every file must resolve to a
-    // location inside it (blocks `..` traversal and arbitrary-file exfiltration).
-    if (ctx.policy.uploadsDir) {
-      const dir = pathResolve(ctx.policy.uploadsDir);
-      for (const f of files) {
-        const abs = pathResolve(f);
-        if (abs !== dir && !abs.startsWith(dir + sep)) {
-          throw new McpToolError(`upload denied: "${f}" is outside the allowed uploads dir (${dir})`);
-        }
+    // Path restriction: uploads MUST be confined to a configured directory. Without
+    // one, any absolute path (e.g. ~/.ssh/id_rsa) could be uploaded to a page, so we
+    // refuse rather than allow unrestricted local-file access. With a dir, every file
+    // must resolve inside it (blocks `..` traversal and arbitrary-file exfiltration).
+    if (!ctx.policy.uploadsDir) {
+      throw new McpToolError('upload denied: uploads require an --uploads-dir to be configured (refusing unrestricted local-file access)');
+    }
+    const dir = pathResolve(ctx.policy.uploadsDir);
+    for (const f of files) {
+      const abs = pathResolve(f);
+      if (abs !== dir && !abs.startsWith(dir + sep)) {
+        throw new McpToolError(`upload denied: "${f}" is outside the allowed uploads dir (${dir})`);
       }
     }
     return jsonResult(await ctx.ex.uploadFile(t, files, { tabId: tabId(a) }));
