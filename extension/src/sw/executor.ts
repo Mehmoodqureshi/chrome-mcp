@@ -56,6 +56,25 @@ async function targetTab(cmd: CommandFrame): Promise<number> {
   return cmd.tabId ? parseTabId(cmd.tabId) : currentTabId();
 }
 
+/**
+ * The URL the policy gate should evaluate for `cmd`: the DESTINATION for
+ * `navigate`, otherwise the target/active tab's current URL. Returns '' if it
+ * can't be resolved — the gate treats that as not-allowlisted (fail-closed).
+ */
+export async function urlForCommand(cmd: CommandFrame): Promise<string> {
+  if (cmd.method === 'navigate') {
+    const u = cmd.params.url;
+    return typeof u === 'string' ? u : '';
+  }
+  try {
+    const tabId = await targetTab(cmd);
+    const t = await chrome.tabs.get(tabId);
+    return t.url ?? '';
+  } catch {
+    return '';
+  }
+}
+
 async function execInTab<T>(
   tabId: number,
   func: (...args: unknown[]) => T,

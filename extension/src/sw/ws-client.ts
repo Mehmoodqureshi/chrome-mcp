@@ -12,6 +12,7 @@ import {
   type CommandFrame,
   type HelloFrame,
   type ServerFrame,
+  type WirePolicy,
 } from '../../../shared/protocol';
 
 export type ConnState = 'idle' | 'connecting' | 'connected' | 'unauthorized';
@@ -19,6 +20,8 @@ export type ConnState = 'idle' | 'connecting' | 'connected' | 'unauthorized';
 export interface WsClientDeps {
   onCommand: (cmd: CommandFrame) => void;
   onState: (state: ConnState, detail?: string) => void;
+  /** Receives the policy the server delivers in `welcome`, for extension-side gating. */
+  onPolicy: (policy: WirePolicy) => void;
   log: (message: string) => void;
 }
 
@@ -70,6 +73,7 @@ export class WsClient {
       }
       switch (frame.type) {
         case 'welcome':
+          this.deps.onPolicy(frame.policy);
           this.setState('connected');
           this.deps.log('paired with server');
           break;

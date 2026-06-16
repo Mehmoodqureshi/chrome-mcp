@@ -14,6 +14,7 @@
 import { WsClient, type ConnState } from './ws-client';
 import { CommandRouter } from './router';
 import { ChromeExecutor } from './executor';
+import type { WirePolicy } from '../../../shared/protocol';
 
 interface PairConfig {
   wsPort: number;
@@ -22,15 +23,23 @@ interface PairConfig {
 
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
 
+/** The policy delivered by the server in `welcome`; the router mirrors the gate
+ *  against it. Null until a welcome arrives (commands only flow after welcome). */
+let currentPolicy: WirePolicy | null = null;
+
 const executor = new ChromeExecutor();
 const ws = new WsClient({
   onCommand: (cmd) => void router.dispatch(cmd),
   onState: (state) => void persistState(state),
+  onPolicy: (policy) => {
+    currentPolicy = policy;
+  },
   log: (m) => console.debug('[chrome-mcp]', m),
 });
 const router = new CommandRouter({
   exec: executor,
   send: (frame) => ws.send(frame),
+  getPolicy: () => currentPolicy,
   log: (m) => console.debug('[chrome-mcp]', m),
 });
 

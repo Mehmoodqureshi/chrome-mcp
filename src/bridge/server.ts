@@ -25,7 +25,9 @@ import {
   type WelcomeFrame,
   type WireEvent,
   type WireMethod,
+  type WirePolicy,
 } from '../../shared/protocol';
+import { DENY_ALL_WIRE_POLICY } from '../../shared/policy';
 import { ExecutorError } from '../executor/types';
 import { ExtensionConnection } from './connection';
 import { tokensMatch } from './auth';
@@ -45,6 +47,9 @@ export interface DisplacementInfo {
 export interface BridgeOptions {
   token: string;
   serverVersion: string;
+  /** Active policy, sent to the extension in `welcome` so it mirrors the gate.
+   *  Defaults to deny-all if omitted. */
+  policy?: WirePolicy;
   port?: number;
   host?: string;
   heartbeatMs?: number;
@@ -216,6 +221,7 @@ export class BridgeServer {
       serverVersion: this.opts.serverVersion,
       sessionId,
       heartbeatMs: this.heartbeatMs,
+      policy: this.opts.policy ?? DENY_ALL_WIRE_POLICY,
     };
     this.send(ws, welcome);
     this.log(`extension paired (session ${sessionId}, id "${ext.id}")`);

@@ -12,12 +12,16 @@ import {
   type ErrorFrame,
   type ExecutorErrorCode,
   type ResultFrame,
+  type WirePolicy,
 } from '../../../shared/protocol';
-import { ChromeExecutor, CmdError, HANDLED } from './executor';
+import { evaluatePolicy, isUrlGated } from '../../../shared/policy';
+import { ChromeExecutor, CmdError, HANDLED, urlForCommand } from './executor';
 
 export interface RouterDeps {
   exec: ChromeExecutor;
   send: (frame: ResultFrame | ErrorFrame) => void;
+  /** The policy delivered in `welcome`, or null before one arrives. */
+  getPolicy: () => WirePolicy | null;
   log: (message: string) => void;
 }
 
@@ -30,6 +34,15 @@ export class CommandRouter {
 
   async dispatch(cmd: CommandFrame): Promise<void> {
     try {
+      // Extension-side policy mirror (defense-in-depth): run the SAME shared gate
+      // the server runs, so a client that bypasses the server can't drive the
+      // extension outside policy. Fails closed if the policy hasn't arrived.
+      const policy = this.deps.getPolicy();
+      if (policy) {
+        const url = isUrlGated(cmd.method) ? await urlForCommand(cmd) : '';
+        const verdict = evaluatePolicy(url, cmd.method, policy);
+        if (!verdict.ok) throw new CmdError('POLICY_DENIED', verdict.reason);
+      }
       const data = await this.deps.exec.run(cmd);
       const frame: ResultFrame = { type: 'result', v: PROTOCOL_VERSION, id: cmd.id, ok: true, data };
       this.deps.send(frame);

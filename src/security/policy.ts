@@ -6,46 +6,43 @@
  * threat, so the policy:
  *   - is ON by default with a SAFE default (empty allowlist, no eval, no
  *     downloads, mutations disabled),
- *   - gates READS as well as writes (reads are the exfil payload).
- *
- * SCOPE OF ENFORCEMENT: this policy is enforced SERVER-SIDE ONLY, at the executor
- * dispatch chokepoint (`assertUrlAllowed` in src/mcp/tools.ts). The extension does
- * NOT independently re-check the policy, so the bridge token is the sole trust
- * boundary for the WebSocket: any client holding the token can issue commands the
- * extension will execute, regardless of this policy. The policy constrains the
- * official MCP server (and thus the LLM driving it); it is not a second line of
- * defense against a rogue token-holding client. (A future hardening would mirror
- * this gate inside the extension router via a policy delivered in the welcome frame.)
+ *   - gates READS as well as writes (reads are the exfil payload),
+ *   - is enforced at BOTH ends. The decision lives in `shared/policy.ts`
+ *     (`evaluatePolicy`); the server wraps it here (`assertUrlAllowed`) and the
+ *     extension router runs the SAME function against the policy delivered in the
+ *     `welcome` frame. Because both ends call one shared function, they cannot
+ *     drift, and a client that bypasses the server still hits the extension gate.
+ *     (The bridge token remains the PRIMARY trust boundary for the WebSocket;
+ *     the extension gate is defense-in-depth on top of it.)
  *
  * `assertUrlAllowed(url, method, policy)` is the single chokepoint. It throws an
  * `ExecutorError('POLICY_DENIED', …)` which the never-throw dispatch firewall
  * renders as a structured MCP error.
  */
 
-import type { WireMethod } from '../../shared/protocol';
+import type { WireMethod, WirePolicy } from '../../shared/protocol';
 import { ExecutorError } from '../executor/types';
+import {
+  evaluatePolicy,
+  isReadMethod,
+  isMutatingMethod,
+  isUrlGated,
+  hostOf,
+  isDomainAllowed,
+} from '../../shared/policy';
+
+// Re-exported so existing server-side importers keep their entry point.
+export { isReadMethod, isMutatingMethod, isUrlGated, hostOf, isDomainAllowed };
 
 // ---------------------------------------------------------------------------
 // Policy shape + defaults
 // ---------------------------------------------------------------------------
 
-export interface Policy {
-  /** Glob domain allowlist, e.g. ['example.com', '*.example.com', '*']. Empty = deny all. */
-  allowDomains: string[];
-  /** Allow the `eval` primitive at all. */
-  allowEval: boolean;
-  /** Allow `download_file`. */
-  allowDownloads: boolean;
-  /** Allow `upload_file` (sends local files to the page — exfiltration risk). */
-  allowUploads: boolean;
+/** The full server-side policy: the wire-serializable {@link WirePolicy} plus the
+ *  server-only `uploadsDir` (a local path, never sent to the extension). */
+export interface Policy extends WirePolicy {
   /** If set, `upload_file` may only read files inside this directory (absolute path). */
   uploadsDir?: string;
-  /** Allow acting on / reading tabs whose URL is not in `allowDomains` is governed
-   *  by `allowDomains`; this flag instead relaxes tab *management* (list/select)
-   *  to all tabs regardless of their URL. Default false. */
-  allowAllTabs: boolean;
-  /** Safe-mode master switch for the mutating tool set (click/type/navigate/…). */
-  enableMutations: boolean;
 }
 
 /** The SAFE default: deny everything until the user opts in. */
@@ -73,149 +70,16 @@ export function resolvePolicy(partial?: Partial<Policy>): Policy {
 }
 
 // ---------------------------------------------------------------------------
-// Method classification
-// ---------------------------------------------------------------------------
-
-/** Methods that read page CONTENT (the exfil payload) — URL-gated. */
-const READ_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
-  'get_text',
-  'get_html',
-  'screenshot',
-  'wait_for',
-]);
-
-/** Content-mutating actions — URL-gated AND mutation-gated. */
-const MUTATE_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
-  'click',
-  'type',
-  'press',
-  'hover',
-  'scroll',
-]);
-
-/** Navigation — URL-gated by the DESTINATION url, and mutation-gated. */
-const NAVIGATION: ReadonlySet<WireMethod> = new Set<WireMethod>([
-  'navigate',
-  'back',
-  'forward',
-  'reload',
-]);
-
-/** Tab management — mutation-gated, but not content-URL-gated (unless allowAllTabs is off). */
-const TAB_MUTATE: ReadonlySet<WireMethod> = new Set<WireMethod>([
-  'tab_select',
-  'tab_new',
-  'tab_close',
-]);
-
-export function isReadMethod(method: WireMethod): boolean {
-  return READ_CONTENT.has(method) || method === 'tabs_list';
-}
-
-/** Everything in the mutating tool set that safe-mode disables. `eval` is gated
- *  separately via `allowEval`; `download_file` separately via `allowDownloads`. */
-export function isMutatingMethod(method: WireMethod): boolean {
-  return MUTATE_CONTENT.has(method) || NAVIGATION.has(method) || TAB_MUTATE.has(method);
-}
-
-/** Whether the method touches a specific URL that must be allowlisted. */
-function isUrlGated(method: WireMethod): boolean {
-  return (
-    READ_CONTENT.has(method) ||
-    MUTATE_CONTENT.has(method) ||
-    NAVIGATION.has(method) ||
-    method === 'eval' ||
-    method === 'upload_file'
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Domain matching
-// ---------------------------------------------------------------------------
-
-/** Parse a host out of a URL string; '' if it has none (about:blank, data:, …). */
-export function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
-function isAboutBlank(url: string): boolean {
-  return url === 'about:blank' || url === '' || url.startsWith('about:');
-}
-
-/** Convert a single domain glob to a predicate. '*' matches everything;
- *  '*.example.com' matches example.com and any subdomain; otherwise exact host. */
-function globMatches(host: string, pattern: string): boolean {
-  const p = pattern.trim().toLowerCase();
-  if (p === '*' || p === '*://*/*') return true;
-  if (p.startsWith('*.')) {
-    const base = p.slice(2);
-    return host === base || host.endsWith('.' + base);
-  }
-  return host === p;
-}
-
-export function isDomainAllowed(url: string, policy: Policy): boolean {
-  const host = hostOf(url);
-  if (!host) return false;
-  return policy.allowDomains.some((pat) => globMatches(host, pat));
-}
-
-// ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
 
 /**
  * Throw `POLICY_DENIED` unless `method` against `url` is permitted by `policy`.
  * `url` is the DESTINATION for navigation, otherwise the current tab URL.
- * Pure and side-effect-free so it can run identically on server and extension.
+ * Thin server-side wrapper over the shared, pure `evaluatePolicy` — the SAME
+ * function the extension router runs, so the two ends cannot drift.
  */
 export function assertUrlAllowed(url: string, method: WireMethod, policy: Policy): void {
-  // -- capability gates (independent of URL) --
-  if (method === 'eval' && !policy.allowEval) {
-    throw new ExecutorError(
-      'POLICY_DENIED',
-      'eval is disabled (safe-mode). Pass --unsafe-enable-eval to allow it.',
-    );
-  }
-  if (method === 'download_file' && !policy.allowDownloads) {
-    throw new ExecutorError(
-      'POLICY_DENIED',
-      'downloads are disabled. Pass --enable-downloads or set allowDownloads.',
-    );
-  }
-  if (method === 'upload_file' && !policy.allowUploads) {
-    throw new ExecutorError(
-      'POLICY_DENIED',
-      'uploads are disabled (sending local files to a page is an exfiltration risk). ' +
-        'Pass --enable-uploads or set allowUploads.',
-    );
-  }
-  if (isMutatingMethod(method) && !policy.enableMutations) {
-    throw new ExecutorError(
-      'POLICY_DENIED',
-      `mutating tool "${method}" is disabled (safe-mode). Pass --enable-mutations to allow it.`,
-    );
-  }
-
-  // -- tab management without allowAllTabs still needs the target tab's URL allowlisted,
-  //    but list/select/close don't carry a content URL here; treat them as allowed once
-  //    the mutation gate above has passed (URL-gating of their effect happens on the
-  //    subsequent content op). --
-  if (!isUrlGated(method)) return;
-
-  // Navigating to a blank page is always fine.
-  if (isAboutBlank(url) && NAVIGATION.has(method)) return;
-
-  if (!isDomainAllowed(url, policy)) {
-    const host = hostOf(url) || url;
-    throw new ExecutorError(
-      'POLICY_DENIED',
-      `"${method}" denied: ${host} is not in the domain allowlist. ` +
-        `Add it to allowDomains, or pass --unsafe-all-domains.`,
-    );
-  }
+  const verdict = evaluatePolicy(url, method, policy);
+  if (!verdict.ok) throw new ExecutorError('POLICY_DENIED', verdict.reason);
 }
