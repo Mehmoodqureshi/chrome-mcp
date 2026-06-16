@@ -154,6 +154,12 @@ export function parseArgs(argv: string[]): CliConfig {
   // File first, then flags win.
   const policy = resolvePolicy({ ...policyFile, ...policyFlags });
 
+  // Uploads must be confined to a directory — refuse to start with uploads enabled
+  // but no dir, rather than silently allow unrestricted local-file access.
+  if (policy.allowUploads && !policy.uploadsDir) {
+    throw new Error('--enable-uploads requires --uploads-dir <path> (uploads must be confined to a directory)');
+  }
+
   return {
     wsPort,
     dataDir: resolveDataDir(),
