@@ -69,9 +69,12 @@ async function main(): Promise<void> {
   const dataDir = ensureDataDir(cfg.dataDir);
   const token = resolveToken(dataDir, { persist: cfg.persistToken });
 
+  const { allowDomains, allowEval, allowDownloads, allowUploads, allowAllTabs, enableMutations } = cfg.policy;
   const bridge = new BridgeServer({
     token,
     serverVersion: version(),
+    // Wire-serializable policy subset (no local uploadsDir) so the extension mirrors the gate.
+    policy: { allowDomains, allowEval, allowDownloads, allowUploads, allowAllTabs, enableMutations },
     port: cfg.wsPort,
     onLog: (m) => logErr(m),
     onDisplacement: (d) =>

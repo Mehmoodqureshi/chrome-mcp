@@ -134,11 +134,27 @@ export interface HelloFrame extends BaseFrame {
   ext: { id: string; version: string; chrome: string };
 }
 
+/**
+ * The wire-serializable subset of the server's policy, delivered in `welcome` so
+ * the extension can enforce the SAME gate the server does (defense-in-depth). The
+ * server-only `uploadsDir` (a local filesystem path) is intentionally NOT sent.
+ */
+export interface WirePolicy {
+  allowDomains: string[];
+  allowEval: boolean;
+  allowDownloads: boolean;
+  allowUploads: boolean;
+  allowAllTabs: boolean;
+  enableMutations: boolean;
+}
+
 export interface WelcomeFrame extends BaseFrame {
   type: 'welcome';
   serverVersion: string;
   sessionId: string;
   heartbeatMs: number;
+  /** The active policy, so the extension can mirror the server-side gate. */
+  policy: WirePolicy;
 }
 
 export interface UnauthFrame extends BaseFrame {
