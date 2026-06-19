@@ -84,14 +84,52 @@ OS dialog (requires `--enable-uploads`).
 `click`/`type` accept `trusted: true` for real OS-level input (works on
 React/Vue controlled inputs); interactions auto-wait for the target to appear.
 
+### Driving several tabs at once — `batch`
+
+`batch` runs many tool calls in **one** request — `parallel` (default) or
+`serial` (with optional `stopOnError`). Each sub-op goes through the **same**
+policy gate, rate limit, and error handling as a direct call (no bypass,
+no nesting). Use it to fan work out across tabs:
+
+```jsonc
+// open three product pages (background, so they don't fight for focus)…
+{ "name": "batch", "arguments": { "ops": [
+  { "tool": "tab_new", "args": { "url": "https://a.example/p" } },
+  { "tool": "tab_new", "args": { "url": "https://b.example/p" } },
+  { "tool": "tab_new", "args": { "url": "https://c.example/p" } }
+]}}
+
+// …then read them all at once (wall-clock ≈ the slowest one, not the sum)
+{ "name": "batch", "arguments": { "ops": [
+  { "tool": "get_text", "args": { "tabId": "<a tabId>" } },
+  { "tool": "get_text", "args": { "tabId": "<b tabId>" } },
+  { "tool": "get_text", "args": { "tabId": "<c tabId>" } }
+]}}
+```
+
+In `parallel` mode, tab-scoped ops **must** pass an explicit `tabId` — the
+active-tab default is unsafe under concurrency, so it's rejected rather than
+silently mis-routed. (`tab_new`, `tabs_list`, `chrome_status` are exempt.)
+
+> **`tab_new` focuses the new tab by default** (so "open X" behaves like opening
+> a link, instead of replacing your current page — use `tab_new`, not
+> `navigate`, to open without losing the current tab). Pass `active: false` to
+> open in the background; parallel batches do this automatically.
+
 ## Status
 
-v0.2.0 — all six build phases complete and green (57 automated tests + a gated
-headed extension smoke). End-to-end working: `npx chrome-mcp` ⇄ bridge ⇄
-extension ⇄ your real Chrome, with a Playwright CDP fallback. v0.2 adds the
-accessibility `snapshot` + element refs, auto-wait, cookies/storage/`select_option`,
-trusted input (`chrome.debugger`), a toolbar status badge, and a stable pairing
-token (`--persist-token`).
+v0.5.0 — **safe multi-tab concurrency.** Adds the `batch` fan-out tool, makes
+parallel tab automation race-free (explicit-`tabId` guard; per-tab
+`chrome.debugger` serialization; collision-free `tab_new`), captures screenshots
+via `chrome.debugger` (a specific tab without stealing focus — plus true
+full-page and element capture), and focuses newly opened tabs by default. 111
+automated tests + a gated headed extension smoke.
+
+v0.2.0 — all six build phases complete and green. End-to-end working:
+`npx chrome-mcp` ⇄ bridge ⇄ extension ⇄ your real Chrome, with a Playwright CDP
+fallback. v0.2 adds the accessibility `snapshot` + element refs, auto-wait,
+cookies/storage/`select_option`, trusted input (`chrome.debugger`), a toolbar
+status badge, and a stable pairing token (`--persist-token`).
 
 - [x] **Phase 0 — Contracts & skeleton:** `shared/protocol.ts` (wire contract),
       `src/executor/types.ts` (Executor interface), `src/security/policy.ts`
@@ -162,8 +200,10 @@ from the extension's **Options** page using the `port` + `token` from
 `~/.chrome-mcp/handshake.json` (run `npx chrome-mcp --print-pairing` to get the
 path).
 
-> **v1 uses `chrome.scripting`/`chrome.tabs`, not `chrome.debugger`.** No
-> "is being debugged" banner, CSP-safe reads (isolated world), and it's testable
-> under Playwright. Trade-off: clicks/typing are synthetic DOM events, not
-> OS-level trusted input, and `screenshot` is visible-tab only. A trusted-input
-> `chrome.debugger` backend is a documented future upgrade (BLUEPRINT §10).
+> **Reads/interaction use `chrome.scripting`/`chrome.tabs`** — no "is being
+> debugged" banner, CSP-safe reads (isolated world), testable under Playwright.
+> `chrome.debugger` is used only where it's needed and worth it: `trusted: true`
+> input (real OS-level events on React/Vue inputs) and `screenshot` (captures a
+> specific tab **without** activating it — safe under parallel `batch` — with
+> true full-page and element capture). Those ops briefly show the debug banner
+> while attached.

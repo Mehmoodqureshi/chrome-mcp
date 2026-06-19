@@ -588,9 +588,14 @@ Build: `files` whitelist incl. `extension-dist/`, `--print-pairing`/`--print-ext
 - **Native-messaging trampoline install step** is the one manual setup beyond `npx`; the manual file-path paste is the no-native fallback. Smoother one-click pairing is a v1.1 polish.
 - **`networkidle`** is approximated by a bounded idle-window poll (no native CDP event); documented as best-effort, never able to wedge a call.
 - **Local-code-execution attacker** who can already read the user's 0600 files has root-equivalent access to the user session; the token cannot defend against an attacker who already owns the filesystem. The policy allowlist still blocks blind exfil to arbitrary domains.
-- **`captureBeyondViewport` very-tall pages**: capped + `truncated` flag; scroll-stitch is the v1.1 upgrade if full fidelity is needed.
+- **`captureBeyondViewport` very-tall pages**: full-page capture now ships (extension `screenshot` uses `chrome.debugger Page.captureScreenshot` with a content-box clip); only pages taller than the ~16384px skia ceiling are clamped + `truncated`-flagged. [RESOLVED — v0.5.0]
+
+**Resolved in v0.5.0 (safe multi-tab concurrency):**
+- **Screenshot active-tab race (H1):** the extension captured via `captureVisibleTab`, which had to activate the target tab — concurrent captures stole focus and could grab the wrong tab. Now `chrome.debugger Page.captureScreenshot` captures a specific tab without activating it.
+- **Active-tab default under concurrency (H2):** the `batch` fan-out tool requires an explicit `tabId` on tab-scoped ops in `parallel` mode (rejected rather than mis-routed to whatever tab is frontmost).
+- **Per-tab debugger collisions + `tab_new` race (H3/H4):** a `KeyedMutex` serializes `chrome.debugger` attach/detach per tab and the `tab_new` blank-tab claim; different tabs still run in parallel.
+- Per-cmd `tabId` addressing is on every wire method, so multi-tab works without a backend pool. A true multi-*session* `Executor` pool remains out of scope.
 
 **Genuinely open (decide before v1.1):**
-- Multi-tab/multi-session concurrency (single global Executor + single attached tab today): does an agent need N tabs driven simultaneously? That breaks the singleton and requires per-cmd `tabId` everywhere on the wire.
 - Web Store path: requires a `chrome.scripting`-only mode (no `chrome.debugger`) — a second executor backend behind the same interface.
 - Whether `download` should ever use the extension `chrome.downloads` path (user Downloads dir) as an explicit opt-in, or remain server-fetch-only forever.
