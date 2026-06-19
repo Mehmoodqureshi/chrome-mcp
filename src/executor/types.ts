@@ -179,7 +179,8 @@ export interface Executor {
   // --- tabs ---
   tabsList(): Promise<TabInfo[]>;
   tabSelect(tabId: TabId): Promise<TabInfo>;
-  tabNew(url?: string): Promise<TabInfo>;
+  /** Open a tab. `active` (default true) focuses it; pass false to open in the background. */
+  tabNew(url?: string, opts?: { active?: boolean }): Promise<TabInfo>;
   tabClose(tabId: TabId): Promise<{ closed: true; tabId: TabId }>;
 
   // --- navigation (active tab unless tabId given) ---

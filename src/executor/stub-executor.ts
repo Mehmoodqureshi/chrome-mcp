@@ -81,7 +81,7 @@ export class StubExecutor implements Executor {
   async tabSelect(tabId: TabId): Promise<TabInfo> {
     return { ...this.tab(), tabId };
   }
-  async tabNew(url?: string): Promise<TabInfo> {
+  async tabNew(url?: string, _opts?: { active?: boolean }): Promise<TabInfo> {
     if (url) this.url = url;
     return this.tab();
   }

@@ -15,6 +15,8 @@
 import { type CommandFrame, type ExecutorErrorCode, type WireMethod } from '../../../shared/protocol';
 import { sanitizeDownloadName } from '../../../shared/download';
 import { collectSnapshot } from '../../../shared/snapshot';
+import { planScreenshot, type ElementRect, type PageDims } from '../../../shared/screenshot';
+import { KeyedMutex } from '../../../shared/mutex';
 
 /** A command failure carrying a wire error code. */
 export class CmdError extends Error {
@@ -30,6 +32,17 @@ const SESSION = crypto.randomUUID();
 const CONTENT_SCHEME = /^(https?|file):/i;
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Serializes per-tab debugger sessions (key `dbg:<tabId>`) and the tab_new
+ * blank-tab claim (key `tab_new`). Same key → one-at-a-time; different tabs run
+ * in parallel.
+ */
+const locks = new KeyedMutex();
+
+/** Tab ids already handed out by tab_new this SW session — excluded from blank
+ *  reuse so two concurrent tab_new calls can never claim the same tab. */
+const claimedTabs = new Set<number>();
 
 function mint(tabId: number): string {
   return `ext:${SESSION}:${tabId}`;
@@ -124,15 +137,20 @@ async function waitForSelector(tabId: number, selector: string, timeoutMs = 5_00
   }
 }
 
-/** Attach the debugger for one trusted-input op, always detaching (clears the banner). */
+/** Attach the debugger for one op, always detaching (clears the banner).
+ *  Serialized per tab: a second attach on the same tab throws, and one op's
+ *  detach in `finally` would yank the debugger from a concurrent op. Different
+ *  tabs still run in parallel. */
 async function withDebugger<T>(tabId: number, fn: (target: chrome.debugger.Debuggee) => Promise<T>): Promise<T> {
-  const target: chrome.debugger.Debuggee = { tabId };
-  await chrome.debugger.attach(target, '1.3');
-  try {
-    return await fn(target);
-  } finally {
-    await chrome.debugger.detach(target).catch(() => undefined);
-  }
+  return locks.run(`dbg:${tabId}`, async () => {
+    const target: chrome.debugger.Debuggee = { tabId };
+    await chrome.debugger.attach(target, '1.3');
+    try {
+      return await fn(target);
+    } finally {
+      await chrome.debugger.detach(target).catch(() => undefined);
+    }
+  });
 }
 
 /** Real keystrokes via CDP Input.insertText — works on React/Vue controlled inputs. */
@@ -179,6 +197,93 @@ async function trustedClick(tabId: number, selector: string): Promise<boolean> {
   return true;
 }
 
+/** Measure viewport + content dims, and (if a selector is given) the element's
+ *  box in DOCUMENT coordinates. Returns null element when the selector is given
+ *  but no element matches, so the caller can raise SELECTOR_NOT_FOUND. */
+async function measurePage(
+  tabId: number,
+  selector?: string,
+): Promise<{ dims: PageDims; element: ElementRect | null; missing: boolean } | undefined> {
+  return execInTab(
+    tabId,
+    (sel) => {
+      const d = document.documentElement;
+      const dims = {
+        w: window.innerWidth,
+        h: window.innerHeight,
+        fullW: Math.max(d.scrollWidth, d.clientWidth),
+        fullH: Math.max(d.scrollHeight, d.clientHeight),
+      };
+      if (!sel) return { dims, element: null, missing: false };
+      const el = document.querySelector(sel as string) as HTMLElement | null;
+      if (!el) return { dims, element: null, missing: true };
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = el.getBoundingClientRect();
+      // viewport rect + scroll offset → document coordinates.
+      return { dims, element: { x: r.left + window.scrollX, y: r.top + window.scrollY, w: r.width, h: r.height }, missing: false };
+    },
+    [selector ?? null],
+  ) as Promise<{ dims: PageDims; element: ElementRect | null; missing: boolean } | undefined>;
+}
+
+/** Capture via CDP (no tab activation). Reports CSS-px logical dimensions. */
+async function screenshotViaDebugger(
+  tabId: number,
+  fullPage: boolean,
+  selector?: string,
+): Promise<Record<string, unknown>> {
+  const measured = await measurePage(tabId, selector);
+  if (!measured) throw new CmdError('CDP_ERROR', 'could not read page dimensions');
+  if (selector && measured.missing) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selector}`);
+
+  const plan = planScreenshot(measured.dims, { fullPage, element: measured.element });
+  const params: Record<string, unknown> = { format: 'png', captureBeyondViewport: plan.captureBeyondViewport };
+  if (plan.clip) params.clip = plan.clip;
+
+  const data = await withDebugger(tabId, async (target) => {
+    const res = (await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', params)) as { data?: string };
+    return res.data ?? '';
+  });
+
+  return {
+    dataBase64: data,
+    mimeType: 'image/png',
+    width: plan.width,
+    height: plan.height,
+    truncated: plan.truncated,
+    fullHeight: plan.fullHeight,
+  };
+}
+
+/** Fallback: captureVisibleTab grabs the ACTIVE visible tab, so activate the
+ *  target first. Used only when the debugger can't attach (reintroduces the
+ *  focus change, but only on the rare fallback path). */
+async function screenshotViaVisibleTab(tabId: number, fullPage: boolean): Promise<Record<string, unknown>> {
+  let t = await chrome.tabs.get(tabId);
+  if (!t.active) {
+    await chrome.tabs.update(tabId, { active: true });
+    await chrome.windows.update(t.windowId, { focused: true }).catch(() => undefined);
+    await delay(150); // let the activated tab paint
+    t = await chrome.tabs.get(tabId);
+  }
+  const dims = (await execInTab(
+    tabId,
+    () => ({ w: window.innerWidth, h: window.innerHeight, full: document.documentElement.scrollHeight }),
+    [],
+  )) as { w: number; h: number; full: number } | undefined;
+  const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' });
+  const viewportH = dims?.h ?? 0;
+  const fullH = dims?.full ?? viewportH;
+  return {
+    dataBase64: dataUrl.split(',')[1] ?? '',
+    mimeType: 'image/png',
+    width: dims?.w ?? 0,
+    height: viewportH,
+    truncated: fullPage && fullH > viewportH,
+    fullHeight: fullPage ? fullH : undefined,
+  };
+}
+
 async function tabInfo(tab: chrome.tabs.Tab, index = 0): Promise<Record<string, unknown>> {
   return {
     tabId: mint(tab.id ?? -1),
@@ -216,19 +321,50 @@ export class ChromeExecutor {
       }
       case 'tab_new': {
         const url = typeof cmd.params.url === 'string' ? cmd.params.url : undefined;
+        // Focus the new tab by default (so "open X" behaves like opening a link);
+        // batch/parallel callers pass active:false to avoid fighting over focus.
+        const active = cmd.params.active !== false;
         // Reuse an existing blank tab (about:blank / new-tab page) instead of
         // spawning a fresh one, so callers don't pile up tabs. `reused: true`
         // tells the caller to RESET (not close) the tab when finished.
+        //
+        // The claim (query → pick/create → mark) is serialized and tracked in
+        // `claimedTabs`, so two concurrent tab_new calls can never collapse onto
+        // the same tab. Navigation/activation happens AFTER releasing the lock.
         const BLANK = /^(about:blank|chrome:\/\/newtab|chrome:\/\/new-tab-page|edge:\/\/newtab)/i;
-        const blank = (await chrome.tabs.query({})).find(
-          (t) => t.id !== undefined && (BLANK.test(t.url ?? '') || (t.url ?? '') === '' || t.pendingUrl === 'about:blank'),
-        );
-        if (blank?.id !== undefined) {
-          if (url) { await chrome.tabs.update(blank.id, { url }); await waitComplete(blank.id); }
-          return { ...(await tabInfo(await chrome.tabs.get(blank.id))), reused: true };
+        const claim = await locks.run('tab_new', async () => {
+          const tabs = await chrome.tabs.query({});
+          // Prune ids that no longer exist so the set stays bounded.
+          const present = new Set(tabs.map((t) => t.id).filter((id): id is number => id !== undefined));
+          for (const id of claimedTabs) if (!present.has(id)) claimedTabs.delete(id);
+
+          const blank = tabs.find(
+            (t) =>
+              t.id !== undefined &&
+              !claimedTabs.has(t.id) &&
+              (BLANK.test(t.url ?? '') || (t.url ?? '') === '' || t.pendingUrl === 'about:blank'),
+          );
+          if (blank?.id !== undefined) {
+            claimedTabs.add(blank.id);
+            return { id: blank.id, reused: true, needsNav: url !== undefined };
+          }
+          // Create in the background; we focus below (one activation path for both).
+          const created = await chrome.tabs.create({ url, active: false });
+          if (created.id === undefined) throw new CmdError('TARGET_GONE', 'failed to create a tab');
+          claimedTabs.add(created.id);
+          return { id: created.id, reused: false, needsNav: false };
+        });
+
+        if (claim.needsNav) {
+          await chrome.tabs.update(claim.id, { url });
+          await waitComplete(claim.id);
         }
-        const t = await chrome.tabs.create({ url, active: false });
-        return { ...(await tabInfo(t)), reused: false };
+        if (active) {
+          const t = await chrome.tabs.get(claim.id);
+          await chrome.tabs.update(claim.id, { active: true }).catch(() => undefined);
+          await chrome.windows.update(t.windowId, { focused: true }).catch(() => undefined);
+        }
+        return { ...(await tabInfo(await chrome.tabs.get(claim.id))), reused: claim.reused };
       }
       case 'tab_close': {
         const id = parseTabId(String(cmd.tabId));
@@ -479,34 +615,22 @@ export class ChromeExecutor {
         return { ok: true };
       }
 
-      // -- screenshot (captureVisibleTab grabs the ACTIVE visible tab, so activate the target first) --
+      // -- screenshot --
+      // Primary path: chrome.debugger Page.captureScreenshot, which captures a
+      // SPECIFIC tab WITHOUT activating it (no focus-stealing → safe under
+      // concurrent batches) and supports true full-page + element capture.
+      // Falls back to captureVisibleTab only if the debugger can't attach.
       case 'screenshot': {
         const id = await targetTab(cmd);
-        let t = await chrome.tabs.get(id);
-        if (!t.active) {
-          await chrome.tabs.update(id, { active: true });
-          await chrome.windows.update(t.windowId, { focused: true }).catch(() => undefined);
-          await delay(150); // let the activated tab paint
-          t = await chrome.tabs.get(id);
-        }
-        const dims = await execInTab(
-          id,
-          () => ({ w: window.innerWidth, h: window.innerHeight, full: document.documentElement.scrollHeight }),
-          [],
-        ) as { w: number; h: number; full: number } | undefined;
-        const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' });
         const fullPage = cmd.params.fullPage === true;
-        const viewportH = dims?.h ?? 0;
-        const fullH = dims?.full ?? viewportH;
-        return {
-          dataBase64: dataUrl.split(',')[1] ?? '',
-          mimeType: 'image/png',
-          width: dims?.w ?? 0,
-          height: viewportH,
-          // The scripting backend can only capture the viewport; flag when a fullPage was asked but clipped.
-          truncated: fullPage && fullH > viewportH,
-          fullHeight: fullPage ? fullH : undefined,
-        };
+        const selector = selectorOf(cmd);
+        try {
+          return await screenshotViaDebugger(id, fullPage, selector);
+        } catch (err) {
+          // A genuinely missing element is a real failure — don't mask it with a fallback.
+          if (err instanceof CmdError && err.code === 'SELECTOR_NOT_FOUND') throw err;
+          return await screenshotViaVisibleTab(id, fullPage);
+        }
       }
 
       // -- eval (MAIN world; may be blocked by strict page CSP) --

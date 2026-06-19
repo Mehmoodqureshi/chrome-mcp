@@ -25,6 +25,7 @@ import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
 import { assertUrlAllowed, type Policy } from '../security/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
+import { runBatch } from './batch';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
 import {
   asArgs,
@@ -65,10 +66,10 @@ const obj = (properties: Record<string, unknown>, required: string[] = []): Reco
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'tabs_list', description: 'List open browser tabs.', inputSchema: obj({}) },
   { name: 'tab_select', description: 'Make a tab active by tabId.', inputSchema: obj({ tabId: { type: 'string' } }, ['tabId']) },
-  { name: 'tab_new', description: 'Open a new tab, optionally at a URL.', inputSchema: obj({ url: { type: 'string' } }) },
+  { name: 'tab_new', description: 'Open a NEW tab (optionally at a URL) and focus it. Prefer this over `navigate` when the user says "open"/"go to" a site — `navigate` REPLACES the current tab. Pass active:false to open in the background (used by parallel batches).', inputSchema: obj({ url: { type: 'string' }, active: { type: 'boolean' } }) },
   { name: 'tab_close', description: 'Close a tab by tabId.', inputSchema: obj({ tabId: { type: 'string' } }, ['tabId']) },
 
-  { name: 'navigate', description: 'Navigate the active (or given) tab to a URL.', inputSchema: obj({ url: { type: 'string' }, tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }, ['url']) },
+  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: obj({ url: { type: 'string' }, tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }, ['url']) },
   { name: 'back', description: 'Go back in history.', inputSchema: obj({ tabId: { type: 'string' } }) },
   { name: 'forward', description: 'Go forward in history.', inputSchema: obj({ tabId: { type: 'string' } }) },
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: obj({ tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }) },
@@ -96,6 +97,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: obj({ ...TARGET_PROPS, files: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['files']) },
 
   { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: obj({}) },
+
+  {
+    name: 'batch',
+    description:
+      'Run multiple tool calls in one request — parallel (default) or serial. Each op is { tool, args } and goes through the same policy gate, rate limit, and error handling as a direct call. In parallel mode, tab-scoped ops MUST pass an explicit tabId (the active-tab default is unsafe under concurrency). Use to drive several tabs at once (e.g. open tabs, then batch get_text across them). Cannot be nested.',
+    inputSchema: obj(
+      {
+        ops: {
+          type: 'array',
+          description: 'Operations to run; each is a tool name + its args.',
+          items: obj({ tool: { type: 'string' }, args: { type: 'object' } }, ['tool']),
+        },
+        mode: { type: 'string', enum: ['parallel', 'serial'], description: 'Default "parallel".' },
+        stopOnError: { type: 'boolean', description: 'Serial mode only: stop after the first failing op (the rest are skipped).' },
+        maxConcurrency: { type: 'number', description: 'Parallel mode: max ops in flight at once (default 6).' },
+      },
+      ['ops'],
+    ),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -129,6 +149,16 @@ const tabId = (args: Record<string, unknown>): string | undefined => optionalStr
 const waitUntil = (args: Record<string, unknown>): WaitUntil | undefined =>
   optionalString(args, 'waitUntil') as WaitUntil | undefined;
 
+/** Tools that don't act on a single tab (so `tabId` is irrelevant) — exempt from
+ *  the parallel-batch explicit-tabId requirement. Everything else falls back to
+ *  the active tab when `tabId` is omitted, which races under concurrency. */
+const PARALLEL_TAB_EXEMPT = new Set(['tabs_list', 'tab_new', 'chrome_status', 'batch']);
+
+/** A known tool that operates on a specific tab — needs an explicit tabId in a parallel batch. */
+function requiresExplicitTab(tool: string): boolean {
+  return tool in TOOL_HANDLERS && !PARALLEL_TAB_EXEMPT.has(tool);
+}
+
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   tabs_list: async (_a, ctx) => jsonResult(await ctx.ex.tabsList()),
 
@@ -138,7 +168,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   tab_new: async (a, ctx) => {
     await gate(ctx, 'tab_new');
-    return jsonResult(await ctx.ex.tabNew(optionalString(a, 'url')));
+    return jsonResult(await ctx.ex.tabNew(optionalString(a, 'url'), { active: optionalBoolean(a, 'active') }));
   },
   tab_close: async (a, ctx) => {
     await gate(ctx, 'tab_close');
@@ -359,6 +389,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
+
+  // Fan-out: each sub-op is routed back through `dispatchToolCall`, so it gets
+  // the same policy gate, rate limit, and never-throw handling as a direct call.
+  batch: async (a) => runBatch(a, { dispatch: dispatchToolCall, requiresExplicitTab }),
 };
 
 // ---------------------------------------------------------------------------
