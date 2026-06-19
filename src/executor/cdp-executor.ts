@@ -324,10 +324,11 @@ export class CdpExecutor implements Executor {
     await p.bringToFront().catch(() => undefined);
     return { tabId, url: p.url(), title: await p.title().catch(() => ''), active: true, index: 0 };
   }
-  async tabNew(url?: string): Promise<TabInfo> {
+  async tabNew(url?: string, opts?: { active?: boolean }): Promise<TabInfo> {
     const ctx = await this.getContext();
     const p = await ctx.newPage();
     if (url) await p.goto(url, { waitUntil: 'load' }).catch(() => undefined);
+    if (opts?.active !== false) await p.bringToFront().catch(() => undefined);
     return { tabId: this.idFor(p), url: p.url(), title: await p.title().catch(() => ''), active: true, index: 0 };
   }
   async tabClose(tabId: TabId): Promise<{ closed: true; tabId: TabId }> {

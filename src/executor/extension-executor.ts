@@ -88,8 +88,8 @@ export class ExtensionExecutor implements Executor {
   async tabSelect(tabId: TabId): Promise<TabInfo> {
     return (await this.send('tab_select', {}, { tabId })) as TabInfo;
   }
-  async tabNew(url?: string): Promise<TabInfo> {
-    return (await this.send('tab_new', { url })) as TabInfo;
+  async tabNew(url?: string, opts?: { active?: boolean }): Promise<TabInfo> {
+    return (await this.send('tab_new', { url, active: opts?.active })) as TabInfo;
   }
   async tabClose(tabId: TabId): Promise<{ closed: true; tabId: TabId }> {
     return (await this.send('tab_close', {}, { tabId })) as { closed: true; tabId: TabId };
