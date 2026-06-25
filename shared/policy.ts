@@ -145,14 +145,29 @@ export function evaluatePolicy(url: string, method: WireMethod, policy: WirePoli
 
   if (!isDomainAllowed(url, policy)) {
     const host = hostOf(url) || url;
-    return {
-      ok: false,
-      reason:
-        `"${method}" denied: ${host} is not in the domain allowlist. ` +
-        `Add it to allowDomains, or pass --unsafe-all-domains.`,
-    };
+    return { ok: false, reason: blockedDomainMessage(method, host, policy) };
   }
   return { ok: true };
+}
+
+/**
+ * A plain-English, actionable message for a blocked domain. Tells the user what
+ * happened, why it's blocked (safety, not a bug), which sites ARE allowed, and
+ * the exact one-line change to permit this one — so a non-technical user is never
+ * left at a dead end. Never includes the token or any other secret.
+ */
+export function blockedDomainMessage(method: string, host: string, policy: WirePolicy): string {
+  const allowed = policy.allowDomains.filter((d) => d !== '*');
+  const allowedLine = allowed.length
+    ? `Currently allowed: ${allowed.join(', ')}.`
+    : `Right now no sites are allowed.`;
+  return (
+    `Blocked: "${method}" can't run on ${host} because it isn't on this browser tool's allowed-sites list. ` +
+    `This is a safety limit (the tool drives your real, logged-in browser, so it only touches sites you've approved) — not an error. ` +
+    `${allowedLine} ` +
+    `To allow ${host}, add it to the chrome-mcp settings as: --allow-domain "${host}" (or "*.${host}" to include subdomains), ` +
+    `then restart/reconnect. To allow every site (less safe), use --unsafe-all-domains.`
+  );
 }
 
 /** A wire policy that allows nothing — the safe default when none was delivered. */

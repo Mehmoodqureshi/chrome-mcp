@@ -96,7 +96,7 @@ test('domain policy denies cross-domain reads', async () => {
   configure({ allowDomains: ['example.com'] }, { activeUrl: 'https://evil.com' });
   const r = await dispatchToolCall('get_text', {});
   assert.equal(r.isError, true);
-  assert.match(textOf(r), /not in the domain allowlist/i);
+  assert.match(textOf(r), /isn't on this browser tool's allowed-sites list/i);
 
   // ...and allows an allowlisted read.
   configure({ allowDomains: ['example.com'] }, { activeUrl: 'https://example.com' });

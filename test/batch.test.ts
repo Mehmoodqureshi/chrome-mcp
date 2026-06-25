@@ -138,7 +138,7 @@ test('every sub-op still passes the policy gate — no bypass', async () => {
   });
   const s = summaryOf(r);
   assert.equal(s.results[0].status, 'error');
-  assert.match(allText(r), /not in the domain allowlist/i);
+  assert.match(allText(r), /isn't on this browser tool's allowed-sites list/i);
 });
 
 test('batch cannot be nested', async () => {
