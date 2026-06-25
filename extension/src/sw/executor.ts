@@ -126,15 +126,25 @@ function selectorOf(cmd: CommandFrame): string | undefined {
   return resolveSelector(cmd);
 }
 
-/** Poll the page for a selector so click/type/hover don't fail on not-yet-rendered elements. */
+/** Poll the page for a selector so click/type/hover don't fail on not-yet-rendered
+ *  elements. The poll runs INSIDE the page (one executeScript that resolves when the
+ *  element appears or the deadline passes) instead of one round-trip per tick. */
 async function waitForSelector(tabId: number, selector: string, timeoutMs = 5_000): Promise<boolean> {
-  const start = Date.now();
-  for (;;) {
-    const present = await execInTab(tabId, (s) => !!document.querySelector(s as string), [selector]);
-    if (present) return true;
-    if (Date.now() - start > timeoutMs) return false;
-    await delay(120);
-  }
+  const found = await execInTab(
+    tabId,
+    ((s: string, timeout: number, interval: number) =>
+      new Promise<boolean>((resolve) => {
+        const deadline = Date.now() + timeout;
+        const tick = (): void => {
+          if (document.querySelector(s)) return resolve(true);
+          if (Date.now() > deadline) return resolve(false);
+          setTimeout(tick, interval);
+        };
+        tick();
+      })) as unknown as (...a: unknown[]) => boolean,
+    [selector, timeoutMs, 120],
+  );
+  return found === true;
 }
 
 /** Attach the debugger for one op, always detaching (clears the banner).
@@ -655,26 +665,34 @@ export class ChromeExecutor {
       }
 
       // -- wait_for (poll the isolated world) --
+      // One injection that polls IN-PAGE until the condition holds or the deadline
+      // passes, rather than one executeScript round-trip per tick.
       case 'wait_for': {
         const id = await targetTab(cmd);
         const timeout = typeof cmd.params.timeoutMs === 'number' ? cmd.params.timeoutMs : 30_000;
         const start = Date.now();
-        for (;;) {
-          const matched = await execInTab(
-            id,
-            (sel, text, gone) => {
-              let present: boolean;
-              if (sel) present = !!document.querySelector(sel as string);
-              else if (text) present = (document.body?.innerText ?? '').includes(text as string);
-              else present = true;
-              return gone ? !present : present;
-            },
-            [cmd.params.selector ?? null, cmd.params.textContains ?? null, cmd.params.gone === true],
-          );
-          if (matched) return { matched: true, waitedMs: Date.now() - start };
-          if (Date.now() - start > timeout) return { matched: false, waitedMs: Date.now() - start };
-          await delay(150);
-        }
+        const matched = await execInTab(
+          id,
+          ((sel: string | null, text: string | null, gone: boolean, timeoutMs: number, interval: number) =>
+            new Promise<boolean>((resolve) => {
+              const deadline = Date.now() + timeoutMs;
+              const hit = (): boolean => {
+                let present: boolean;
+                if (sel) present = !!document.querySelector(sel);
+                else if (text) present = (document.body?.innerText ?? '').includes(text);
+                else present = true;
+                return gone ? !present : present;
+              };
+              const tick = (): void => {
+                if (hit()) return resolve(true);
+                if (Date.now() > deadline) return resolve(false);
+                setTimeout(tick, interval);
+              };
+              tick();
+            })) as unknown as (...a: unknown[]) => boolean,
+          [cmd.params.selector ?? null, cmd.params.textContains ?? null, cmd.params.gone === true, timeout, 150],
+        );
+        return { matched: matched === true, waitedMs: Date.now() - start };
       }
 
       // -- download (user's Downloads dir) --

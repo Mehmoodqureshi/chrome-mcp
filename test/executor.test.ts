@@ -142,6 +142,49 @@ test('selector: no extension and no CDP fallback → NO_BACKEND', async () => {
   await assert.rejects(select(), (e: unknown) => e instanceof ExecutorError && e.code === 'NO_BACKEND');
 });
 
+/** A pingable fake that counts how many times it was probed. */
+const countingExt = (alive: () => boolean): { ext: Executor; pings: () => number } => {
+  let pings = 0;
+  const ext = { backend: 'extension', ping: async () => (pings++, alive()) } as unknown as Executor;
+  return { ext, pings: () => pings };
+};
+
+test('selector: a successful ping is cached within the TTL (no re-ping on a burst)', async () => {
+  const { ext, pings } = countingExt(() => true);
+  const select = createSelector({
+    bridge: fakeBridge(true), cdpFallback: true, prefer: 'extension', cdp: cdpOpts,
+    makeExtension: () => ext, makeCdp: () => fakeCdp, pingCacheMs: 10_000,
+  });
+  assert.equal(await select(), ext);
+  assert.equal(await select(), ext);
+  assert.equal(await select(), ext);
+  assert.equal(pings(), 1, 'a burst within the TTL probes once, then trusts the cache');
+});
+
+test('selector: pingCacheMs=0 disables the cache (probes every call)', async () => {
+  const { ext, pings } = countingExt(() => true);
+  const select = createSelector({
+    bridge: fakeBridge(true), cdpFallback: true, prefer: 'extension', cdp: cdpOpts,
+    makeExtension: () => ext, makeCdp: () => fakeCdp, pingCacheMs: 0,
+  });
+  await select();
+  await select();
+  assert.equal(pings(), 2, 'with the cache off, every call re-probes');
+});
+
+test('selector: a failed ping is NOT cached (keeps probing so it can recover)', async () => {
+  let alive = false;
+  const { ext, pings } = countingExt(() => alive);
+  const select = createSelector({
+    bridge: fakeBridge(true), cdpFallback: true, prefer: 'extension', cdp: cdpOpts,
+    makeExtension: () => ext, makeCdp: () => fakeCdp, pingCacheMs: 10_000,
+  });
+  assert.equal(await select(), fakeCdp, 'dead extension → CDP fallback');
+  alive = true;
+  assert.equal(await select(), ext, 'recovers on the next call because the failure was not cached');
+  assert.equal(pings(), 2);
+});
+
 // --- C. Live CDP launch (skipped when Chromium isn't installed) ------------
 
 let hasChromium = false;
