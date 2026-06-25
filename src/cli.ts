@@ -120,17 +120,30 @@ async function main(): Promise<void> {
   });
   logErr(`backend: extension-if-paired else ${cfg.cdpFallback ? 'CDP fallback' : 'none'} (prefer: ${cfg.prefer})`);
 
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     cleanup();
     exitWithDeadline(Promise.allSettled([stopMcpServer(), bridge.stop()]));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // The MCP host owns our stdin. When it disconnects (host quit, or a
+  // "Reconnect" that spawns a fresh child), stdin reaches EOF — that's our cue
+  // to exit and release the port, so a stale process never lingers and blocks
+  // the next connection. This is what makes reconnects "just work".
+  process.stdin.on('end', shutdown);
+  process.stdin.on('close', shutdown);
+
   await startMcpServer(version());
 }
 
 main().catch((err) => {
-  logErr(`fatal: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  // Port-busy and similar startup failures carry a plain-English message already;
+  // show that to the user without a noisy stack trace.
+  const friendly = err instanceof Error && /Couldn't start:/.test(err.message);
+  logErr(friendly ? err.message : `fatal: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   process.exit(1);
 });

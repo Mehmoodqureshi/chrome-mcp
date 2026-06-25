@@ -36,6 +36,24 @@ const HELLO_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 /** Max pre-auth frames a socket may send before a valid hello (anti-idle-hold). */
 const MAX_PREAUTH_FRAMES = 10;
+/** How long to wait for a just-replaced instance to release a fixed port before giving up. */
+const PORT_WAIT_MS = 4_000;
+/** Pause between port-bind retries while waiting for the old listener to exit. */
+const PORT_RETRY_MS = 250;
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** A friendly, actionable message for the rare case the port stays busy past PORT_WAIT_MS. */
+function portBusyMessage(host: string, port: number): string {
+  return (
+    `Couldn't start: another program is already using ${host}:${port}.\n` +
+    `This is almost always a previous chrome-mcp that didn't shut down. To fix it:\n` +
+    `  1. Fully quit/restart your MCP host (e.g. Claude Code), or\n` +
+    `  2. Stop the leftover process, then reconnect:\n` +
+    `       macOS/Linux:  lsof -nP -iTCP:${port} -sTCP:LISTEN   then  kill <PID>\n` +
+    `  3. Or run chrome-mcp with a different port:  --port <number>`
+  );
+}
 
 export interface DisplacementInfo {
   oldExtId: string;
@@ -72,17 +90,56 @@ export class BridgeServer {
   /** Bind and start listening. Returns the actual port (useful with port 0). */
   async start(): Promise<number> {
     if (this.wss) return this.boundPort;
-    const wss = new WebSocketServer({ host: this.opts.host ?? BRIDGE_HOST, port: this.opts.port ?? 0 });
-    wss.on('connection', (ws) => this.handleConnection(ws));
-    await new Promise<void>((resolve, reject) => {
-      wss.once('listening', resolve);
-      wss.once('error', reject);
+    const host = this.opts.host ?? BRIDGE_HOST;
+    const port = this.opts.port ?? 0;
+
+    // A fixed port can be briefly held by a just-replaced instance of ourselves
+    // (e.g. on a host "Reconnect"). Rather than crash with a cryptic EADDRINUSE,
+    // wait-and-retry for a few seconds so the old process can release it; only if
+    // it never frees up do we surface a plain-English, actionable error.
+    const deadline = Date.now() + PORT_WAIT_MS;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const wss = await this.listenOnce(host, port);
+        const addr = wss.address();
+        this.boundPort = typeof addr === 'object' && addr ? addr.port : port;
+        this.wss = wss;
+        this.log(`bridge listening on ${host}:${this.boundPort}`);
+        return this.boundPort;
+      } catch (err) {
+        const inUse = (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE';
+        if (!inUse || port === 0 || Date.now() >= deadline) {
+          if (inUse) throw new Error(portBusyMessage(host, port));
+          throw err;
+        }
+        if (attempt === 1) this.log(`port ${host}:${port} busy — waiting for the previous instance to release it…`);
+        await delay(PORT_RETRY_MS);
+      }
+    }
+  }
+
+  /** One bind attempt. Resolves with a listening server or rejects with the listen error. */
+  private listenOnce(host: string, port: number): Promise<WebSocketServer> {
+    return new Promise((resolve, reject) => {
+      const wss = new WebSocketServer({ host, port });
+      const onError = (err: Error): void => {
+        wss.off('listening', onListening);
+        // Close so the failed server doesn't linger and leak a handle on retry.
+        try {
+          wss.close();
+        } catch {
+          /* ignore */
+        }
+        reject(err);
+      };
+      const onListening = (): void => {
+        wss.off('error', onError);
+        wss.on('connection', (ws) => this.handleConnection(ws));
+        resolve(wss);
+      };
+      wss.once('error', onError);
+      wss.once('listening', onListening);
     });
-    const addr = wss.address();
-    this.boundPort = typeof addr === 'object' && addr ? addr.port : (this.opts.port ?? 0);
-    this.wss = wss;
-    this.log(`bridge listening on ${this.opts.host ?? BRIDGE_HOST}:${this.boundPort}`);
-    return this.boundPort;
   }
 
   async stop(): Promise<void> {

@@ -340,3 +340,38 @@ test('token persistence: a group/other-readable token file fails closed', () => 
   chmodSync(tokenPath(dir), 0o644);
   assert.throws(() => readPersistedToken(dir), /group\/other-accessible/);
 });
+
+test('port conflict: a fixed port already in use surfaces a friendly, actionable error', async () => {
+  const first = new BridgeServer({ token: TOKEN, serverVersion: 'test', port: 0, heartbeatMs: 0 });
+  const port = await first.start();
+  // A second server on the SAME fixed port can never bind (first never releases),
+  // so after the wait window it must fail with the plain-English message — not EADDRINUSE.
+  const second = new BridgeServer({ token: TOKEN, serverVersion: 'test', port, heartbeatMs: 0 });
+  try {
+    await assert.rejects(second.start(), (err: Error) => {
+      assert.match(err.message, /another program is already using/i);
+      assert.match(err.message, new RegExp(`:${port}`));
+      assert.doesNotMatch(err.message, /EADDRINUSE/);
+      return true;
+    });
+  } finally {
+    await second.stop();
+    await first.stop();
+  }
+});
+
+test('port conflict: start retries and succeeds once the old listener releases the port', async () => {
+  const first = new BridgeServer({ token: TOKEN, serverVersion: 'test', port: 0, heartbeatMs: 0 });
+  const port = await first.start();
+  const logs: string[] = [];
+  const second = new BridgeServer({ token: TOKEN, serverVersion: 'test', port, heartbeatMs: 0, onLog: (m) => logs.push(m) });
+  // Free the port shortly after the second server starts waiting; its retry loop should then bind.
+  setTimeout(() => void first.stop(), 500);
+  const boundPort = await second.start();
+  try {
+    assert.equal(boundPort, port, 'second server reclaims the same fixed port after the first releases it');
+    assert.ok(logs.some((l) => /waiting for the previous instance/i.test(l)), 'logs the wait-and-retry');
+  } finally {
+    await second.stop();
+  }
+});
