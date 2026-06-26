@@ -28,6 +28,44 @@ export class CmdError extends Error {
   }
 }
 
+/** Max time we wait for a download to finish before reporting failure. */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/**
+ * Resolve when download `id` reaches state `complete`; reject on `interrupted`
+ * or timeout. We poll via `chrome.downloads.search` on every change (and once
+ * immediately, in case a cached download finished before the listener attached).
+ */
+function waitForDownloadComplete(id: number): Promise<chrome.downloads.DownloadItem> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      chrome.downloads.onChanged.removeListener(onChanged);
+      clearTimeout(timer);
+      fn();
+    };
+    const timer = setTimeout(
+      () => settle(() => reject(new CmdError('DOWNLOAD_FAILED', 'download timed out'))),
+      DOWNLOAD_TIMEOUT_MS,
+    );
+    const check = async (): Promise<void> => {
+      const [item] = await chrome.downloads.search({ id });
+      if (!item) return;
+      if (item.state === 'complete') settle(() => resolve(item));
+      else if (item.state === 'interrupted') {
+        settle(() => reject(new CmdError('DOWNLOAD_FAILED', `download interrupted: ${item.error ?? 'unknown'}`)));
+      }
+    };
+    const onChanged = (delta: chrome.downloads.DownloadDelta): void => {
+      if (delta.id === id) void check();
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+    void check();
+  });
+}
+
 const SESSION = crypto.randomUUID();
 const CONTENT_SCHEME = /^(https?|file):/i;
 
@@ -695,7 +733,9 @@ export class ChromeExecutor {
         return { matched: matched === true, waitedMs: Date.now() - start };
       }
 
-      // -- download (user's Downloads dir) --
+      // -- download (saved to the user's Downloads dir; the server then moves it
+      //    into the active task's downloads/). We wait for completion and report
+      //    the absolute on-disk path so the server can relocate it. --
       case 'download_file': {
         const url = typeof cmd.params.url === 'string' ? cmd.params.url : undefined;
         if (!url) throw new CmdError('DOWNLOAD_FAILED', 'the extension download path requires a url');
@@ -703,7 +743,16 @@ export class ChromeExecutor {
           typeof cmd.params.suggestedName === 'string' ? cmd.params.suggestedName : undefined,
         );
         const downloadId = await chrome.downloads.download({ url, filename: name });
-        return { path: `(downloads)/${name}`, backend: 'extension', bytes: 0, suggestedName: name };
+        const item = await waitForDownloadComplete(downloadId);
+        const bytes = item.fileSize > 0 ? item.fileSize : item.bytesReceived;
+        return {
+          path: item.filename,
+          sourcePath: item.filename,
+          downloadId,
+          backend: 'extension',
+          bytes,
+          suggestedName: name,
+        };
       }
 
       // -- upload: set local file(s) on a file <input> via CDP DOM.setFileInputFiles --

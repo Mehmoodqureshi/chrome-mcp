@@ -27,6 +27,14 @@ import { assertUrlAllowed, type Policy } from '../security/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import { runBatch } from './batch';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
+import { listTasks } from '../bridge/tasks';
+import {
+  appendHistory,
+  getActiveWorkspace,
+  saveResult,
+  saveScreenshot,
+  switchWorkspace,
+} from '../bridge/workspace';
 import {
   asArgs,
   MAX_TEXT_LEN,
@@ -98,6 +106,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: obj({}) },
 
+  { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: obj({ name: { type: 'string', description: 'Profile name (becomes a folder; sanitized to a safe path segment).' } }, ['name']) },
+  { name: 'task_new', description: 'Start a new task (run) under the active profile. Creates profiles/<profile>/tasks/<name>/ with downloads/, results/, screenshots/ and makes it the active task so all captured artifacts land there.', inputSchema: obj({ name: { type: 'string', description: 'Task name (becomes a folder; sanitized to a safe path segment).' } }, ['name']) },
+  { name: 'tasks_list', description: 'List every task across all profiles under the data dir, with sizes and download counts.', inputSchema: obj({}) },
+  { name: 'task_status', description: 'Report the active profile/task and the folder paths where this run\'s artifacts are stored.', inputSchema: obj({}) },
+
   {
     name: 'batch',
     description:
@@ -152,7 +165,26 @@ const waitUntil = (args: Record<string, unknown>): WaitUntil | undefined =>
 /** Tools that don't act on a single tab (so `tabId` is irrelevant) — exempt from
  *  the parallel-batch explicit-tabId requirement. Everything else falls back to
  *  the active tab when `tabId` is omitted, which races under concurrency. */
-const PARALLEL_TAB_EXEMPT = new Set(['tabs_list', 'tab_new', 'chrome_status', 'batch']);
+const PARALLEL_TAB_EXEMPT = new Set([
+  'tabs_list', 'tab_new', 'chrome_status', 'batch',
+  'profile_use', 'task_new', 'tasks_list', 'task_status',
+]);
+
+/** Server-side tools that manage the task workspace and need no browser backend. */
+const NO_BACKEND_TOOLS = new Set(['profile_use', 'task_new', 'tasks_list', 'task_status']);
+
+/** Project a Workspace to the path fields worth returning to the caller. */
+function workspaceView(w: ReturnType<typeof getActiveWorkspace>): Record<string, unknown> {
+  return {
+    profile: w.profile,
+    task: w.task,
+    taskDir: w.taskDir,
+    downloadDir: w.downloadDir,
+    resultsDir: w.resultsDir,
+    screenshotsDir: w.screenshotsDir,
+    historyPath: w.historyPath,
+  };
+}
 
 /** A known tool that operates on a specific tab — needs an explicit tabId in a parallel batch. */
 function requiresExplicitTab(tool: string): boolean {
@@ -260,12 +292,15 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       fullPage: optionalBoolean(a, 'fullPage'),
       target: optionalTarget(a),
     });
+    saveScreenshot(shot.dataBase64);
     const caption = shot.truncated ? `(truncated; full height ${shot.fullHeight}px)` : undefined;
     return imageResult(shot.dataBase64, shot.mimeType, caption);
   },
   get_text: async (a, ctx) => {
     await gate(ctx, 'get_text');
-    return jsonResult(await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a) }));
+    const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a) });
+    saveResult('get_text', 'json', JSON.stringify(res, null, 2));
+    return jsonResult(res);
   },
   get_html: async (a, ctx) => {
     await gate(ctx, 'get_html');
@@ -328,17 +363,19 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   extract_links: async (a, ctx) => {
     await gate(ctx, 'get_text'); // read of page content
-    return jsonResult(
-      await extractLinks(ctx.ex, {
-        selector: optionalString(a, 'selector'),
-        sameOriginOnly: optionalBoolean(a, 'sameOriginOnly'),
-        tabId: tabId(a),
-      }),
-    );
+    const res = await extractLinks(ctx.ex, {
+      selector: optionalString(a, 'selector'),
+      sameOriginOnly: optionalBoolean(a, 'sameOriginOnly'),
+      tabId: tabId(a),
+    });
+    saveResult('extract_links', 'json', JSON.stringify(res, null, 2));
+    return jsonResult(res);
   },
   read_as_markdown: async (a, ctx) => {
     await gate(ctx, 'get_text');
-    return textResult(await readAsMarkdown(ctx.ex, { selector: optionalString(a, 'selector'), tabId: tabId(a) }));
+    const md = await readAsMarkdown(ctx.ex, { selector: optionalString(a, 'selector'), tabId: tabId(a) });
+    saveResult('read_as_markdown', 'md', md);
+    return textResult(md);
   },
   fill_form: async (a, ctx) => {
     await gate(ctx, 'type'); // mutating
@@ -390,6 +427,12 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
 
+  // --- task workspace management (server-side; no browser needed) ---
+  profile_use: async (a) => jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') }))),
+  task_new: async (a) => jsonResult(workspaceView(switchWorkspace({ task: requireString(a, 'name') }))),
+  task_status: async () => jsonResult(workspaceView(getActiveWorkspace())),
+  tasks_list: async () => jsonResult(listTasks(getActiveWorkspace().dataDir)),
+
   // Fan-out: each sub-op is routed back through `dispatchToolCall`, so it gets
   // the same policy gate, rate limit, and never-throw handling as a direct call.
   batch: async (a) => runBatch(a, { dispatch: dispatchToolCall, requiresExplicitTab }),
@@ -438,16 +481,40 @@ function allowCall(now: number): boolean {
   return true;
 }
 
+/** A compact, length-bounded summary of a call's args for the history log. */
+function summarizeArgs(rawArgs: unknown): Record<string, unknown> | undefined {
+  if (typeof rawArgs !== 'object' || rawArgs === null) return undefined;
+  const a = rawArgs as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of ['url', 'selector', 'ref', 'name', 'text', 'key', 'op', 'tabId']) {
+    const v = a[k];
+    if (v === undefined) continue;
+    out[k] = typeof v === 'string' && v.length > 120 ? `${v.slice(0, 120)}…` : v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Append one action record to the active task's history.jsonl (best-effort). */
+function recordHistory(tool: string, rawArgs: unknown, ok: boolean, error?: string): void {
+  appendHistory({ ts: new Date().toISOString(), tool, args: summarizeArgs(rawArgs), ok, ...(error ? { error } : {}) });
+}
+
 export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<CallToolResult> {
   const handler = TOOL_HANDLERS[name];
   if (!handler) return errorResult(`unknown tool: ${name}`);
   if (!allowCall(Date.now())) return errorResult('rate limit exceeded; slow down');
   try {
     const mgr = getManager();
-    const ex = await mgr.ensureReady();
-    return await handler(asArgs(rawArgs), { ex, policy: mgr.policy });
+    // Workspace-management tools run server-side and must work even with no
+    // browser paired, so they skip the executor readiness check.
+    const ex = NO_BACKEND_TOOLS.has(name) ? (null as unknown as Executor) : await mgr.ensureReady();
+    const result = await handler(asArgs(rawArgs), { ex, policy: mgr.policy });
+    recordHistory(name, rawArgs, !result.isError);
+    return result;
   } catch (err) {
-    return errorResult(errMessage(err));
+    const message = errMessage(err);
+    recordHistory(name, rawArgs, false, message);
+    return errorResult(message);
   }
 }
 

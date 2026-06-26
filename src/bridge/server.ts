@@ -31,6 +31,20 @@ import { DENY_ALL_WIRE_POLICY } from '../../shared/policy';
 import { ExecutorError } from '../executor/types';
 import { ExtensionConnection } from './connection';
 import { tokensMatch } from './auth';
+import { sanitizeName } from '../config';
+
+/** The routing label for a hello with no/blank profile — the back-compat default. */
+const DEFAULT_PROFILE = 'default';
+
+/** Reduce a hello's profile label to a safe routing key; blank/invalid → "default". */
+function routeKey(profile: string | undefined): string {
+  if (!profile || !profile.trim()) return DEFAULT_PROFILE;
+  try {
+    return sanitizeName(profile, 'profile');
+  } catch {
+    return DEFAULT_PROFILE;
+  }
+}
 
 const HELLO_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_MS = 15_000;
@@ -79,7 +93,10 @@ export interface BridgeOptions {
 
 export class BridgeServer {
   private wss: WebSocketServer | null = null;
-  private active: ExtensionConnection | null = null;
+  /** Profile routing key → its live connection. Multiple browsers stay paired at
+   *  once; a command is routed to the connection for its target profile. A new
+   *  hello for the SAME profile supersedes that profile's connection only. */
+  private conns = new Map<string, ExtensionConnection>();
   private boundPort = 0;
   private readonly heartbeatMs: number;
 
@@ -143,8 +160,8 @@ export class BridgeServer {
   }
 
   async stop(): Promise<void> {
-    this.active?.close(1001, 'server stopping');
-    this.active = null;
+    for (const conn of this.conns.values()) conn.close(1001, 'server stopping');
+    this.conns.clear();
     const wss = this.wss;
     this.wss = null;
     if (wss) await new Promise<void>((resolve) => wss.close(() => resolve()));
@@ -154,27 +171,55 @@ export class BridgeServer {
     return this.boundPort;
   }
 
+  /** True when ANY browser is paired (used as the selector's cheap gate). */
   hasActiveExtension(): boolean {
-    return this.active?.isOpen() ?? false;
+    for (const conn of this.conns.values()) if (conn.isOpen()) return true;
+    return false;
   }
 
-  /** Send a command to the active extension, or reject if none is connected. */
+  /** True when the given profile has a live connection. */
+  hasConnection(profile: string): boolean {
+    const conn = this.conns.get(routeKey(profile));
+    return !!conn && conn.isOpen();
+  }
+
+  /** Profiles with a live connection right now. */
+  connectedProfiles(): string[] {
+    const out: string[] = [];
+    for (const [profile, conn] of this.conns) if (conn.isOpen()) out.push(profile);
+    return out;
+  }
+
+  /**
+   * Send a command to the connection for `opts.profile` (default "default").
+   * Rejects with an actionable message if that profile has no live browser.
+   */
   async sendCommand(
     method: WireMethod,
     params: Record<string, unknown>,
-    opts?: { tabId?: string; timeoutMs?: number },
+    opts?: { tabId?: string; timeoutMs?: number; profile?: string },
   ): Promise<unknown> {
-    if (!this.active || !this.active.isOpen()) {
-      throw new ExecutorError('EXTENSION_DISCONNECTED', 'no extension is paired');
+    const profile = routeKey(opts?.profile);
+    const conn = this.conns.get(profile);
+    if (!conn || !conn.isOpen()) {
+      throw new ExecutorError('EXTENSION_DISCONNECTED', this.noPairMessage(profile));
     }
-    return this.active.sendCommand(method, params, opts);
+    return conn.sendCommand(method, params, opts);
   }
 
-  status(): { extensionConnected: boolean; port: number; sessionId: string | null } {
+  private noPairMessage(profile: string): string {
+    return (
+      `No browser is paired for profile "${profile}". In that Chrome's chrome-mcp ` +
+      `extension Options, set Port ${this.boundPort}, paste the token, set Profile to ` +
+      `"${profile}", and Save — then it joins without disturbing your other profiles.`
+    );
+  }
+
+  status(): { extensionConnected: boolean; port: number; connectedProfiles: string[] } {
     return {
       extensionConnected: this.hasActiveExtension(),
       port: this.boundPort,
-      sessionId: this.active?.sessionId ?? null,
+      connectedProfiles: this.connectedProfiles(),
     };
   }
 
@@ -217,11 +262,11 @@ export class BridgeServer {
         this.reject(ws, 'bad_token');
         return;
       }
-      // Authenticated. Hand the socket to an ExtensionConnection.
+      // Authenticated. Hand the socket to an ExtensionConnection under its profile.
       authed = true;
       clearTimeout(helloTimer);
       ws.off('message', onMessage);
-      this.promote(ws, frame.ext ?? { id: 'unknown', version: '0', chrome: '0' });
+      this.promote(ws, frame.ext ?? { id: 'unknown', version: '0', chrome: '0' }, routeKey(frame.profile));
     };
 
     ws.on('message', onMessage);
@@ -240,14 +285,16 @@ export class BridgeServer {
     }
   }
 
-  private promote(ws: WebSocket, ext: HelloFrame['ext']): void {
+  private promote(ws: WebSocket, ext: HelloFrame['ext'], profile: string): void {
     const sessionId = randomUUID();
 
-    if (this.active && this.active.isOpen()) {
-      const prev = this.active;
+    // Supersede only the SAME profile's connection (a re-pair). Other profiles
+    // keep their live connections, so several browsers stay paired at once.
+    const prev = this.conns.get(profile);
+    if (prev && prev.isOpen()) {
       const differentId = prev.extId !== ext.id;
       this.log(
-        `extension "${ext.id}" superseded active connection "${prev.extId}"` +
+        `extension "${ext.id}" superseded profile "${profile}" connection "${prev.extId}"` +
           (differentId ? ' (DIFFERENT id — possible hijack; surfaced to status)' : ''),
       );
       try {
@@ -267,10 +314,11 @@ export class BridgeServer {
       onEvent: this.opts.onEvent,
       onLog: (m) => this.log(m),
       onClose: () => {
-        if (this.active?.sessionId === sessionId) this.active = null;
+        // Only clear if a newer re-pair hasn't already replaced this slot.
+        if (this.conns.get(profile)?.sessionId === sessionId) this.conns.delete(profile);
       },
     });
-    this.active = conn;
+    this.conns.set(profile, conn);
 
     const welcome: WelcomeFrame = {
       type: 'welcome',
@@ -281,7 +329,7 @@ export class BridgeServer {
       policy: this.opts.policy ?? DENY_ALL_WIRE_POLICY,
     };
     this.send(ws, welcome);
-    this.log(`extension paired (session ${sessionId}, id "${ext.id}")`);
+    this.log(`extension paired (profile "${profile}", session ${sessionId}, id "${ext.id}")`);
   }
 
   private send(ws: WebSocket, frame: ServerFrame): void {

@@ -132,6 +132,10 @@ export interface HelloFrame extends BaseFrame {
   type: 'hello';
   token: string;
   ext: { id: string; version: string; chrome: string };
+  /** Routing label: which profile this browser pairs as. Absent/empty → "default".
+   *  NOT a security boundary (the token is) — it selects which connection slot the
+   *  server routes commands to, so several browsers can stay paired at once. */
+  profile?: string;
 }
 
 /**

@@ -31,6 +31,7 @@ import {
   type WaitUntil,
 } from './types';
 import type { BridgeServer } from '../bridge/server';
+import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
 
 /** Flatten a Target into the params a wire command carries. */
 function targetParams(t?: Target): Record<string, unknown> {
@@ -43,22 +44,32 @@ export class ExtensionExecutor implements Executor {
 
   constructor(private readonly bridge: BridgeServer) {}
 
+  /** The profile this executor routes to = the active task workspace's profile
+   *  (set by `profile_use`). Falls back to "default" before a workspace exists. */
+  private activeProfile(): string {
+    return peekActiveWorkspace()?.profile ?? 'default';
+  }
+
   private send(
     method: Parameters<BridgeServer['sendCommand']>[0],
     params: Record<string, unknown>,
     opts?: { tabId?: TabId; timeoutMs?: number },
   ): Promise<unknown> {
-    return this.bridge.sendCommand(method, params, opts);
+    return this.bridge.sendCommand(method, params, { ...opts, profile: this.activeProfile() });
   }
 
   status(): ExecutorStatus {
-    const connected = this.bridge.hasActiveExtension();
+    const profile = this.activeProfile();
+    const connected = this.bridge.hasConnection(profile);
     return {
       ready: connected,
       backend: this.backend,
       activeTabId: null, // not known synchronously
       extensionConnected: connected,
       cdpAttached: false,
+      detail: connected ? undefined : `active profile "${profile}" has no paired browser`,
+      activeProfile: profile,
+      connectedProfiles: this.bridge.connectedProfiles(),
     };
   }
 
@@ -68,7 +79,7 @@ export class ExtensionExecutor implements Executor {
   }
 
   async ping(deadlineMs = 800): Promise<boolean> {
-    if (!this.bridge.hasActiveExtension()) return false;
+    if (!this.bridge.hasConnection(this.activeProfile())) return false;
     try {
       await this.send('ping_probe', {}, { timeoutMs: deadlineMs });
       return true;
@@ -191,11 +202,25 @@ export class ExtensionExecutor implements Executor {
 
   // -- privileged ---------------------------------------------------------
   async download(args: { url?: string; target?: Target; tabId?: TabId; suggestedName?: string }): Promise<DownloadResult> {
-    return (await this.send(
+    const res = (await this.send(
       'download_file',
       { url: args.url, ...targetParams(args.target), suggestedName: args.suggestedName },
       { tabId: args.tabId },
     )) as DownloadResult;
+    // The extension can only write to the user's Downloads dir; relocate the file
+    // into the active task's downloads/ so each task collects its own artifacts.
+    // If the move fails, keep Chrome's path rather than reporting a phantom failure.
+    if (res.sourcePath) {
+      try {
+        const moved = captureDownload(res.sourcePath, res.suggestedName);
+        return { ...res, path: moved.path, bytes: moved.bytes, sourcePath: undefined };
+      } catch {
+        // Capture failed (e.g. over the size cap): leave the file where Chrome put
+        // it and report that path instead of failing the call.
+        return { ...res, sourcePath: undefined };
+      }
+    }
+    return res;
   }
 
   async uploadFile(t: Target, files: string[], opts?: { tabId?: TabId }): Promise<ActionOk> {

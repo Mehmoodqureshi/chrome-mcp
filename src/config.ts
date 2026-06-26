@@ -20,8 +20,12 @@ export type BackendPreference = 'extension' | 'cdp';
 export interface CliConfig {
   /** Port the bridge binds; 0 = ephemeral (written to the handshake file). */
   wsPort: number;
-  /** Directory holding handshake.json and the CDP-fallback profile. */
+  /** Directory holding handshake.json and the per-profile workspaces. */
   dataDir: string;
+  /** Browser profile (identity). Selects `profiles/<profile>/` under the data dir. */
+  profile: string;
+  /** Task (run). Artifacts land in `profiles/<profile>/tasks/<task>/`. */
+  task: string;
   /** Resolved, fully-defaulted security policy. */
   policy: Policy;
   /** Whether to fall back to a Playwright-driven Chromium when no extension is paired. */
@@ -44,6 +48,42 @@ export interface CliConfig {
 /** Resolve the data dir: `$CHROME_MCP_DATA` or `~/.chrome-mcp`. */
 export function resolveDataDir(): string {
   return process.env.CHROME_MCP_DATA ?? join(homedir(), '.chrome-mcp');
+}
+
+const DEFAULT_PROFILE = 'default';
+const DEFAULT_TASK = 'default';
+
+/**
+ * Reduce an arbitrary label to a single safe path segment: no separators, no
+ * `..` traversal, no leading dots. Profile/task names become directories under
+ * the data dir, so they must never escape it.
+ */
+export function sanitizeName(name: string, kind: 'profile' | 'task'): string {
+  const clean = name.trim().replace(/[^A-Za-z0-9._-]/g, '-').replace(/^\.+/, '');
+  if (!clean || clean === '.' || clean === '..') {
+    throw new Error(`invalid ${kind} name: ${JSON.stringify(name)}`);
+  }
+  return clean;
+}
+
+/** Active profile: `$CHROME_MCP_PROFILE` (set by `--profile`) or "default". */
+export function resolveProfile(): string {
+  return sanitizeName(process.env.CHROME_MCP_PROFILE ?? DEFAULT_PROFILE, 'profile');
+}
+
+/** Active task: `$CHROME_MCP_TASK` (set by `--task`) or "default". */
+export function resolveTask(): string {
+  return sanitizeName(process.env.CHROME_MCP_TASK ?? DEFAULT_TASK, 'task');
+}
+
+/** `profiles/<profile>/` — holds the Chrome user-data dir and this profile's tasks. */
+export function resolveProfileDir(dataDir: string, profile: string): string {
+  return join(dataDir, 'profiles', profile);
+}
+
+/** `profiles/<profile>/tasks/<task>/` — per-run artifacts (downloads, meta.json). */
+export function resolveTaskDir(dataDir: string, profile: string, task: string): string {
+  return join(resolveProfileDir(dataDir, profile), 'tasks', task);
 }
 
 function readPolicyFile(path: string): Partial<Policy> {
@@ -94,6 +134,12 @@ export function parseArgs(argv: string[]): CliConfig {
         break;
       case '--data-dir':
         process.env.CHROME_MCP_DATA = requireValue(argv[++i], '--data-dir');
+        break;
+      case '--profile':
+        process.env.CHROME_MCP_PROFILE = requireValue(argv[++i], '--profile');
+        break;
+      case '--task':
+        process.env.CHROME_MCP_TASK = requireValue(argv[++i], '--task');
         break;
       case '--policy':
         policyFile = readPolicyFile(requireValue(argv[++i], '--policy'));
@@ -163,6 +209,8 @@ export function parseArgs(argv: string[]): CliConfig {
   return {
     wsPort,
     dataDir: resolveDataDir(),
+    profile: resolveProfile(),
+    task: resolveTask(),
     policy,
     cdpFallback,
     cdpEndpoint,
@@ -213,10 +261,19 @@ function requireLogLevel(value: string | undefined): LogLevel {
 export const HELP_TEXT = `chrome-mcp — drive a real Chrome browser over MCP.
 
 Usage: chrome-mcp [options]
+       chrome-mcp tasks list [--json]
+       chrome-mcp tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>] [--dry-run]
 
 Connection:
   --port <n>             WebSocket bridge port (default ${DEFAULT_WS_PORT}; 0 = ephemeral)
   --data-dir <path>      Override the data dir (default ~/.chrome-mcp)
+  --profile <name>       Default browser profile / identity (default "default").
+                         Artifacts live under profiles/<name>/. At runtime, switch
+                         with the profile_use tool. Several browsers can pair to the
+                         SAME port+token at once, each declaring its own Profile in
+                         the extension Options; tools route to the active profile.
+  --task <name>          Task label (default "default"). Downloads and a meta.json
+                         land in profiles/<profile>/tasks/<task>/.
   --print-pairing        Write the handshake and print its path, then exit
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
