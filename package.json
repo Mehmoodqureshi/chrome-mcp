@@ -1,6 +1,6 @@
 {
   "name": "@mehmoodqureshi/chrome-mcp",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Drive a real Chrome browser over MCP. A stdio MCP server (CLI) plus an MV3 extension, behind one pluggable Executor (extension via chrome.scripting, or a Playwright CDP fallback).",
   "author": "Mehmood Ur Rehman Qureshi",
   "license": "MIT",
