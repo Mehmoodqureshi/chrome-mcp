@@ -12,11 +12,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { HELP_TEXT, parseArgs } from './config';
+import { HELP_TEXT, parseArgs, resolveDataDir } from './config';
+import { type GcOptions, gcTasks, listTasks } from './bridge/tasks';
 import { configureManager } from './executor/manager';
 import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
-import { ensureDataDir } from './bridge/datadir';
+import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/datadir';
+import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake } from './bridge/auth';
 import { logErr, startMcpServer, stopMcpServer } from './mcp/server';
 
@@ -54,7 +56,100 @@ function version(): string {
   }
 }
 
+/** Render a byte count as a short human string (1.2 MB, 904 KB, …). */
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
+/** Pull `--flag value` / `--flag` out of an arg list, leaving positionals. */
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i === -1) return undefined;
+  return args[i + 1];
+}
+function hasFlag(args: string[], name: string): boolean {
+  return args.includes(name);
+}
+
+const TASKS_HELP = `chrome-mcp tasks — inspect and prune per-profile task workspaces.
+
+Usage:
+  chrome-mcp tasks list [--json] [--data-dir <path>]
+  chrome-mcp tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>]
+                        [--dry-run] [--data-dir <path>]
+
+gc removes a task only when it is NOT among the newest --keep AND is older than
+--older-than. At least one of --older-than / --keep is required.
+`;
+
+/**
+ * Handle the `tasks` subcommand family (list / gc). Returns true if argv was a
+ * tasks command (so main() should not start the server), false otherwise.
+ */
+function runTasksCommand(argv: string[]): boolean {
+  if (argv[0] !== 'tasks') return false;
+  const args = argv.slice(1);
+  const sub = args[0];
+
+  const dataDirFlag = flag(args, '--data-dir');
+  if (dataDirFlag) process.env.CHROME_MCP_DATA = dataDirFlag;
+  const dataDir = resolveDataDir();
+
+  if (sub === 'list') {
+    const tasks = listTasks(dataDir);
+    if (hasFlag(args, '--json')) {
+      process.stdout.write(`${JSON.stringify(tasks, null, 2)}\n`);
+      return true;
+    }
+    if (tasks.length === 0) {
+      process.stdout.write('no tasks found.\n');
+      return true;
+    }
+    process.stdout.write('PROFILE\tTASK\tCREATED\tFILES\tSIZE\n');
+    for (const t of tasks) {
+      process.stdout.write(`${t.profile}\t${t.task}\t${t.createdAt}\t${t.downloads}\t${humanBytes(t.bytes)}\n`);
+    }
+    return true;
+  }
+
+  if (sub === 'gc') {
+    const olderThan = flag(args, '--older-than');
+    const keep = flag(args, '--keep');
+    if (olderThan === undefined && keep === undefined) {
+      process.stderr.write('tasks gc: pass --older-than <days> and/or --keep <n>.\n');
+      process.exitCode = 1;
+      return true;
+    }
+    const opts: GcOptions = {
+      olderThanDays: olderThan === undefined ? undefined : Number.parseFloat(olderThan),
+      keep: keep === undefined ? undefined : Number.parseInt(keep, 10),
+      profile: flag(args, '--profile'),
+      dryRun: hasFlag(args, '--dry-run'),
+    };
+    const { removed, freedBytes } = gcTasks(dataDir, opts, Date.now());
+    const prefix = opts.dryRun ? '[dry-run] would remove' : 'removed';
+    process.stdout.write(`${prefix} ${removed.length} task(s), ${humanBytes(freedBytes)}\n`);
+    for (const t of removed) {
+      process.stdout.write(`  ${t.profile}/${t.task} (${humanBytes(t.bytes)})\n`);
+    }
+    return true;
+  }
+
+  process.stdout.write(TASKS_HELP);
+  return true;
+}
+
 async function main(): Promise<void> {
+  if (runTasksCommand(process.argv.slice(2))) return;
+
   const cfg = parseArgs(process.argv.slice(2));
 
   if (cfg.showHelp) {
@@ -104,6 +199,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Each profile is an identity (its own Chrome user-data dir); each task is a
+  // run whose downloads/meta.json live under it. Handshake stays at the data-dir
+  // root (auth is machine-scoped, not per-profile). Fold any pre-0.6 flat layout
+  // into profiles/default/ first — before ensureWorkspace creates the targets.
+  for (const m of migrateLegacyLayout(dataDir)) logErr(`migrated legacy layout: ${m}`);
+  const workspace = ensureWorkspace(dataDir, cfg.profile, cfg.task, {
+    version: version(),
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  });
+  setActiveWorkspace(workspace);
+  logErr(`workspace: profile "${workspace.profile}" task "${workspace.task}" → ${workspace.taskDir}`);
+
   configureManager({
     policy: cfg.policy,
     select: createSelector({
@@ -113,7 +221,8 @@ async function main(): Promise<void> {
       cdp: {
         mode: cfg.cdpEndpoint ? 'connect' : 'launch',
         cdpEndpoint: cfg.cdpEndpoint,
-        userDataDir: dataDir,
+        userDataDir: workspace.profileDir,
+        downloadDir: workspace.downloadDir,
         headless: cfg.headless,
       },
     }),

@@ -105,6 +105,15 @@ export interface DownloadResult {
   bytes: number;
   mimeType?: string;
   suggestedName?: string;
+  /**
+   * Extension backend only: the absolute path where Chrome first saved the file
+   * (the user's Downloads dir). The server moves it into the active task's
+   * `downloads/` and clears this field, so it is never present in a final result
+   * returned to the MCP client.
+   */
+  sourcePath?: string;
+  /** Extension backend only: the chrome.downloads id, surfaced for diagnostics. */
+  downloadId?: number;
 }
 
 /** One interactive/landmark element in an accessibility snapshot. `ref` is stable until the tab navigates. */
@@ -152,6 +161,10 @@ export interface ExecutorStatus {
   detail?: string;
   extensionConnected: boolean;
   cdpAttached: boolean;
+  /** Extension backend: the profile tools currently route to (set by profile_use). */
+  activeProfile?: string;
+  /** Extension backend: every profile with a live browser right now. */
+  connectedProfiles?: string[];
 }
 
 // ---------------------------------------------------------------------------

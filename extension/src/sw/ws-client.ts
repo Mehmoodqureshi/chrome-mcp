@@ -40,7 +40,7 @@ export class WsClient {
     return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN;
   }
 
-  connect(port: number, token: string): void {
+  connect(port: number, token: string, profile?: string): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -60,6 +60,7 @@ export class WsClient {
         v: PROTOCOL_VERSION,
         token,
         ext: { id: chrome.runtime.id, version: chrome.runtime.getManifest().version, chrome: chromeVersion() },
+        profile: profile && profile.trim() ? profile.trim() : undefined,
       };
       ws.send(JSON.stringify(hello));
     };

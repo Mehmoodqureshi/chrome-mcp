@@ -19,6 +19,8 @@ import type { WirePolicy } from '../../../shared/protocol';
 interface PairConfig {
   wsPort: number;
   token: string;
+  /** Routing label this browser pairs as (default "default"). */
+  profile: string;
 }
 
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
@@ -44,10 +46,11 @@ const router = new CommandRouter({
 });
 
 async function getConfig(): Promise<PairConfig | null> {
-  const { wsPort, token } = await chrome.storage.local.get(['wsPort', 'token']);
+  const { wsPort, token, profile } = await chrome.storage.local.get(['wsPort', 'token', 'profile']);
   // wsPort must be > 0 — a stored 0 would dial ws://127.0.0.1:0 (ERR_UNSAFE_PORT).
   if (typeof wsPort === 'number' && wsPort > 0 && typeof token === 'string' && token.length > 0) {
-    return { wsPort, token };
+    const name = typeof profile === 'string' && profile.trim() ? profile.trim() : 'default';
+    return { wsPort, token, profile: name };
   }
   return null;
 }
@@ -81,7 +84,7 @@ async function ensureConnected(): Promise<void> {
   if (ws.isConnected() || ws.state === 'unauthorized') return;
   const cfg = await getConfig();
   if (!cfg) return;
-  ws.connect(cfg.wsPort, cfg.token);
+  ws.connect(cfg.wsPort, cfg.token, cfg.profile);
 }
 
 // --- keepalive: an awaited extension-API call resets the 30s idle timer -----
@@ -99,9 +102,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.wsPort || changes.token)) {
-    // New pairing config (e.g. from the options page) → clear any prior reject and connect.
+  if (area === 'local' && (changes.wsPort || changes.token || changes.profile)) {
+    // New pairing config (e.g. from the options page) → clear any prior reject and
+    // reconnect so a changed profile re-pairs under the new routing label.
     if (ws.state === 'unauthorized') ws.state = 'idle';
+    if (changes.profile) ws.close(); // force a fresh hello with the new profile
     void ensureConnected();
   }
 });

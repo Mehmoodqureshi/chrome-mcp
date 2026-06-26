@@ -25,6 +25,13 @@
     <input id="port" type="number" inputmode="numeric" placeholder="38017" />
     <label for="token">Token</label>
     <input id="token" type="password" placeholder="paste the handshake token" />
+    <label for="profile">Profile</label>
+    <input id="profile" type="text" placeholder="default" />
+    <p class="hint">
+      A name for this browser (e.g. <code>mehmood</code>). Several browsers can pair to the
+      same port &amp; token at once, each with its own profile — switch between them with
+      <code>profile_use</code>. Leave blank for <code>default</code>.
+    </p>
     <button id="save">Save & connect</button>
     <div class="status" id="status">Status: unknown</div>
     <script src="options.js"></script>
