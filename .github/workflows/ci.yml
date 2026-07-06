@@ -36,3 +36,8 @@ jobs:
 
       - name: Build (extension)
         run: npm run build:ext
+
+      - name: Test
+        # The extension smoke test self-skips unless RUN_EXT_SMOKE is set (it
+        # needs a headed Chrome), so the default suite runs browser-free in CI.
+        run: npm test
