@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    name: Node ${{ matrix.node-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck (server)
+        run: npm run typecheck
+
+      - name: Typecheck (extension)
+        run: npm run typecheck:ext
+
+      - name: Build (server)
+        run: npm run build
+
+      - name: Build (extension)
+        run: npm run build:ext

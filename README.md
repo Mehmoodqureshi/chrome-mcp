@@ -1,5 +1,9 @@
 # chrome-mcp
 
+[![CI](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
+[![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
+
 Drive a **real Chrome browser** from Claude (or any MCP host). One pluggable
 `Executor` interface, two backends:
 
