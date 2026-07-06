@@ -45,7 +45,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:ext": "tsc -p tsconfig.ext.json",
     "clean": "rimraf dist extension-dist",
-    "test": "npm run clean && npm run build && npm run build:ext && node --test dist/test",
+    "test": "npm run clean && npm run build && npm run build:ext && node --test dist/test/*.test.js",
     "test:hitl": "npm run build && node dist/hitl/index.js",
     "prepack": "npm run clean && npm run build && npm run build:ext",
     "postinstall": "node scripts/postinstall.js"
