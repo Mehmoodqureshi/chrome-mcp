@@ -21,6 +21,7 @@ policy.json
 .shot.mjs
 .cmds.jsonl
 .results.jsonl
+scratchpad_sitemap.xml
 capture/
 scaffold/
 .env
@@ -30,3 +31,4 @@ scaffold/
 # Research deliverables — keep local only, never commit
 wordpress-research/
 react-research/
+wpos-audit-reports/

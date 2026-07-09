@@ -1,8 +1,9 @@
 /**
  * src/mcp/tools.ts — the MCP tool surface: the advertised catalog
- * (`TOOL_DEFINITIONS`), the name→handler dispatch (`TOOL_HANDLERS`), the
- * never-throw firewall (`dispatchToolCall`), and `registerTools()` which wires
- * both onto a `Server`.
+ * (`TOOL_DEFINITIONS`, each with a zod `inputSchema`), the name→handler dispatch
+ * (`TOOL_HANDLERS`), the never-throw firewall (`dispatchToolCall`), and
+ * `registerTools()` which registers every tool on an `McpServer` via
+ * `registerTool` — the SDK validates the zod schema before dispatch runs.
  *
  * Each handler: validate args → **policy-gate against the relevant URL** → call
  * the active Executor (or a server-side helper) → serialize via an envelope.
@@ -12,12 +13,9 @@
 
 import { resolve as pathResolve, sep } from 'node:path';
 
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 import type { WireMethod } from '../../shared/protocol';
 import type { Executor, Target, WaitUntil } from '../executor/types';
@@ -56,78 +54,71 @@ import {
 export interface ToolDefinition {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  /** zod raw shape passed to `McpServer.registerTool`; the SDK validates it before dispatch. */
+  inputSchema: z.ZodRawShape;
 }
 
+/** Shared selector|ref target — both optional; a handler that needs one calls `requireTarget`. */
 const TARGET_PROPS = {
-  selector: { type: 'string', description: 'CSS selector (exactly one of selector|ref)' },
-  ref: { type: 'string', description: 'Element ref from a prior read (exactly one of selector|ref)' },
+  selector: z.string().describe('CSS selector (exactly one of selector|ref)').optional(),
+  ref: z.string().describe('Element ref from a prior read (exactly one of selector|ref)').optional(),
 } as const;
 
-const obj = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
-  type: 'object',
-  properties,
-  required,
-  additionalProperties: false,
-});
+const tabIdField = z.string().describe('Target tab id (defaults to the active tab)').optional();
+const waitUntilField = z.enum(['load', 'domcontentloaded', 'networkidle']).describe('When to consider navigation done').optional();
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
-  { name: 'tabs_list', description: 'List open browser tabs.', inputSchema: obj({}) },
-  { name: 'tab_select', description: 'Make a tab active by tabId.', inputSchema: obj({ tabId: { type: 'string' } }, ['tabId']) },
-  { name: 'tab_new', description: 'Open a NEW tab (optionally at a URL) and focus it. Prefer this over `navigate` when the user says "open"/"go to" a site — `navigate` REPLACES the current tab. Pass active:false to open in the background (used by parallel batches).', inputSchema: obj({ url: { type: 'string' }, active: { type: 'boolean' } }) },
-  { name: 'tab_close', description: 'Close a tab by tabId.', inputSchema: obj({ tabId: { type: 'string' } }, ['tabId']) },
+  { name: 'tabs_list', description: 'List open browser tabs.', inputSchema: {} },
+  { name: 'tab_select', description: 'Make a tab active by tabId.', inputSchema: { tabId: z.string() } },
+  { name: 'tab_new', description: 'Open a NEW tab (optionally at a URL) and focus it. Prefer this over `navigate` when the user says "open"/"go to" a site — `navigate` REPLACES the current tab. Pass active:false to open in the background (used by parallel batches).', inputSchema: { url: z.string().optional(), active: z.boolean().optional() } },
+  { name: 'tab_close', description: 'Close a tab by tabId.', inputSchema: { tabId: z.string() } },
 
-  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: obj({ url: { type: 'string' }, tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }, ['url']) },
-  { name: 'back', description: 'Go back in history.', inputSchema: obj({ tabId: { type: 'string' } }) },
-  { name: 'forward', description: 'Go forward in history.', inputSchema: obj({ tabId: { type: 'string' } }) },
-  { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: obj({ tabId: { type: 'string' }, waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'] } }) },
+  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: { url: z.string(), tabId: tabIdField, waitUntil: waitUntilField } },
+  { name: 'back', description: 'Go back in history.', inputSchema: { tabId: tabIdField } },
+  { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField } },
+  { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField } },
 
-  { name: 'click', description: 'Click an element (target by selector or a snapshot ref). trusted=true uses real OS-level input.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' }, button: { type: 'string', enum: ['left', 'right', 'middle'] }, clickCount: { type: 'number' }, trusted: { type: 'boolean' } }) },
-  { name: 'type', description: 'Type text into an element. trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: obj({ ...TARGET_PROPS, text: { type: 'string' }, tabId: { type: 'string' }, clear: { type: 'boolean' }, pressEnter: { type: 'boolean' }, keyEvents: { type: 'boolean' }, trusted: { type: 'boolean' } }, ['text']) },
-  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: obj({ ...TARGET_PROPS, values: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['values']) },
-  { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: obj({ key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['key']) },
-  { name: 'hover', description: 'Hover over an element.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' } }) },
-  { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: obj({ ...TARGET_PROPS, x: { type: 'number' }, y: { type: 'number' }, deltaX: { type: 'number' }, deltaY: { type: 'number' }, tabId: { type: 'string' } }) },
+  { name: 'click', description: 'Click an element (target by selector or a snapshot ref). trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional() } },
+  { name: 'type', description: 'Type text into an element. trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional() } },
+  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, values: z.array(z.string()), tabId: tabIdField } },
+  { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField } },
+  { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField } },
+  { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
-  { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: obj({ ...TARGET_PROPS, fullPage: { type: 'boolean' }, tabId: { type: 'string' } }) },
-  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: obj({ ...TARGET_PROPS, tabId: { type: 'string' } }) },
-  { name: 'get_html', description: 'Get HTML of the page or an element.', inputSchema: obj({ ...TARGET_PROPS, outer: { type: 'boolean' }, tabId: { type: 'string' } }) },
-  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with stable refs to target by `ref` (more reliable than guessing CSS selectors).', inputSchema: obj({ interactiveOnly: { type: 'boolean' }, max: { type: 'number' }, tabId: { type: 'string' } }) },
-  { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: obj({ url: { type: 'string' }, tabId: { type: 'string' } }) },
-  { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: obj({ op: { type: 'string', enum: ['get', 'set', 'remove', 'clear'] }, key: { type: 'string' }, value: { type: 'string' }, session: { type: 'boolean' }, tabId: { type: 'string' } }, ['op']) },
-  { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: obj({ expression: { type: 'string' }, awaitPromise: { type: 'boolean' }, tabId: { type: 'string' } }, ['expression']) },
-  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: obj({ selector: { type: 'string' }, textContains: { type: 'string' }, gone: { type: 'boolean' }, timeoutMs: { type: 'number' }, tabId: { type: 'string' } }) },
+  { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField } },
+  { name: 'get_html', description: 'Get HTML of the page or an element.', inputSchema: { ...TARGET_PROPS, outer: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with stable refs to target by `ref` (more reliable than guessing CSS selectors).', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), tabId: tabIdField } },
+  { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: { url: z.string().optional(), tabId: tabIdField } },
+  { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: { op: z.enum(['get', 'set', 'remove', 'clear']), key: z.string().optional(), value: z.string().optional(), session: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: { expression: z.string(), awaitPromise: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), tabId: tabIdField } },
 
-  { name: 'extract_links', description: 'Extract anchors from the page or a subtree.', inputSchema: obj({ selector: { type: 'string' }, sameOriginOnly: { type: 'boolean' }, tabId: { type: 'string' } }) },
-  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: obj({ selector: { type: 'string' }, tabId: { type: 'string' } }) },
-  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: obj({ fields: { type: 'object' }, submitSelector: { type: 'string' }, tabId: { type: 'string' } }, ['fields']) },
-  { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: obj({ url: { type: 'string' }, ...TARGET_PROPS, suggestedName: { type: 'string' }, tabId: { type: 'string' } }) },
-  { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: obj({ ...TARGET_PROPS, files: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' } }, ['files']) },
+  { name: 'extract_links', description: 'Extract anchors from the page or a subtree.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), tabId: tabIdField } },
+  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), tabId: tabIdField } },
+  { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: { url: z.string().optional(), ...TARGET_PROPS, suggestedName: z.string().optional(), tabId: tabIdField } },
+  { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: { ...TARGET_PROPS, files: z.array(z.string()), tabId: tabIdField } },
 
-  { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: obj({}) },
+  { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: {} },
 
-  { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: obj({ name: { type: 'string', description: 'Profile name (becomes a folder; sanitized to a safe path segment).' } }, ['name']) },
-  { name: 'task_new', description: 'Start a new task (run) under the active profile. Creates profiles/<profile>/tasks/<name>/ with downloads/, results/, screenshots/ and makes it the active task so all captured artifacts land there.', inputSchema: obj({ name: { type: 'string', description: 'Task name (becomes a folder; sanitized to a safe path segment).' } }, ['name']) },
-  { name: 'tasks_list', description: 'List every task across all profiles under the data dir, with sizes and download counts.', inputSchema: obj({}) },
-  { name: 'task_status', description: 'Report the active profile/task and the folder paths where this run\'s artifacts are stored.', inputSchema: obj({}) },
+  { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: { name: z.string().describe('Profile name (becomes a folder; sanitized to a safe path segment).') } },
+  { name: 'task_new', description: 'Start a new task (run) under the active profile. Creates profiles/<profile>/tasks/<name>/ with downloads/, results/, screenshots/ and makes it the active task so all captured artifacts land there.', inputSchema: { name: z.string().describe('Task name (becomes a folder; sanitized to a safe path segment).') } },
+  { name: 'tasks_list', description: 'List every task across all profiles under the data dir, with sizes and download counts.', inputSchema: {} },
+  { name: 'task_status', description: 'Report the active profile/task and the folder paths where this run\'s artifacts are stored.', inputSchema: {} },
 
   {
     name: 'batch',
     description:
       'Run multiple tool calls in one request — parallel (default) or serial. Each op is { tool, args } and goes through the same policy gate, rate limit, and error handling as a direct call. In parallel mode, tab-scoped ops MUST pass an explicit tabId (the active-tab default is unsafe under concurrency). Use to drive several tabs at once (e.g. open tabs, then batch get_text across them). Cannot be nested.',
-    inputSchema: obj(
-      {
-        ops: {
-          type: 'array',
-          description: 'Operations to run; each is a tool name + its args.',
-          items: obj({ tool: { type: 'string' }, args: { type: 'object' } }, ['tool']),
-        },
-        mode: { type: 'string', enum: ['parallel', 'serial'], description: 'Default "parallel".' },
-        stopOnError: { type: 'boolean', description: 'Serial mode only: stop after the first failing op (the rest are skipped).' },
-        maxConcurrency: { type: 'number', description: 'Parallel mode: max ops in flight at once (default 6).' },
-      },
-      ['ops'],
-    ),
+    inputSchema: {
+      ops: z
+        .array(z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() }))
+        .describe('Operations to run; each is a tool name + its args.'),
+      mode: z.enum(['parallel', 'serial']).describe('Default "parallel".').optional(),
+      stopOnError: z.boolean().describe('Serial mode only: stop after the first failing op (the rest are skipped).').optional(),
+      maxConcurrency: z.number().describe('Parallel mode: max ops in flight at once (default 6).').optional(),
+    },
   },
 ];
 
@@ -530,18 +521,18 @@ export function assertNoDrift(): void {
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerTools(server: Server): void {
+export function registerTools(server: McpServer): void {
   assertNoDrift();
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS.map((d) => ({
-      name: d.name,
-      description: d.description,
-      inputSchema: d.inputSchema,
-    })),
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (req) =>
-    dispatchToolCall(req.params.name, req.params.arguments),
-  );
+  // Register each tool with its zod `inputSchema`. The SDK advertises it in
+  // `tools/list` and validates arguments before invoking the handler, which
+  // just routes back through `dispatchToolCall` — our never-throw firewall that
+  // applies the rate limit, executor readiness, policy gate, and history log.
+  for (const d of TOOL_DEFINITIONS) {
+    server.registerTool(
+      d.name,
+      { description: d.description, inputSchema: d.inputSchema },
+      async (args: Record<string, unknown>) => dispatchToolCall(d.name, args),
+    );
+  }
 }

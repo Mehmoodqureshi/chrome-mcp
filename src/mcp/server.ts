@@ -7,7 +7,7 @@
  * go to stderr via `logErr`.
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { registerTools } from './tools';
@@ -18,7 +18,7 @@ const SERVER_VERSION = '0.1.0';
 /** Default version reported when no explicit version is passed in (legacy callers/tests). */
 const DEFAULT_VERSION = SERVER_VERSION;
 
-let server: Server | null = null;
+let server: McpServer | null = null;
 let transport: StdioServerTransport | null = null;
 
 /** stderr only — never stdout in stdio mode. */
@@ -27,13 +27,14 @@ export function logErr(message: string): void {
 }
 
 /** Build a fresh `Server` with the full tool surface registered (no transport). */
-export function createServer(version: string = DEFAULT_VERSION): Server {
-  const srv = new Server(
+export function createServer(version: string = DEFAULT_VERSION): McpServer {
+  const srv = new McpServer(
     { name: SERVER_NAME, version },
     { capabilities: { tools: {} } },
   );
   registerTools(srv);
-  srv.onerror = (err: unknown): void => {
+  // `McpServer` wraps the low-level `Server`, which owns the `onerror` hook.
+  srv.server.onerror = (err: unknown): void => {
     logErr(`server error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   };
   return srv;
