@@ -85,16 +85,37 @@ function isAboutBlank(url: string): boolean {
   return url === 'about:blank' || url === '' || url.startsWith('about:');
 }
 
+/**
+ * Reduce an allowlist entry to the bare host it constrains. Users routinely paste
+ * a full URL ("https://example.com/app") or a "host:port/path" instead of a bare
+ * host; those forms would never equal a hostname and so silently match nothing.
+ * We strip the scheme, userinfo, port, and path/query/fragment, preserving a
+ * leading "*." wildcard and the two catch-all forms. Returns '' for a pattern
+ * that carries no host (which then matches nothing).
+ */
+function normalizeDomainPattern(pattern: string): string {
+  let p = pattern.trim().toLowerCase();
+  if (p === '*' || p === '*://*/*') return '*';
+  // Strip a leading scheme ("https://", "http://", any "scheme://").
+  p = p.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  // Drop everything from the first path/query/fragment separator onward.
+  p = p.replace(/[/?#].*$/, '');
+  // Strip userinfo ("user:pass@") then a trailing port (":8080").
+  p = p.replace(/^[^@]*@/, '').replace(/:\d+$/, '');
+  return p;
+}
+
 /** Convert a single domain glob to a predicate. '*' matches everything;
- *  '*.example.com' matches example.com and any subdomain; otherwise exact host. */
+ *  '*.example.com' matches example.com and any subdomain; otherwise exact host.
+ *  URL/port/path forms are normalized to their bare host first. */
 function globMatches(host: string, pattern: string): boolean {
-  const p = pattern.trim().toLowerCase();
-  if (p === '*' || p === '*://*/*') return true;
+  const p = normalizeDomainPattern(pattern);
+  if (p === '*') return true;
   if (p.startsWith('*.')) {
     const base = p.slice(2);
     return host === base || host.endsWith('.' + base);
   }
-  return host === p;
+  return p !== '' && host === p;
 }
 
 export function isDomainAllowed(url: string, policy: WirePolicy): boolean {

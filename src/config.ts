@@ -197,6 +197,15 @@ export function parseArgs(argv: string[]): CliConfig {
     }
   }
 
+  // Fallback permanently removed — this build is EXTENSION-ONLY. It NEVER
+  // launches or attaches a Chromium of its own; it only ever drives the user's
+  // real Chrome through the paired extension. Any CDP flags (--cdp-fallback,
+  // --cdp-endpoint, --prefer cdp) are still accepted for back-compat but are
+  // hard-overridden here so no separate/"fallback" browser can ever open.
+  cdpFallback = false;
+  cdpEndpoint = undefined;
+  prefer = 'extension';
+
   // File first, then flags win.
   const policy = resolvePolicy({ ...policyFile, ...policyFlags });
 
@@ -280,13 +289,14 @@ Connection:
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.
 
 Backend:
-  --cdp-fallback         Opt in to launching/attaching Chromium when no extension
-                         is paired. OFF by default — extension-only, never opens
-                         a browser of its own.
-  --no-cdp-fallback      Explicitly disable the fallback (already the default).
-  --cdp-endpoint <url>   Attach to an existing Chrome (e.g. http://127.0.0.1:9222)
-  --prefer <which>       "extension" (default) or "cdp"
-  --headless             Run the CDP-fallback Chromium headless
+  This build is EXTENSION-ONLY — it drives ONLY your real Chrome via the paired
+  extension and never launches or attaches a Chromium of its own. The CDP flags
+  below are accepted for back-compat but IGNORED (there is no fallback).
+  --cdp-fallback         (ignored — fallback permanently removed)
+  --no-cdp-fallback      (ignored — extension-only is always on)
+  --cdp-endpoint <url>   (ignored — no CDP attach)
+  --prefer <which>       (ignored — always "extension")
+  --headless             (ignored — no CDP Chromium to run headless)
 
 Security (default: deny-all safe mode):
   --policy <file>        Load a JSON policy file

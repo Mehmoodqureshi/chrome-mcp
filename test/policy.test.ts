@@ -61,6 +61,24 @@ test('glob domain matching: bare, wildcard subdomain, and star', () => {
   assert.ok(isDomainAllowed('https://anything.example/', star));
 });
 
+test('allowlist entries pasted as URLs / host:port / paths still match the bare host', () => {
+  // A user who pastes a full URL, a host:port, or a host/path into --allow-domain
+  // still gets a working entry — we normalize each pattern down to its bare host.
+  const pasted = resolvePolicy({
+    allowDomains: ['https://example.com/app', 'sub.test:8443', 'foo.example/path?q=1'],
+  });
+  assert.ok(isDomainAllowed('https://example.com/other', pasted)); // scheme + path stripped
+  assert.ok(isDomainAllowed('https://sub.test/x', pasted)); // port stripped
+  assert.ok(isDomainAllowed('https://foo.example/y', pasted)); // path + query stripped
+  assert.ok(!isDomainAllowed('https://evil.test/x', pasted)); // unrelated host still denied
+
+  // The wildcard subdomain form survives a scheme prefix too.
+  const scheme = resolvePolicy({ allowDomains: ['https://*.wikipedia.org'] });
+  assert.ok(isDomainAllowed('https://en.wikipedia.org/wiki/X', scheme));
+  assert.ok(isDomainAllowed('https://wikipedia.org/X', scheme));
+  assert.ok(!isDomainAllowed('https://example.com/X', scheme));
+});
+
 test('mutations are gated by safe-mode independently of domain', () => {
   const safeButAllowed = resolvePolicy({ allowDomains: ['example.com'] }); // enableMutations false
   assert.ok(denied(() => assertUrlAllowed('https://example.com/', 'click', safeButAllowed)));
@@ -123,9 +141,9 @@ test('parseArgs: safe defaults and flag overrides', () => {
   assert.equal(loud.policy.enableMutations, true);
   assert.equal(loud.wsPort, 40000);
 
-  // Opt back into the CDP fallback explicitly.
-  assert.equal(parseArgs(['--cdp-fallback']).cdpFallback, true);
-  // --no-cdp-fallback still accepted (now a no-op vs the default).
+  // Extension-only build: the CDP flags are accepted for back-compat but ignored —
+  // cdpFallback stays false regardless.
+  assert.equal(parseArgs(['--cdp-fallback']).cdpFallback, false);
   assert.equal(parseArgs(['--no-cdp-fallback']).cdpFallback, false);
 
   // The "your Chrome, every time, no re-pair" combo.
