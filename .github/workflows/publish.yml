@@ -1,0 +1,47 @@
+# Copy this to each repo as: .github/workflows/publish.yml
+#
+# Publishes to npm automatically when package.json "version" changes on main
+# (i.e. right after you push the daily bump). Requires a repo secret NPM_TOKEN
+# (an npm automation token). Skips if the version is already on npm.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check if this version is already published
+        id: check
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VER already on npm — skipping."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Will publish $NAME@$VER."
+          fi
+
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
