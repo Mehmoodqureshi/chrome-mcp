@@ -17,10 +17,14 @@ export interface LinkOut {
 /**
  * Collect anchors from the page (or a subtree). Implemented as a single page
  * eval so it is one round-trip; falls back to parsing getHtml if eval is denied.
+ *
+ * `dedupe` collapses anchors that share an href (nav/footer repetition is common
+ * noise when crawling); `limit` caps the number of links returned. Both are
+ * applied server-side after collection, so they work on either code path.
  */
 export async function extractLinks(
   ex: Executor,
-  args: { selector?: string; sameOriginOnly?: boolean; tabId?: string },
+  args: { selector?: string; sameOriginOnly?: boolean; dedupe?: boolean; limit?: number; tabId?: string },
 ): Promise<{ links: LinkOut[] }> {
   const root = args.selector ? JSON.stringify(args.selector) : 'null';
   const expr = `(() => {
@@ -32,21 +36,43 @@ export async function extractLinks(
     })).filter(l => l.href && (${args.sameOriginOnly ? 'l.href.startsWith(here)' : 'true'}));
   })()`;
 
+  let links: LinkOut[];
   const res = await ex.eval(expr, { tabId: args.tabId });
   if (res.ok && Array.isArray(res.value)) {
-    return { links: res.value as LinkOut[] };
+    links = res.value as LinkOut[];
+  } else {
+    // Fallback: parse hrefs out of the HTML (e.g. when eval is policy-denied).
+    const { html } = await ex.getHtml(args.selector ? { selector: args.selector } : undefined, {
+      tabId: args.tabId,
+    });
+    links = [];
+    const re = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      links.push({ href: m[1], text: m[2].replace(/<[^>]+>/g, '').trim().slice(0, 200) });
+    }
   }
-  // Fallback: parse hrefs out of the HTML (e.g. when eval is policy-denied).
-  const { html } = await ex.getHtml(args.selector ? { selector: args.selector } : undefined, {
-    tabId: args.tabId,
-  });
-  const links: LinkOut[] = [];
-  const re = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    links.push({ href: m[1], text: m[2].replace(/<[^>]+>/g, '').trim().slice(0, 200) });
+  return { links: refineLinks(links, args) };
+}
+
+/**
+ * Collapse links that share an href (keeping the first, but preferring a
+ * non-empty label) when `dedupe` is set, then cap to `limit`. Order is
+ * preserved so the first occurrence of each href wins.
+ */
+function refineLinks(links: LinkOut[], opts: { dedupe?: boolean; limit?: number }): LinkOut[] {
+  let out = links;
+  if (opts.dedupe) {
+    const byHref = new Map<string, LinkOut>();
+    for (const l of links) {
+      const existing = byHref.get(l.href);
+      if (!existing) byHref.set(l.href, { ...l });
+      else if (!existing.text && l.text) existing.text = l.text;
+    }
+    out = [...byHref.values()];
   }
-  return { links };
+  if (opts.limit !== undefined && out.length > opts.limit) out = out.slice(0, opts.limit);
+  return out;
 }
 
 /** Read a page (or subtree) as readable markdown. */

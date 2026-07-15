@@ -35,6 +35,51 @@ test('extractLinks falls back to HTML parsing when eval is unavailable', async (
   assert.equal(links[0].text, 'Example');
 });
 
+test('extractLinks dedupe collapses repeated hrefs and prefers a non-empty label', async () => {
+  // A fake executor whose eval returns anchors directly (the primary path), with
+  // the same href appearing thrice — first with an empty label, then labelled.
+  const fake = {
+    async eval() {
+      return {
+        ok: true,
+        value: [
+          { href: 'https://a.com', text: '' },
+          { href: 'https://a.com', text: 'A' },
+          { href: 'https://b.com', text: 'B' },
+          { href: 'https://a.com', text: 'A again' },
+        ],
+        type: 'object',
+      } as const;
+    },
+  } as unknown as Executor;
+
+  const { links } = await extractLinks(fake, { dedupe: true });
+  assert.deepEqual(links, [
+    { href: 'https://a.com', text: 'A' },
+    { href: 'https://b.com', text: 'B' },
+  ]);
+});
+
+test('extractLinks limit caps the number of links returned', async () => {
+  const fake = {
+    async eval() {
+      return {
+        ok: true,
+        value: [
+          { href: 'https://a.com', text: 'A' },
+          { href: 'https://b.com', text: 'B' },
+          { href: 'https://c.com', text: 'C' },
+        ],
+        type: 'object',
+      } as const;
+    },
+  } as unknown as Executor;
+
+  const { links } = await extractLinks(fake, { limit: 2 });
+  assert.equal(links.length, 2);
+  assert.deepEqual(links.map((l) => l.href), ['https://a.com', 'https://b.com']);
+});
+
 test('readAsMarkdown reduces the page HTML', async () => {
   const ex = new StubExecutor();
   const md = await readAsMarkdown(ex, {});

@@ -94,7 +94,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: { expression: z.string(), awaitPromise: z.boolean().optional(), tabId: tabIdField } },
   { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), tabId: tabIdField } },
 
-  { name: 'extract_links', description: 'Extract anchors from the page or a subtree.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'extract_links', description: 'Extract anchors from the page or a subtree. dedupe=true collapses links sharing an href (nav/footer noise); limit caps the count.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), dedupe: z.boolean().optional(), limit: z.number().optional(), tabId: tabIdField } },
   { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), tabId: tabIdField } },
   { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), tabId: tabIdField } },
   { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: { url: z.string().optional(), ...TARGET_PROPS, suggestedName: z.string().optional(), tabId: tabIdField } },
@@ -357,6 +357,8 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     const res = await extractLinks(ctx.ex, {
       selector: optionalString(a, 'selector'),
       sameOriginOnly: optionalBoolean(a, 'sameOriginOnly'),
+      dedupe: optionalBoolean(a, 'dedupe'),
+      limit: optionalNumber(a, 'limit', { min: 1, max: 10_000 }),
       tabId: tabId(a),
     });
     saveResult('extract_links', 'json', JSON.stringify(res, null, 2));
