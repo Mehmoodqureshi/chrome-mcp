@@ -27,6 +27,10 @@ import {
   writePersistedToken,
 } from '../src/bridge/auth';
 import { CLOSE_SUPERSEDED, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from '../shared/protocol';
+
+/** Mode-bit guarantees are POSIX-only; Windows reports a synthetic 0o666 for any
+ *  writable file, so asserting them there tests the OS, not us. */
+const POSIX = process.platform !== 'win32';
 import { ExecutorError } from '../src/executor/types';
 
 const TOKEN = 'good-token-abc123';
@@ -103,8 +107,10 @@ test('auth: handshake is written 0600 and round-trips; tokensMatch is exact', ()
   const dir = mkdtempSync(join(tmpdir(), 'cmcp-'));
   const token = generateToken();
   const path = writeHandshake(dir, { port: 38017, token });
-  const mode = statSync(path).mode & 0o777;
-  assert.equal(mode & 0o077, 0, 'handshake must not be group/other accessible');
+  if (POSIX) {
+    const mode = statSync(path).mode & 0o777;
+    assert.equal(mode & 0o077, 0, 'handshake must not be group/other accessible');
+  }
   const back = readHandshake(dir);
   assert.equal(back.token, token);
   assert.equal(back.v, PROTOCOL_VERSION);
@@ -311,7 +317,9 @@ test('token persistence: --persist-token reuses one stable token at 0600', () =>
   // First boot with persistence: mints + saves a token.
   const first = resolveToken(dir, { persist: true });
   assert.ok(first.length >= 32, 'expected a real token');
-  assert.equal((statSync(tokenPath(dir)).mode & 0o077), 0, 'token file must be 0600');
+  if (POSIX) {
+    assert.equal((statSync(tokenPath(dir)).mode & 0o077), 0, 'token file must be 0600');
+  }
 
   // Second boot with persistence: SAME token (no re-pair needed).
   const second = resolveToken(dir, { persist: true });
@@ -334,11 +342,20 @@ test('token persistence: CHROME_MCP_TOKEN env pins the token and is never writte
   }
 });
 
-test('token persistence: a group/other-readable token file fails closed', () => {
+test('token persistence: a group/other-readable token file fails closed', { skip: POSIX ? false : 'POSIX-only: Windows has no group/other bits to loosen' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
   writePersistedToken(dir, 'sometoken');
   chmodSync(tokenPath(dir), 0o644);
   assert.throws(() => readPersistedToken(dir), /group\/other-accessible/);
+});
+
+test('token persistence: a loose token file is REUSED on Windows (no mode bits to trust)', { skip: POSIX ? 'win32-only' : false }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  writePersistedToken(dir, 'sometoken');
+  chmodSync(tokenPath(dir), 0o644);
+  // Enforcing the POSIX check here would throw on every well-formed file and
+  // break boot; confidentiality rests on the profile dir's ACL instead.
+  assert.equal(readPersistedToken(dir), 'sometoken');
 });
 
 test('port conflict: a fixed port already in use surfaces a friendly, actionable error', async () => {
