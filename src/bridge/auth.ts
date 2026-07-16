@@ -7,6 +7,7 @@
  *     that want a stable token so the extension never has to re-pair.
  *   - Written atomically (tmp + rename) to `handshake.json` at mode 0600; the
  *     mode is re-verified after write and we FAIL CLOSED if it can't be set.
+ *     POSIX only — Windows has no group/other bits to check (see assertPrivate).
  *   - Compared by hashing both sides to SHA-256 and `timingSafeEqual`-ing the
  *     digests — no length precondition, no length leak.
  *   - The token is NEVER written to stdout/stderr or any log (a test asserts it).
@@ -31,6 +32,25 @@ export function generateToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
+/**
+ * Fail closed if `path` is group/other-accessible.
+ *
+ * No-op on Windows: NTFS ACLs don't map onto the POSIX mode bits, `chmodSync`
+ * there only toggles the read-only attribute, and `statSync` reports a synthetic
+ * 0o666 for any writable file. Enforcing the check would therefore throw on
+ * every well-formed file. The token's confidentiality on Windows rests on the
+ * per-user ACL of the profile directory holding it.
+ */
+function assertPrivate(path: string, what: string): void {
+  if (process.platform === 'win32') return;
+  const mode = statSync(path).mode & 0o777;
+  if ((mode & 0o077) !== 0) {
+    throw new Error(
+      `${what} ${path} is group/other-accessible (mode ${mode.toString(8)}); refusing to expose the token`,
+    );
+  }
+}
+
 /** Path of the optional persisted-token file (only used when persistence is on). */
 export function tokenPath(dir: string): string {
   return join(dir, 'token');
@@ -49,12 +69,7 @@ export function readPersistedToken(dir: string): string | null {
   } catch {
     return null;
   }
-  const mode = statSync(path).mode & 0o777;
-  if ((mode & 0o077) !== 0) {
-    throw new Error(
-      `persisted token ${path} is group/other-accessible (mode ${mode.toString(8)}); refusing to reuse it`,
-    );
-  }
+  assertPrivate(path, 'persisted token');
   const token = raw.trim();
   return token.length > 0 ? token : null;
 }
@@ -67,12 +82,7 @@ export function writePersistedToken(dir: string, token: string): string {
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
   chmodSync(path, 0o600);
-  const mode = statSync(path).mode & 0o777;
-  if ((mode & 0o077) !== 0) {
-    throw new Error(
-      `persisted token ${path} is group/other-accessible (mode ${mode.toString(8)}); refusing to expose it`,
-    );
-  }
+  assertPrivate(path, 'persisted token');
   return path;
 }
 
@@ -131,13 +141,7 @@ export function writeHandshake(dir: string, fields: WriteHandshakeFields): strin
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
   chmodSync(path, 0o600);
-
-  const mode = statSync(path).mode & 0o777;
-  if ((mode & 0o077) !== 0) {
-    throw new Error(
-      `handshake file ${path} is group/other-accessible (mode ${mode.toString(8)}); refusing to expose the token`,
-    );
-  }
+  assertPrivate(path, 'handshake file');
   return path;
 }
 

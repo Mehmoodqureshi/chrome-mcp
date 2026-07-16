@@ -171,6 +171,7 @@ async function main(): Promise<void> {
     // Wire-serializable policy subset (no local uploadsDir) so the extension mirrors the gate.
     policy: { allowDomains, allowEval, allowDownloads, allowUploads, allowAllTabs, enableMutations },
     port: cfg.wsPort,
+    dataDir,
     onLog: (m) => logErr(m),
     onDisplacement: (d) =>
       logErr(`SECURITY: extension connection displaced (different id: ${d.differentId})`),

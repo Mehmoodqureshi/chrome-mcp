@@ -100,8 +100,15 @@ function clearProfileLocks(profileDir: string): void {
 }
 
 function isChromiumProcess(pid: number): boolean {
+  // Windows has no `ps`; tasklist is the equivalent and is a real .exe, so it
+  // needs no shell. Its CSV row leads with the image name (e.g. "chrome.exe"),
+  // and the no-match case prints an INFO line that fails the same test.
+  const [cmd, args] =
+    process.platform === 'win32'
+      ? ['tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH']]
+      : ['ps', ['-p', String(pid), '-o', 'command=']];
   try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+    const out = execFileSync(cmd, args as string[], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });

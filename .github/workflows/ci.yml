@@ -8,12 +8,19 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         node-version: [18, 20, 22]
-    name: Node ${{ matrix.node-version }}
+        # One Windows job guards against POSIX-only assumptions (the 0600 mode
+        # check in bridge/auth.ts, `ps`, .cmd bin shims) regressing for
+        # native-Windows users.
+        include:
+          - os: windows-latest
+            node-version: 22
+    name: ${{ matrix.os }} / Node ${{ matrix.node-version }}
     steps:
       - uses: actions/checkout@v4
 

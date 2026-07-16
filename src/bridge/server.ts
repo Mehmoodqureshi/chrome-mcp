@@ -31,6 +31,7 @@ import { DENY_ALL_WIRE_POLICY } from '../../shared/policy';
 import { ExecutorError } from '../executor/types';
 import { ExtensionConnection } from './connection';
 import { tokensMatch } from './auth';
+import { evictPortOwner } from './evict';
 import { sanitizeName } from '../config';
 
 /** The routing label for a hello with no/blank profile — the back-compat default. */
@@ -61,11 +62,12 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 function portBusyMessage(host: string, port: number): string {
   return (
     `Couldn't start: another program is already using ${host}:${port}.\n` +
-    `This is almost always a previous chrome-mcp that didn't shut down. To fix it:\n` +
-    `  1. Fully quit/restart your MCP host (e.g. Claude Code), or\n` +
-    `  2. Stop the leftover process, then reconnect:\n` +
+    `A stale chrome-mcp is reclaimed automatically, so this is some OTHER program.\n` +
+    `To fix it:\n` +
+    `  1. Stop whatever owns the port, then reconnect:\n` +
     `       macOS/Linux:  lsof -nP -iTCP:${port} -sTCP:LISTEN   then  kill <PID>\n` +
-    `  3. Or run chrome-mcp with a different port:  --port <number>`
+    `       Windows:      netstat -ano | findstr :${port}        then  taskkill /PID <PID> /F\n` +
+    `  2. Or run chrome-mcp with a different port:  --port <number>`
   );
 }
 
@@ -85,6 +87,9 @@ export interface BridgeOptions {
   port?: number;
   host?: string;
   heartbeatMs?: number;
+  /** Data dir holding the handshake. Enables reclaiming a pinned port from a
+   *  stale chrome-mcp (see ./evict). Omit to disable eviction entirely. */
+  dataDir?: string;
   /** Diagnostics — MUST never receive the token (a test asserts this). */
   onLog?: (message: string) => void;
   onDisplacement?: (info: DisplacementInfo) => void;
@@ -115,6 +120,7 @@ export class BridgeServer {
     // wait-and-retry for a few seconds so the old process can release it; only if
     // it never frees up do we surface a plain-English, actionable error.
     const deadline = Date.now() + PORT_WAIT_MS;
+    let evicted = false;
     for (let attempt = 1; ; attempt++) {
       try {
         const wss = await this.listenOnce(host, port);
@@ -125,10 +131,19 @@ export class BridgeServer {
         return this.boundPort;
       } catch (err) {
         const inUse = (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE';
-        if (!inUse || port === 0 || Date.now() >= deadline) {
-          if (inUse) throw new Error(portBusyMessage(host, port));
-          throw err;
+        if (!inUse || port === 0) throw inUse ? new Error(portBusyMessage(host, port)) : err;
+
+        // A live chrome-mcp from another session will never release the port on
+        // its own, so waiting it out is futile — take it over (once). Only a
+        // verified chrome-mcp is ever killed; anything else falls through to the
+        // wait-and-retry below, which covers our own just-replaced instance.
+        if (!evicted && this.opts.dataDir) {
+          evicted = true;
+          if (await evictPortOwner(this.opts.dataDir, port, (m) => this.log(m))) {
+            continue;
+          }
         }
+        if (Date.now() >= deadline) throw new Error(portBusyMessage(host, port));
         if (attempt === 1) this.log(`port ${host}:${port} busy — waiting for the previous instance to release it…`);
         await delay(PORT_RETRY_MS);
       }

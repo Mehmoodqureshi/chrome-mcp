@@ -39,7 +39,13 @@ function main() {
   }
   try {
     const { execFileSync } = require('node:child_process');
-    execFileSync('npx', ['playwright', 'install', 'chromium'], { stdio: 'inherit' });
+    const { dirname, join } = require('node:path');
+    // Drive Playwright's CLI through node rather than the `npx`/`playwright` bin
+    // shim: on Windows those are .cmd files, which execFileSync cannot spawn
+    // without a shell. `cli.js` is playwright's own bin target; resolving it via
+    // package.json avoids the exports map, which exposes no './cli' subpath.
+    const cli = join(dirname(require.resolve('playwright/package.json')), 'cli.js');
+    execFileSync(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' });
   } catch (err) {
     process.stdout.write(
       `[postinstall] Chromium install skipped (non-fatal): ${err && err.message ? err.message : err}\n`,

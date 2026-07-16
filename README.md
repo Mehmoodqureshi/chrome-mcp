@@ -4,16 +4,17 @@
 [![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
 [![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
 
-Drive a **real Chrome browser** from Claude (or any MCP host). One pluggable
-`Executor` interface, two backends:
-
-- **Extension (primary):** an MV3 extension drives your real Chrome — real
-  logins, real cookies — via `chrome.scripting`/`chrome.tabs`. The CLI runs a
-  localhost WebSocket server; the extension dials in.
-- **CDP fallback:** when no extension is paired, the CLI launches/attaches a
-  Playwright-driven Chromium for scripted/headless use.
+Drive a **real Chrome browser** from Claude (or any MCP host). An MV3 extension
+drives your real Chrome — real logins, real cookies — via
+`chrome.scripting`/`chrome.tabs`. The CLI runs a localhost WebSocket server; the
+extension dials in.
 
 Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
+
+> **This build is extension-only.** It never launches or attaches a Chromium of
+> its own, so **the extension is required, not optional** — without it, no tool
+> can run. The CDP flags (`--cdp-fallback`, `--no-cdp-fallback`, `--cdp-endpoint`,
+> `--prefer`) are still accepted for back-compat but are **ignored**.
 
 > **Full design:** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) — architecture, wire
 > protocol, the complete tool surface, the extension manifest, the security
@@ -44,10 +45,8 @@ exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutat
 > with `--uploads-dir <path>` to restrict uploads to files inside that directory
 > (`..` traversal is blocked) — strongly recommended for unattended use.
 
-**Drive only your real Chrome (recommended for the extension).** Add
-`--no-cdp-fallback` so the server never launches a separate Chromium, and
-`--persist-token` so the pairing token survives restarts — **pair once, never
-again**:
+**Pair once, never again.** Add `--persist-token` so the pairing token survives
+restarts:
 
 ```jsonc
 {
@@ -56,7 +55,7 @@ again**:
       "command": "npx",
       "args": ["-y", "@mehmoodqureshi/chrome-mcp",
                "--allow-domain", "example.com", "--enable-mutations",
-               "--no-cdp-fallback", "--persist-token"]
+               "--persist-token"]
     }
   }
 }
@@ -68,14 +67,72 @@ token is stored 0600 at `~/.chrome-mcp/token` and reused; the extension's
 keepalive auto-reconnects with no manual step. `CHROME_MCP_TOKEN` pins the token
 explicitly (and is never written to disk).
 
-**2. Load the extension** (to drive your *real* Chrome): build it, then
-`chrome://extensions` → enable Developer mode → **Load unpacked** → select
-`extension-dist/`.
+**2. Load the extension** — **required**; the server can drive nothing without it.
+
+`extension-dist/` ships prebuilt inside the npm package, so there is nothing to
+compile. Install globally to get a stable path to it:
+
+```bash
+npm install -g @mehmoodqureshi/chrome-mcp
+npm root -g     # → <root>; the extension is at <root>/@mehmoodqureshi/chrome-mcp/extension-dist
+```
+
+Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
+select that `extension-dist/` directory. (Working from a git clone instead? Run
+`npm install && npm run build:ext` first — `extension-dist/` is gitignored.)
 
 **3. Pair it:** run `npx chrome-mcp --print-pairing` to write the handshake and
 print its path, open the extension's **Options** page, and paste the `port` +
-`token` from `~/.chrome-mcp/handshake.json`. (Without the extension, the CLI
-falls back to a Playwright-driven Chromium automatically.)
+`token` from `~/.chrome-mcp/handshake.json`.
+
+### Running more than one session
+
+The extension dials exactly **one** bridge port, so only one chrome-mcp can drive
+your Chrome at a time — but every MCP host session (each Claude tab/window)
+spawns its own server. With a pinned `--port`, the newest session **takes the
+port over**: it reads the owning pid from `handshake.json`, confirms that process
+really is a chrome-mcp, and stops it. Newest tab wins; the older session's browser
+tools go quiet until it reconnects. Nothing that isn't a verified chrome-mcp is
+ever touched — a port held by some other program is reported, never killed.
+
+Two servers can only run side by side if each has its own port **and** its own
+paired extension — i.e. a separate Chrome profile running its own copy of the
+extension, pointed at the other port (`--port 9223`). A single Chrome pairs to one
+server at a time, so a second server with no extension of its own can drive
+nothing.
+
+One server can, however, serve **several browsers at once**: connections are
+routed by profile key (`--profile <name>`, matching the profile set in the
+extension's Options), so each paired Chrome gets its own routing slot.
+
+Without `--port`, each server binds an ephemeral port (no conflict ever), but the
+port changes every boot — so you'd re-pair the extension each time. Pin `--port`
+plus `--persist-token` for a pair-once setup.
+
+### Windows
+
+WSL2 is **not** required — native Windows works. One config change is, though:
+on Windows `npx` is `npx.cmd`, a batch shim, and MCP hosts spawn the server
+without a shell, which cannot execute a `.cmd`. So `"command": "npx"` fails to
+start. Wrap it in `cmd /c`:
+
+```jsonc
+{
+  "mcpServers": {
+    "chrome-mcp": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@mehmoodqureshi/chrome-mcp",
+               "--allow-domain", "example.com", "--enable-mutations",
+               "--persist-token"]
+    }
+  }
+}
+```
+
+Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp --allow-domain example.com`
+
+Everything else is the same — load `extension-dist/` from `npm root -g` and pair
+as above.
 
 The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
 `scroll`/`select_option`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`),
@@ -183,7 +240,11 @@ chrome-mcp --unsafe-all-domains            # loud footgun
 ```
 
 The per-boot 256-bit token in `~/.chrome-mcp/handshake.json` (mode 0600) is the
-only trust boundary; it is never written to stdout/stderr.
+only trust boundary; it is never written to stdout/stderr. On POSIX the mode is
+re-verified after every write and the server **fails closed** if the file ends up
+group/other-accessible. Windows has no such bits — `chmod` there only toggles the
+read-only attribute — so the check is skipped and the token's confidentiality
+rests on the per-user ACL of `%USERPROFILE%\.chrome-mcp`.
 
 ## Develop
 
