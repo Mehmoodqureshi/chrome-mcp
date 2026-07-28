@@ -15,7 +15,7 @@ import {
   type WirePolicy,
 } from '../../../shared/protocol';
 import { evaluatePolicy, isUrlGated } from '../../../shared/policy';
-import { ChromeExecutor, CmdError, HANDLED, urlForCommand } from './executor';
+import { ChromeExecutor, CmdError, HANDLED, observedTabUrl, urlForCommand } from './executor';
 
 export interface RouterDeps {
   exec: ChromeExecutor;
@@ -34,10 +34,25 @@ export class CommandRouter {
 
   async dispatch(cmd: CommandFrame): Promise<void> {
     try {
-      // Extension-side policy mirror (defense-in-depth): run the SAME shared gate
-      // the server runs, so a client that bypasses the server can't drive the
-      // extension outside policy. Fails closed if the policy hasn't arrived.
+      // THE authoritative policy gate. It runs the SAME shared `evaluatePolicy`
+      // the server runs, but here it is decisive rather than defence-in-depth:
+      // only this side can resolve the EXACT target tab (an explicit `tabId`, not
+      // merely whichever tab is active) and read its URL in the instant before
+      // the command executes. The server gates too, but from a URL that is by
+      // construction one round-trip stale — so a client that reaches this socket
+      // is constrained here, and here alone.
+      //
+      // Fails CLOSED: no policy (handshake incomplete) means nothing is known to
+      // be permitted, so nothing runs. `ping_probe` is the one exemption — it
+      // touches no page and no data, and the backend selector uses it to decide
+      // whether this browser is alive at all.
       const policy = this.deps.getPolicy();
+      if (!policy && cmd.method !== 'ping_probe') {
+        throw new CmdError(
+          'POLICY_DENIED',
+          'no policy has arrived from the chrome-mcp server yet, so this extension is refusing every command',
+        );
+      }
       if (policy) {
         const url = isUrlGated(cmd.method) ? await urlForCommand(cmd) : '';
         const verdict = evaluatePolicy(url, cmd.method, policy);
@@ -45,6 +60,10 @@ export class CommandRouter {
       }
       const data = await this.deps.exec.run(cmd);
       const frame: ResultFrame = { type: 'result', v: PROTOCOL_VERSION, id: cmd.id, ok: true, data };
+      // Ride the tab's landing URL home so the server's next gate needs no
+      // round-trip. Best-effort: a closed/unreadable tab just omits it.
+      const tabUrl = await observedTabUrl(cmd);
+      if (tabUrl) frame.tabUrl = tabUrl;
       this.deps.send(frame);
     } catch (err) {
       const code: ExecutorErrorCode = err instanceof CmdError ? err.code : 'CDP_ERROR';

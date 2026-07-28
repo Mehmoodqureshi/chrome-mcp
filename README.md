@@ -4,10 +4,17 @@
 [![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
 [![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
 
-Drive a **real Chrome browser** from Claude (or any MCP host). An MV3 extension
-drives your real Chrome — real logins, real cookies — via
-`chrome.scripting`/`chrome.tabs`. The CLI runs a localhost WebSocket server; the
-extension dials in.
+**Let Claude use the Chrome you are already logged into.** Not a fresh
+automated browser that greets every site as a stranger — *your* Chrome, with
+your sessions, your cookies, your 2FA already done. If you can see a page in
+your browser, your agent can read it, without logging in again and without
+pasting credentials anywhere.
+
+Most browser MCP servers launch their own Chromium and hand your agent a
+signed-out window. chrome-mcp does the opposite: an MV3 extension dials into a
+localhost WebSocket server and drives the browser you already have open, through
+`chrome.scripting`/`chrome.tabs`. Works with Claude Code, Claude Desktop, and any
+other MCP host.
 
 Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
 
@@ -22,31 +29,32 @@ Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
 
 ## Quickstart
 
-**1. Register the MCP server** with your host (e.g. Claude Desktop / Code):
+**1. Register the MCP server** with your host.
 
-```jsonc
-{
-  "mcpServers": {
-    "chrome-mcp": {
-      "command": "npx",
-      "args": ["-y", "@mehmoodqureshi/chrome-mcp", "--allow-domain", "example.com", "--enable-mutations"]
-    }
-  }
-}
+<details open>
+<summary><b>Claude Code (terminal)</b> — one command, no config file to find</summary>
+
+```bash
+claude mcp add chrome-mcp -s user -- \
+  npx -y @mehmoodqureshi/chrome-mcp \
+  --allow-domain example.com --enable-mutations --persist-token
 ```
 
-By default everything is **deny-all** (no domains, no eval, no mutations). Grant
-exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutations`,
-`--enable-downloads`, `--enable-uploads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
+Everything **before** `--` belongs to Claude Code; everything **after** it is this
+server's command and flags. Keep the `--` or `--allow-domain` gets read as a
+Claude Code option.
 
-> `--enable-uploads` permits `upload_file` (setting local file(s) on a page's file
-> `<input>`). It is **off by default** because sending local files to a page is an
-> exfiltration risk; it is also gated by the destination-domain allowlist. Pair it
-> with `--uploads-dir <path>` to restrict uploads to files inside that directory
-> (`..` traversal is blocked) — strongly recommended for unattended use.
+`-s user` registers it for every project on your machine. Use `-s local` (the
+default) for just the current project, or `-s project` to write a `.mcp.json`
+your team can commit.
 
-**Pair once, never again.** Add `--persist-token` so the pairing token survives
-restarts:
+Check it came up with `claude mcp list`. After upgrading the server, reconnect it
+with `/mcp` inside a session — no restart needed.
+
+</details>
+
+<details>
+<summary><b>Claude Desktop</b> and other MCP hosts — JSON config</summary>
 
 ```jsonc
 {
@@ -60,6 +68,22 @@ restarts:
   }
 }
 ```
+
+</details>
+
+By default everything is **deny-all** (no domains, no eval, no mutations). Grant
+exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutations`,
+`--enable-downloads`, `--enable-uploads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
+
+> `--enable-uploads` permits `upload_file` (setting local file(s) on a page's file
+> `<input>`). It is **off by default** because sending local files to a page is an
+> exfiltration risk; it is also gated by the destination-domain allowlist. Pair it
+> with `--uploads-dir <path>` to restrict uploads to files inside that directory
+> (`..` traversal is blocked) — strongly recommended for unattended use.
+
+**Pair once, never again.** Both examples above include `--persist-token`, which
+is what makes the pairing survive a restart — drop it if you'd rather have the
+stricter default described next.
 
 Without `--persist-token` a fresh token is minted every boot (the secure
 default), which means re-pairing the extension on each restart. With it, the

@@ -33,6 +33,17 @@ import {
 import type { BridgeServer } from '../bridge/server';
 import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
 
+/**
+ * How long a reported active-tab URL stays usable for the policy gate.
+ *
+ * Deliberately short. It exists to cover back-to-back calls (a `batch`, or an
+ * agent's read → click → read), where the tab demonstrably has not changed
+ * between them. Past that, pay the round-trip. Note the extension re-gates every
+ * command against the tab's live URL regardless, so this window trades a little
+ * pre-check precision for half the traffic — never enforcement itself.
+ */
+const ACTIVE_URL_TTL_MS = 1_000;
+
 /** Flatten a Target into the params a wire command carries. */
 function targetParams(t?: Target): Record<string, unknown> {
   if (!t) return {};
@@ -90,6 +101,12 @@ export class ExtensionExecutor implements Executor {
 
   async dispose(): Promise<void> {
     // Never close the user's Chrome.
+  }
+
+  /** The active tab's URL as reported by the last command on this profile, if it
+   *  is fresh enough to gate against. See `ACTIVE_URL_TTL_MS`. */
+  cachedActiveUrl(): string | null {
+    return this.bridge.lastActiveUrl(this.activeProfile(), ACTIVE_URL_TTL_MS);
   }
 
   // -- tabs ---------------------------------------------------------------

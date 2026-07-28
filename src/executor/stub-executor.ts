@@ -9,6 +9,7 @@
  */
 
 import {
+  ExecutorError,
   type ActionOk,
   type BackendKind,
   type CookieItem,
@@ -36,6 +37,16 @@ export interface StubOptions {
   activeUrl?: string;
   /** When true, `eval` resolves `{ok:false}` to mimic a page-side throw. */
   evalThrows?: boolean;
+  /** When true, `tabsList` rejects — mimics a transient bridge failure. */
+  tabsListThrows?: boolean;
+  /** When true, `tabsList` resolves empty — mimics a browser reporting no tabs. */
+  noTabs?: boolean;
+  /** When true, the (single) tab reports an empty URL — mimics a chrome:// page
+   *  or a site the extension has no host access to. */
+  blankTabUrl?: boolean;
+  /** A URL the backend claims to already know, as the extension reports on every
+   *  result frame. Set it to assert the gate uses it INSTEAD of calling tabsList. */
+  cachedUrl?: string;
 }
 
 const ok: ActionOk = { ok: true };
@@ -44,15 +55,36 @@ export class StubExecutor implements Executor {
   readonly backend: BackendKind = 'extension';
   private url: string;
   private readonly evalThrows: boolean;
+  private readonly tabsListThrows: boolean;
+  private readonly noTabs: boolean;
+  private readonly blankTabUrl: boolean;
+  private readonly cached: string | null;
+  /** How many times the gate actually asked for the tab list — the round-trip
+   *  counter the caching path exists to keep at zero. */
+  tabsListCalls = 0;
   private ready = false;
 
   constructor(opts: StubOptions = {}) {
     this.url = opts.activeUrl ?? 'about:blank';
     this.evalThrows = opts.evalThrows ?? false;
+    this.tabsListThrows = opts.tabsListThrows ?? false;
+    this.noTabs = opts.noTabs ?? false;
+    this.blankTabUrl = opts.blankTabUrl ?? false;
+    this.cached = opts.cachedUrl ?? null;
   }
 
   private tab(): TabInfo {
-    return { tabId: 'extension:stub:1', url: this.url, title: 'Stub Page', active: true, index: 0 };
+    return {
+      tabId: 'extension:stub:1',
+      url: this.blankTabUrl ? '' : this.url,
+      title: 'Stub Page',
+      active: true,
+      index: 0,
+    };
+  }
+
+  cachedActiveUrl(): string | null {
+    return this.cached;
   }
 
   status(): ExecutorStatus {
@@ -76,7 +108,9 @@ export class StubExecutor implements Executor {
   }
 
   async tabsList(): Promise<TabInfo[]> {
-    return [this.tab()];
+    this.tabsListCalls++;
+    if (this.tabsListThrows) throw new ExecutorError('EXTENSION_DISCONNECTED', 'stub bridge is down');
+    return this.noTabs ? [] : [this.tab()];
   }
   async tabSelect(tabId: TabId): Promise<TabInfo> {
     return { ...this.tab(), tabId };

@@ -32,6 +32,19 @@ export const BRIDGE_HOST = '127.0.0.1' as const;
 export const CLOSE_UNAUTHORIZED = 4401 as const;
 export const CLOSE_SUPERSEDED = 4000 as const;
 
+/**
+ * Capabilities an extension advertises in `hello`. Additive and optional, so an
+ * older extension (which sends none) keeps the conservative behaviour — never
+ * gate a capability behind a version-string comparison.
+ *
+ * `tab-url`: this extension (a) enforces the policy mirror FAIL-CLOSED — it
+ * refuses every command until a policy has arrived — and (b) reports the target
+ * tab's post-command URL as `ResultFrame.tabUrl`. Together those let the server
+ * gate from the reported URL instead of paying a `tabs_list` round-trip before
+ * every call. Without it, the server falls back to fetching the URL itself.
+ */
+export const WIRE_CAP_TAB_URL = 'tab-url' as const;
+
 // ---------------------------------------------------------------------------
 // Methods
 // ---------------------------------------------------------------------------
@@ -136,6 +149,9 @@ export interface HelloFrame extends BaseFrame {
    *  NOT a security boundary (the token is) — it selects which connection slot the
    *  server routes commands to, so several browsers can stay paired at once. */
   profile?: string;
+  /** Optional capability advertisements (see `WIRE_CAP_TAB_URL`). An extension
+   *  that sends none gets the conservative path, so old builds stay correct. */
+  caps?: string[];
 }
 
 /**
@@ -183,6 +199,13 @@ export interface ResultFrame extends BaseFrame {
   ok: true;
   /** For `screenshot`: { dataBase64, mimeType, width, height, truncated }. */
   data: unknown;
+  /**
+   * The target tab's URL as observed AFTER the command ran — the extension has
+   * it locally, so sending it costs nothing and saves the server a round-trip
+   * on the next policy gate. Omitted when it can't be resolved (e.g. the tab was
+   * closed). Only sent by extensions advertising `WIRE_CAP_TAB_URL`.
+   */
+  tabUrl?: string;
 }
 
 export interface ErrorFrame extends BaseFrame {

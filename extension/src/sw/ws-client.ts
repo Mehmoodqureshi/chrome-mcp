@@ -9,6 +9,7 @@
 
 import {
   PROTOCOL_VERSION,
+  WIRE_CAP_TAB_URL,
   type CommandFrame,
   type HelloFrame,
   type ServerFrame,
@@ -61,6 +62,10 @@ export class WsClient {
         token,
         ext: { id: chrome.runtime.id, version: chrome.runtime.getManifest().version, chrome: chromeVersion() },
         profile: profile && profile.trim() ? profile.trim() : undefined,
+        // This build gates fail-closed and reports tab URLs on results, so the
+        // server may skip its pre-flight tabs_list. An older build omits this and
+        // the server keeps fetching the URL itself.
+        caps: [WIRE_CAP_TAB_URL],
       };
       ws.send(JSON.stringify(hello));
     };

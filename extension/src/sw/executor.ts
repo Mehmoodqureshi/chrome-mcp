@@ -117,6 +117,17 @@ export async function urlForCommand(cmd: CommandFrame): Promise<string> {
     const u = cmd.params.url;
     return typeof u === 'string' ? u : '';
   }
+  return observedTabUrl(cmd);
+}
+
+/**
+ * Where the target tab actually IS, read straight from `chrome.tabs` — no round
+ * trip, we are inside the browser. Unlike `urlForCommand` this never substitutes
+ * a navigate DESTINATION, so it reports the post-redirect landing URL; the server
+ * caches it to gate the NEXT call without asking for the tab list again.
+ * '' when the tab is gone (tab_close) or Chrome won't reveal its URL.
+ */
+export async function observedTabUrl(cmd: CommandFrame): Promise<string> {
   try {
     const tabId = await targetTab(cmd);
     const t = await chrome.tabs.get(tabId);

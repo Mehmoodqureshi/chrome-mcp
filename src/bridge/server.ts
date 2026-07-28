@@ -222,6 +222,16 @@ export class BridgeServer {
     return conn.sendCommand(method, params, opts);
   }
 
+  /**
+   * The active tab's URL for `profile` as last reported by the extension, if it
+   * is younger than `maxAgeMs`. Null means "ask properly" — an extension too old
+   * to report URLs, a tab shuffle since, or simply nothing recent enough.
+   */
+  lastActiveUrl(profile: string | undefined, maxAgeMs: number): string | null {
+    const conn = this.conns.get(routeKey(profile));
+    return conn?.isOpen() ? conn.lastActiveUrl(maxAgeMs) : null;
+  }
+
   private noPairMessage(profile: string): string {
     return (
       `No browser is paired for profile "${profile}". In that Chrome's chrome-mcp ` +
@@ -281,7 +291,12 @@ export class BridgeServer {
       authed = true;
       clearTimeout(helloTimer);
       ws.off('message', onMessage);
-      this.promote(ws, frame.ext ?? { id: 'unknown', version: '0', chrome: '0' }, routeKey(frame.profile));
+      this.promote(
+        ws,
+        frame.ext ?? { id: 'unknown', version: '0', chrome: '0' },
+        routeKey(frame.profile),
+        Array.isArray(frame.caps) ? frame.caps : undefined,
+      );
     };
 
     ws.on('message', onMessage);
@@ -300,7 +315,7 @@ export class BridgeServer {
     }
   }
 
-  private promote(ws: WebSocket, ext: HelloFrame['ext'], profile: string): void {
+  private promote(ws: WebSocket, ext: HelloFrame['ext'], profile: string, caps?: string[]): void {
     const sessionId = randomUUID();
 
     // Supersede only the SAME profile's connection (a re-pair). Other profiles
@@ -326,6 +341,7 @@ export class BridgeServer {
       extId: ext.id,
       sessionId,
       heartbeatMs: this.heartbeatMs,
+      caps,
       onEvent: this.opts.onEvent,
       onLog: (m) => this.log(m),
       onClose: () => {

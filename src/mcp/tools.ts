@@ -18,10 +18,10 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import type { WireMethod } from '../../shared/protocol';
-import type { Executor, Target, WaitUntil } from '../executor/types';
+import type { Executor, TabInfo, Target, WaitUntil } from '../executor/types';
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
-import { assertUrlAllowed, type Policy } from '../security/policy';
+import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import { runBatch } from './batch';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
@@ -133,19 +133,63 @@ interface ToolCtx {
 
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult>;
 
-/** Resolve the URL the policy should be evaluated against (the active tab). */
+const GATE_CONTEXT = 'cannot resolve the active tab URL for the policy gate';
+
+/**
+ * Resolve the URL the policy should be evaluated against (the active tab).
+ *
+ * NEVER substitutes a placeholder URL. If the tab list can't be read, the real
+ * origin is unknown, and evaluating the policy against a fabricated URL would
+ * silently allow or deny against the wrong origin with no signal to the caller.
+ * So a `tabsList` failure (or a browser reporting no tabs at all) propagates —
+ * the dispatch firewall renders it as a structured error carrying the code.
+ *
+ * Prefers a URL the backend already reported over asking again: the extension
+ * rides the tab's landing URL home on every result frame, which is what keeps a
+ * gated call to ONE round-trip instead of two.
+ */
 async function activeUrl(ex: Executor): Promise<string> {
+  const known = ex.cachedActiveUrl?.();
+  if (known) return known;
+
+  let tabs: TabInfo[];
   try {
-    const tabs = await ex.tabsList();
-    return tabs.find((t) => t.active)?.url ?? tabs[0]?.url ?? 'about:blank';
-  } catch {
-    return 'about:blank';
+    tabs = await ex.tabsList();
+  } catch (err) {
+    // Keep the underlying code (TIMEOUT / EXTENSION_DISCONNECTED / …) so the
+    // caller can tell a transient bridge failure from a policy decision — the
+    // rendered message is prefixed with it, since only the text crosses MCP.
+    if (err instanceof ExecutorError) throw new ExecutorError(err.code, `${GATE_CONTEXT}: ${err.message}`);
+    throw err; // an internal fault, not a browser one — don't relabel it
   }
+
+  const active = tabs.find((t) => t.active) ?? tabs[0];
+  if (!active) throw new ExecutorError('TAB_NOT_FOUND', `${GATE_CONTEXT}: the browser reports no open tabs`);
+  // An empty URL is Chrome declining to reveal one (a chrome:// page, or a tab
+  // the extension has no host access to) — NOT an origin. Gating on '' would
+  // produce a baffling "blocked on " denial that reads like a policy decision.
+  if (!active.url) {
+    throw new ExecutorError(
+      'TAB_NOT_FOUND',
+      `${GATE_CONTEXT}: the active tab (id ${active.tabId}) reports no URL. Chrome hides it for ` +
+        `internal pages (chrome://, the Web Store) and until the extension has access to that site — ` +
+        `switch to a normal page, or open the target site in a new tab.`,
+    );
+  }
+  return active.url;
 }
 
-/** Policy chokepoint. `urlOverride` is the destination for navigation. */
+/**
+ * Policy chokepoint. `urlOverride` is the destination for navigation.
+ *
+ * Only resolves the active URL for methods whose verdict actually depends on one
+ * (`isUrlGated`). Tab management and the capability gates — eval, downloads,
+ * uploads, mutations — are decided without any URL, so making them wait on the
+ * tab list bought nothing and, worse, made `tab_new` fail exactly when the tab
+ * list was unreadable: the one call that could dig you out.
+ */
 async function gate(ctx: ToolCtx, method: WireMethod, urlOverride?: string): Promise<void> {
-  const url = urlOverride ?? (await activeUrl(ctx.ex));
+  const url = urlOverride ?? (isUrlGated(method) ? await activeUrl(ctx.ex) : '');
   assertUrlAllowed(url, method, ctx.policy);
 }
 
@@ -436,7 +480,11 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 // ---------------------------------------------------------------------------
 
 function errMessage(err: unknown): string {
-  if (err instanceof McpToolError || err instanceof ExecutorError) return err.message;
+  // Only the text crosses the MCP boundary, so the code has to travel inside it —
+  // otherwise a caller cannot tell EXTENSION_DISCONNECTED (retry in a moment)
+  // from POLICY_DENIED (retrying will never help).
+  if (err instanceof ExecutorError) return `[${err.code}] ${err.message}`;
+  if (err instanceof McpToolError) return err.message;
   if (err instanceof Error) return `internal error: ${err.message}`;
   return `internal error: ${String(err)}`;
 }

@@ -7,6 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import {
   DEFAULT_POLICY,
@@ -20,6 +21,9 @@ import {
 import { ExecutorError } from '../src/executor/types';
 import { PROTOCOL_VERSION, DEFAULT_WS_PORT, WIRE_METHODS } from '../shared/protocol';
 import { parseArgs } from '../src/config';
+import { dispatchToolCall, resetRateLimiter } from '../src/mcp/tools';
+import { configureManager, resetManagerForTesting } from '../src/executor/manager';
+import { StubExecutor, type StubOptions } from '../src/executor/stub-executor';
 
 function denied(fn: () => void): boolean {
   try {
@@ -119,6 +123,94 @@ test('hostOf is defensive against non-URLs', () => {
   assert.equal(hostOf('https://Example.com/x'), 'example.com');
   assert.equal(hostOf('about:blank'), '');
   assert.equal(hostOf('not a url'), '');
+});
+
+// --- the gate never evaluates against a fabricated URL ----------------------
+
+function configure(stub: StubOptions): StubExecutor {
+  resetManagerForTesting();
+  resetRateLimiter();
+  const ex = new StubExecutor(stub);
+  configureManager({
+    // Deliberately wide open: if the gate fell back to a placeholder URL it would
+    // PASS here, and the read would run against an origin we never confirmed.
+    policy: resolvePolicy({ allowDomains: ['*'], enableMutations: true }),
+    makeExecutor: () => ex,
+  });
+  return ex;
+}
+const textOf = (r: CallToolResult): string => {
+  const b = r.content.find((c) => c.type === 'text');
+  return b && b.type === 'text' ? b.text : '';
+};
+
+test('a tabs_list failure surfaces as the bridge error, not a gate verdict', async () => {
+  configure({ tabsListThrows: true });
+  const r = await dispatchToolCall('get_text', {});
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /cannot resolve the active tab URL for the policy gate/i);
+  assert.match(textOf(r), /stub bridge is down/i); // underlying cause preserved
+});
+
+test('the gate reports no open tabs rather than assuming a URL', async () => {
+  configure({ noTabs: true });
+  const r = await dispatchToolCall('get_text', {});
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /no open tabs/i);
+});
+
+test('the gate still resolves the active tab URL when tabs_list works', async () => {
+  configure({ activeUrl: 'https://example.com/page' });
+  const r = await dispatchToolCall('get_text', {});
+  assert.notEqual(r.isError, true);
+});
+
+test('the failure keeps its executor code, so a caller can tell retryable from denied', async () => {
+  configure({ tabsListThrows: true });
+  const r = await dispatchToolCall('get_text', {});
+  assert.match(textOf(r), /^\[EXTENSION_DISCONNECTED\]/);
+  assert.doesNotMatch(textOf(r), /POLICY_DENIED/);
+});
+
+test('a tab that reports no URL is named as such, not blocked as an origin', async () => {
+  configure({ blankTabUrl: true });
+  const r = await dispatchToolCall('get_text', {});
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /reports no URL/i);
+  // The old shape: '' fell through and the allowlist denied a nameless host.
+  assert.doesNotMatch(textOf(r), /isn't on this browser tool's allowed-sites list/i);
+});
+
+// --- the gate costs no round-trip when the backend already knows the URL ------
+
+test('a reported URL is gated against without asking for the tab list', async () => {
+  const ex = configure({ cachedUrl: 'https://example.com/page', activeUrl: 'https://example.com/page' });
+  const r = await dispatchToolCall('get_text', {});
+  assert.notEqual(r.isError, true);
+  assert.equal(ex.tabsListCalls, 0); // the whole point: one round-trip, not two
+});
+
+test('a reported URL is still a real URL — the policy applies to it', async () => {
+  resetManagerForTesting();
+  resetRateLimiter();
+  const ex = new StubExecutor({ cachedUrl: 'https://evil.test/p', activeUrl: 'https://evil.test/p' });
+  configureManager({
+    policy: resolvePolicy({ allowDomains: ['example.com'] }),
+    makeExecutor: () => ex,
+  });
+  const r = await dispatchToolCall('get_text', {});
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /evil\.test/);
+  assert.equal(ex.tabsListCalls, 0);
+});
+
+test('tools whose verdict needs no URL never touch the tab list', async () => {
+  // tab_new is the recovery move when the tab list is unreadable; making it wait
+  // on that list is what bricked it.
+  const ex = configure({ tabsListThrows: true });
+  const r = await dispatchToolCall('tab_new', { url: 'https://example.com' });
+  assert.notEqual(r.isError, true);
+  assert.equal(ex.tabsListCalls, 0);
 });
 
 test('wire constants are sane and singular', () => {

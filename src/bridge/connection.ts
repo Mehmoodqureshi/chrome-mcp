@@ -15,6 +15,7 @@ import type { WebSocket, RawData } from 'ws';
 
 import {
   PROTOCOL_VERSION,
+  WIRE_CAP_TAB_URL,
   type CommandFrame,
   type ErrorFrame,
   type EventFrame,
@@ -49,11 +50,18 @@ function mapWireErrorCode(code: string): ExecutorErrorCodeLocal {
   return known[code] ?? 'TARGET_GONE';
 }
 
+/** Commands that can change WHICH tab is active, invalidating a cached URL. */
+const ACTIVE_TAB_CHANGERS: ReadonlySet<WireMethod> = new Set(['tab_select', 'tab_new', 'tab_close']);
+
 interface Pending {
   resolve: (data: unknown) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
   method: WireMethod;
+  /** The command carried no explicit tabId, so any URL it reports is the ACTIVE
+   *  tab's. A URL from an explicitly-targeted tab says nothing about the active
+   *  one and must never be cached as if it did. */
+  activeTab: boolean;
 }
 
 export interface ConnectionDeps {
@@ -61,6 +69,8 @@ export interface ConnectionDeps {
   extId: string;
   sessionId: string;
   heartbeatMs: number;
+  /** Capabilities from `hello` (see WIRE_CAP_TAB_URL). Old builds send none. */
+  caps?: string[];
   onEvent?: (event: WireEvent, data: Record<string, unknown>) => void;
   onClose?: (code: number) => void;
   onLog?: (message: string) => void;
@@ -75,6 +85,10 @@ export class ExtensionConnection {
   private closed = false;
   private heartbeat: NodeJS.Timeout | null = null;
   private missedPongs = 0;
+  /** Whether this extension reports `tabUrl` and gates fail-closed. */
+  private readonly reportsTabUrl: boolean;
+  /** Last URL the ACTIVE tab reported, with the wall-clock it arrived. */
+  private activeUrl: { url: string; at: number } | null = null;
   private readonly onEvent?: ConnectionDeps['onEvent'];
   private readonly onClose?: ConnectionDeps['onClose'];
   private readonly onLog?: ConnectionDeps['onLog'];
@@ -83,6 +97,7 @@ export class ExtensionConnection {
     this.ws = deps.ws;
     this.extId = deps.extId;
     this.sessionId = deps.sessionId;
+    this.reportsTabUrl = deps.caps?.includes(WIRE_CAP_TAB_URL) ?? false;
     this.onEvent = deps.onEvent;
     this.onClose = deps.onClose;
     this.onLog = deps.onLog;
@@ -109,6 +124,10 @@ export class ExtensionConnection {
 
     const id = String(++this.seq);
     const timeoutMs = opts?.timeoutMs ?? defaultTimeoutFor(method);
+    // Anything that reshuffles tabs makes the cached URL a claim about a tab that
+    // may no longer be the active one. Drop it before the command, not after, so
+    // a failure mid-flight can't leave a stale entry behind.
+    if (ACTIVE_TAB_CHANGERS.has(method)) this.activeUrl = null;
     const frame: CommandFrame = {
       type: 'command',
       v: PROTOCOL_VERSION,
@@ -125,7 +144,7 @@ export class ExtensionConnection {
         reject(new ExecutorError('TIMEOUT', `"${method}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer, method });
+      this.pending.set(id, { resolve, reject, timer, method, activeTab: opts?.tabId === undefined });
 
       try {
         this.ws.send(JSON.stringify(frame));
@@ -189,10 +208,34 @@ export class ExtensionConnection {
     clearTimeout(p.timer);
     this.pending.delete(id);
     if (frame.type === 'result') {
+      this.rememberActiveUrl(p, frame);
       p.resolve(frame.data);
     } else {
+      // A failed command tells us nothing reliable about where the tab ended up.
+      if (p.activeTab) this.activeUrl = null;
       p.reject(new ExecutorError(mapWireErrorCode(frame.error.code), frame.error.message));
     }
+  }
+
+  /**
+   * Cache the URL a result rode home with — but ONLY when it describes the active
+   * tab (no explicit tabId) and actually resolved. A blank `tabUrl` means the
+   * extension couldn't read it (closed tab, restricted page), which is a reason
+   * to forget what we knew, never to keep believing it.
+   */
+  private rememberActiveUrl(p: Pending, frame: ResultFrame): void {
+    if (!this.reportsTabUrl || !p.activeTab) return;
+    if (ACTIVE_TAB_CHANGERS.has(p.method)) return; // already invalidated; re-caching would race
+    this.activeUrl = frame.tabUrl ? { url: frame.tabUrl, at: Date.now() } : null;
+  }
+
+  /**
+   * The active tab's last reported URL if it is younger than `maxAgeMs`, else
+   * null — the caller then resolves it the slow way. Never returns a guess.
+   */
+  lastActiveUrl(maxAgeMs: number): string | null {
+    if (!this.activeUrl) return null;
+    return Date.now() - this.activeUrl.at <= maxAgeMs ? this.activeUrl.url : null;
   }
 
   private handleClose(code: number): void {

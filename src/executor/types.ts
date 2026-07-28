@@ -189,6 +189,15 @@ export interface Executor {
   /** Close ONLY if we own the browser; never the user's Chrome. */
   dispose(): Promise<void>;
 
+  /**
+   * The active tab's URL if the backend ALREADY knows it — the extension reports
+   * it on every result frame, so a gate that runs right after a command needs no
+   * round-trip. Null means "not known recently enough", and the caller must then
+   * resolve it properly; it never returns a guess. Optional: backends that can't
+   * report cheaply simply omit it.
+   */
+  cachedActiveUrl?(): string | null;
+
   // --- tabs ---
   tabsList(): Promise<TabInfo[]>;
   tabSelect(tabId: TabId): Promise<TabInfo>;
