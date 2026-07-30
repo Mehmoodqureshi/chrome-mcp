@@ -1,3 +1,15 @@
+## 0.6.6 - 2026-07-30
+
+- fix(security): the domain policy now authorizes the tab a call actually targets.
+  A tool given an explicit `tabId` was gated against whichever tab happened to be
+  active, so with an allowlisted page in front, a `tabId`-addressed `get_text` /
+  `get_html` / `screenshot` / `eval` / `click` (and every other tab-scoped tool)
+  could reach a tab whose origin was never checked. The reported-URL cache, which
+  only ever describes the active tab, is bypassed when a `tabId` is given.
+- fix(security): when the browser reports open tabs but none active, the gate no
+  longer silently falls back to `tabs[0]`; an unknown `tabId` is reported as
+  `TAB_NOT_FOUND` instead of being gated against a different tab.
+
 ## 0.6.5 - 2026-07-28
 
 - fix: surface tabs_list failures instead of defaulting policy to about:blank

@@ -133,24 +133,34 @@ interface ToolCtx {
 
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult>;
 
-const GATE_CONTEXT = 'cannot resolve the active tab URL for the policy gate';
+const GATE_CONTEXT = 'cannot resolve the target tab URL for the policy gate';
 
 /**
- * Resolve the URL the policy should be evaluated against (the active tab).
+ * Resolve the URL the policy should be evaluated against: the URL of the tab
+ * this very call will act on — the explicit `tabId` when the caller gave one,
+ * the active tab only when they didn't.
  *
- * NEVER substitutes a placeholder URL. If the tab list can't be read, the real
- * origin is unknown, and evaluating the policy against a fabricated URL would
- * silently allow or deny against the wrong origin with no signal to the caller.
- * So a `tabsList` failure (or a browser reporting no tabs at all) propagates —
- * the dispatch firewall renders it as a structured error carrying the code.
+ * Gating on the ACTIVE tab regardless of `tabId` is an authorization bypass:
+ * park an allowlisted page as active and every `tabId`-addressed read (get_text,
+ * get_html, screenshot, eval, …) sails through against a tab whose origin was
+ * never checked. The tab that gets touched is the tab that must be authorized.
+ *
+ * NEVER substitutes a placeholder URL, and never falls back to some *other*
+ * tab. If the real origin is unknown, evaluating the policy against a stand-in
+ * would silently allow or deny against the wrong origin with no signal to the
+ * caller. So a `tabsList` failure (or a browser reporting no tabs at all)
+ * propagates — the dispatch firewall renders it as an error carrying the code.
  *
  * Prefers a URL the backend already reported over asking again: the extension
  * rides the tab's landing URL home on every result frame, which is what keeps a
- * gated call to ONE round-trip instead of two.
+ * gated call to ONE round-trip instead of two. That cache only ever describes
+ * the active tab, so it is bypassed whenever an explicit `tabId` is in play.
  */
-async function activeUrl(ex: Executor): Promise<string> {
-  const known = ex.cachedActiveUrl?.();
-  if (known) return known;
+async function gatedUrl(ex: Executor, tabId?: string): Promise<string> {
+  if (!tabId) {
+    const known = ex.cachedActiveUrl?.();
+    if (known) return known;
+  }
 
   let tabs: TabInfo[];
   try {
@@ -163,33 +173,46 @@ async function activeUrl(ex: Executor): Promise<string> {
     throw err; // an internal fault, not a browser one — don't relabel it
   }
 
-  const active = tabs.find((t) => t.active) ?? tabs[0];
-  if (!active) throw new ExecutorError('TAB_NOT_FOUND', `${GATE_CONTEXT}: the browser reports no open tabs`);
+  if (tabs.length === 0) {
+    throw new ExecutorError('TAB_NOT_FOUND', `${GATE_CONTEXT}: the browser reports no open tabs`);
+  }
+  const target = tabId ? tabs.find((t) => t.tabId === tabId) : tabs.find((t) => t.active);
+  if (!target) {
+    throw new ExecutorError(
+      'TAB_NOT_FOUND',
+      tabId
+        ? `${GATE_CONTEXT}: no open tab has id ${tabId} — call tabs_list for the current ids`
+        : `${GATE_CONTEXT}: the browser reports open tabs but none active — pass an explicit tabId`,
+    );
+  }
   // An empty URL is Chrome declining to reveal one (a chrome:// page, or a tab
   // the extension has no host access to) — NOT an origin. Gating on '' would
   // produce a baffling "blocked on " denial that reads like a policy decision.
-  if (!active.url) {
+  if (!target.url) {
     throw new ExecutorError(
       'TAB_NOT_FOUND',
-      `${GATE_CONTEXT}: the active tab (id ${active.tabId}) reports no URL. Chrome hides it for ` +
+      `${GATE_CONTEXT}: the target tab (id ${target.tabId}) reports no URL. Chrome hides it for ` +
         `internal pages (chrome://, the Web Store) and until the extension has access to that site — ` +
         `switch to a normal page, or open the target site in a new tab.`,
     );
   }
-  return active.url;
+  return target.url;
 }
 
 /**
- * Policy chokepoint. `urlOverride` is the destination for navigation.
+ * Policy chokepoint. `opts.url` is the destination for navigation (it governs
+ * instead of any current tab URL); `opts.tabId` is the tab the call will act on,
+ * and MUST be threaded through by every URL-gated handler that accepts one —
+ * omitting it silently authorizes the call against the active tab instead.
  *
- * Only resolves the active URL for methods whose verdict actually depends on one
+ * Only resolves a tab URL for methods whose verdict actually depends on one
  * (`isUrlGated`). Tab management and the capability gates — eval, downloads,
  * uploads, mutations — are decided without any URL, so making them wait on the
  * tab list bought nothing and, worse, made `tab_new` fail exactly when the tab
  * list was unreadable: the one call that could dig you out.
  */
-async function gate(ctx: ToolCtx, method: WireMethod, urlOverride?: string): Promise<void> {
-  const url = urlOverride ?? (isUrlGated(method) ? await activeUrl(ctx.ex) : '');
+async function gate(ctx: ToolCtx, method: WireMethod, opts: { url?: string; tabId?: string } = {}): Promise<void> {
+  const url = opts.url ?? (isUrlGated(method) ? await gatedUrl(ctx.ex, opts.tabId) : '');
   assertUrlAllowed(url, method, ctx.policy);
 }
 
@@ -244,25 +267,25 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   navigate: async (a, ctx) => {
     const url = requireString(a, 'url');
-    await gate(ctx, 'navigate', url);
+    await gate(ctx, 'navigate', { url });
     return jsonResult(await ctx.ex.navigate({ url, tabId: tabId(a), waitUntil: waitUntil(a) }));
   },
   back: async (a, ctx) => {
-    await gate(ctx, 'back');
+    await gate(ctx, 'back', { tabId: tabId(a) });
     return jsonResult(await ctx.ex.back(tabId(a)));
   },
   forward: async (a, ctx) => {
-    await gate(ctx, 'forward');
+    await gate(ctx, 'forward', { tabId: tabId(a) });
     return jsonResult(await ctx.ex.forward(tabId(a)));
   },
   reload: async (a, ctx) => {
-    await gate(ctx, 'reload');
+    await gate(ctx, 'reload', { tabId: tabId(a) });
     return jsonResult(await ctx.ex.reload({ tabId: tabId(a), waitUntil: waitUntil(a) }));
   },
 
   click: async (a, ctx) => {
     const t = requireTarget(a);
-    await gate(ctx, 'click');
+    await gate(ctx, 'click', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.click(t, {
         tabId: tabId(a),
@@ -274,7 +297,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   type: async (a, ctx) => {
     const t = requireTarget(a);
-    await gate(ctx, 'type');
+    await gate(ctx, 'type', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.type(t, requireWithinLength(requireString(a, 'text'), 'text', MAX_TEXT_LEN), {
         tabId: tabId(a),
@@ -287,13 +310,13 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   select_option: async (a, ctx) => {
     const t = requireTarget(a);
-    await gate(ctx, 'type'); // mutating
+    await gate(ctx, 'type', { tabId: tabId(a) }); // mutating
     const values = optionalStringArray(a, 'values');
     if (!values || values.length === 0) throw new McpToolError('"values" must be a non-empty array of strings');
     return jsonResult(await ctx.ex.selectOption(t, values, { tabId: tabId(a) }));
   },
   press: async (a, ctx) => {
-    await gate(ctx, 'press');
+    await gate(ctx, 'press', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.press(requireString(a, 'key'), {
         tabId: tabId(a),
@@ -303,11 +326,11 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   hover: async (a, ctx) => {
     const t = requireTarget(a);
-    await gate(ctx, 'hover');
+    await gate(ctx, 'hover', { tabId: tabId(a) });
     return jsonResult(await ctx.ex.hover(t, { tabId: tabId(a) }));
   },
   scroll: async (a, ctx) => {
-    await gate(ctx, 'scroll');
+    await gate(ctx, 'scroll', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.scroll({
         tabId: tabId(a),
@@ -321,7 +344,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   screenshot: async (a, ctx) => {
-    await gate(ctx, 'screenshot');
+    await gate(ctx, 'screenshot', { tabId: tabId(a) });
     const shot = await ctx.ex.screenshot({
       tabId: tabId(a),
       fullPage: optionalBoolean(a, 'fullPage'),
@@ -332,19 +355,19 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return imageResult(shot.dataBase64, shot.mimeType, caption);
   },
   get_text: async (a, ctx) => {
-    await gate(ctx, 'get_text');
+    await gate(ctx, 'get_text', { tabId: tabId(a) });
     const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a) });
     saveResult('get_text', 'json', JSON.stringify(res, null, 2));
     return jsonResult(res);
   },
   get_html: async (a, ctx) => {
-    await gate(ctx, 'get_html');
+    await gate(ctx, 'get_html', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.getHtml(optionalTarget(a), { tabId: tabId(a), outer: optionalBoolean(a, 'outer') }),
     );
   },
   snapshot: async (a, ctx) => {
-    await gate(ctx, 'get_text'); // read of page structure
+    await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page structure
     return jsonResult(
       await ctx.ex.snapshot({
         tabId: tabId(a),
@@ -354,13 +377,13 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     );
   },
   get_cookies: async (a, ctx) => {
-    await gate(ctx, 'get_text'); // reads tab-scoped secrets; same domain gate as content reads
+    await gate(ctx, 'get_text', { tabId: tabId(a) }); // reads tab-scoped secrets; same domain gate as content reads
     return jsonResult(await ctx.ex.getCookies({ tabId: tabId(a), url: optionalString(a, 'url') }));
   },
   storage: async (a, ctx) => {
     const op = requireString(a, 'op') as 'get' | 'set' | 'remove' | 'clear';
     // get is a read; set/remove/clear mutate.
-    await gate(ctx, op === 'get' ? 'get_text' : 'type');
+    await gate(ctx, op === 'get' ? 'get_text' : 'type', { tabId: tabId(a) });
     if ((op === 'set' || op === 'remove') && !optionalString(a, 'key')) {
       throw new McpToolError(`storage "${op}" requires a "key"`);
     }
@@ -375,7 +398,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     );
   },
   eval: async (a, ctx) => {
-    await gate(ctx, 'eval');
+    await gate(ctx, 'eval', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.eval(requireString(a, 'expression'), {
         tabId: tabId(a),
@@ -384,7 +407,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     );
   },
   wait_for: async (a, ctx) => {
-    await gate(ctx, 'wait_for');
+    await gate(ctx, 'wait_for', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.waitFor({
         tabId: tabId(a),
@@ -397,7 +420,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   extract_links: async (a, ctx) => {
-    await gate(ctx, 'get_text'); // read of page content
+    await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page content
     const res = await extractLinks(ctx.ex, {
       selector: optionalString(a, 'selector'),
       sameOriginOnly: optionalBoolean(a, 'sameOriginOnly'),
@@ -409,13 +432,13 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return jsonResult(res);
   },
   read_as_markdown: async (a, ctx) => {
-    await gate(ctx, 'get_text');
+    await gate(ctx, 'get_text', { tabId: tabId(a) });
     const md = await readAsMarkdown(ctx.ex, { selector: optionalString(a, 'selector'), tabId: tabId(a) });
     saveResult('read_as_markdown', 'md', md);
     return textResult(md);
   },
   fill_form: async (a, ctx) => {
-    await gate(ctx, 'type'); // mutating
+    await gate(ctx, 'type', { tabId: tabId(a) }); // mutating
     const fields = a.fields;
     if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
       throw new McpToolError('"fields" must be an object mapping selector -> string|boolean');
@@ -442,7 +465,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   upload_file: async (a, ctx) => {
     const t = requireTarget(a);
-    await gate(ctx, 'upload_file');
+    await gate(ctx, 'upload_file', { tabId: tabId(a) });
     const files = optionalStringArray(a, 'files');
     if (!files || files.length === 0) throw new McpToolError('"files" must be a non-empty array of absolute local paths');
     // Path restriction: uploads MUST be confined to a configured directory. Without

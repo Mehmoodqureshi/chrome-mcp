@@ -5,7 +5,7 @@
  * for the wire constants.
  */
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
@@ -127,6 +127,10 @@ test('hostOf is defensive against non-URLs', () => {
 
 // --- the gate never evaluates against a fabricated URL ----------------------
 
+// The gate tests install a process-global manager with a deliberately wide-open
+// policy; leaving it standing would hand the next test file an allow-* executor.
+after(() => resetManagerForTesting());
+
 function configure(stub: StubOptions): StubExecutor {
   resetManagerForTesting();
   resetRateLimiter();
@@ -143,12 +147,15 @@ const textOf = (r: CallToolResult): string => {
   const b = r.content.find((c) => c.type === 'text');
   return b && b.type === 'text' ? b.text : '';
 };
+/** Every text block joined — batch returns a summary block plus one per op. */
+const allText = (r: CallToolResult): string =>
+  r.content.filter((c) => c.type === 'text').map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
 test('a tabs_list failure surfaces as the bridge error, not a gate verdict', async () => {
   configure({ tabsListThrows: true });
   const r = await dispatchToolCall('get_text', {});
   assert.equal(r.isError, true);
-  assert.match(textOf(r), /cannot resolve the active tab URL for the policy gate/i);
+  assert.match(textOf(r), /cannot resolve the target tab URL for the policy gate/i);
   assert.match(textOf(r), /stub bridge is down/i); // underlying cause preserved
 });
 
@@ -202,6 +209,113 @@ test('a reported URL is still a real URL — the policy applies to it', async ()
   assert.equal(r.isError, true);
   assert.match(textOf(r), /evil\.test/);
   assert.equal(ex.tabsListCalls, 0);
+});
+
+// --- the gate authorizes the tab the call TARGETS, not whichever is active ----
+
+/** Allow only example.com, park an allowlisted page as the active tab, and hang a
+ *  non-allowlisted tab in the background for an explicit tabId to point at. */
+function twoTabs(opts: { cachedUrl?: string } = {}): StubExecutor {
+  resetManagerForTesting();
+  resetRateLimiter();
+  const ex = new StubExecutor({
+    activeUrl: 'https://example.com/allowed',
+    backgroundTabs: [{ tabId: 'extension:stub:2', url: 'https://evil.test/secrets' }],
+    ...opts,
+  });
+  configureManager({
+    policy: resolvePolicy({ allowDomains: ['example.com'], enableMutations: true, allowEval: true }),
+    makeExecutor: () => ex,
+  });
+  return ex;
+}
+
+test('an explicit tabId is gated against THAT tab, not the active one', async () => {
+  twoTabs();
+  // The bypass this closes: with an allowlisted tab active, a tabId-addressed read
+  // of a non-allowlisted tab used to be authorized against the active tab's origin.
+  const r = await dispatchToolCall('get_text', { tabId: 'extension:stub:2' });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /evil\.test/);
+});
+
+test('every tabId-addressed gated tool authorizes the targeted tab', async () => {
+  for (const [tool, args] of [
+    ['get_text', {}],
+    ['get_html', {}],
+    ['screenshot', {}],
+    ['snapshot', {}],
+    ['get_cookies', {}],
+    ['read_as_markdown', {}],
+    ['extract_links', {}],
+    ['eval', { expression: '1+1' }],
+    ['click', { selector: '#x' }],
+    ['type', { selector: '#x', text: 'hi' }],
+    ['storage', { op: 'get', key: 'k' }],
+    ['wait_for', { selector: '#x' }],
+  ] as const) {
+    twoTabs();
+    const r = await dispatchToolCall(tool, { ...args, tabId: 'extension:stub:2' });
+    assert.equal(r.isError, true, `${tool} must not be authorized against the active tab`);
+    assert.match(textOf(r), /evil\.test/, `${tool} should be denied on the targeted tab's origin`);
+  }
+});
+
+test('the active tab is still gated normally when no tabId is given', async () => {
+  twoTabs();
+  const r = await dispatchToolCall('get_text', {});
+  assert.notEqual(r.isError, true);
+});
+
+test('an explicit tabId bypasses the reported-URL cache', async () => {
+  // The cache only ever describes the active tab, so trusting it for an explicit
+  // tabId would reintroduce the bypass by a side door.
+  const ex = twoTabs({ cachedUrl: 'https://example.com/allowed' });
+  const r = await dispatchToolCall('get_text', { tabId: 'extension:stub:2' });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /evil\.test/);
+  assert.equal(ex.tabsListCalls, 1); // it asked, instead of believing the cache
+});
+
+test('an unknown tabId is named, not quietly gated against another tab', async () => {
+  twoTabs();
+  const r = await dispatchToolCall('get_text', { tabId: 'extension:stub:404' });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /no open tab has id extension:stub:404/i);
+  assert.doesNotMatch(textOf(r), /allowed-sites list/i); // not a policy verdict
+});
+
+test('a parallel batch op is gated against its own target tab', async () => {
+  // The amplifier: a parallel batch REQUIRES an explicit tabId on every tab-scoped
+  // op, so driving several tabs at once — the feature's whole purpose — was exactly
+  // the path where every op got authorized against whichever tab was active.
+  twoTabs();
+  const r = await dispatchToolCall('batch', {
+    ops: [
+      { tool: 'get_text', args: { tabId: 'extension:stub:1' } },
+      { tool: 'get_text', args: { tabId: 'extension:stub:2' } },
+    ],
+  });
+  // The allowlisted tab succeeds, the non-allowlisted one is denied. Before the fix
+  // both were authorized against the active tab, so this read ok: 2.
+  const summary = JSON.parse(textOf(r)) as { batch: { ok: number; error: number } };
+  assert.equal(summary.batch.ok, 1);
+  assert.equal(summary.batch.error, 1);
+  // The denial names the origin it was actually evaluated against.
+  assert.match(allText(r), /evil\.test/);
+});
+
+test('tabs open but none active does not fall back to an arbitrary tab', async () => {
+  resetManagerForTesting();
+  resetRateLimiter();
+  const ex = new StubExecutor({ activeUrl: 'https://evil.test/p', noActiveTab: true });
+  configureManager({
+    policy: resolvePolicy({ allowDomains: ['example.com'] }),
+    makeExecutor: () => ex,
+  });
+  const r = await dispatchToolCall('get_text', {});
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /none active/i);
 });
 
 test('tools whose verdict needs no URL never touch the tab list', async () => {

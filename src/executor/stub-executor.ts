@@ -47,6 +47,12 @@ export interface StubOptions {
   /** A URL the backend claims to already know, as the extension reports on every
    *  result frame. Set it to assert the gate uses it INSTEAD of calling tabsList. */
   cachedUrl?: string;
+  /** Background (non-active) tabs, so a test can target one by an explicit tabId
+   *  and check the gate authorizes against THAT tab rather than the active one. */
+  backgroundTabs?: Array<{ tabId: TabId; url: string }>;
+  /** When true, tabs exist but none is flagged active — the case the gate used to
+   *  paper over by silently gating against `tabs[0]`. */
+  noActiveTab?: boolean;
 }
 
 const ok: ActionOk = { ok: true };
@@ -59,6 +65,8 @@ export class StubExecutor implements Executor {
   private readonly noTabs: boolean;
   private readonly blankTabUrl: boolean;
   private readonly cached: string | null;
+  private readonly backgroundTabs: Array<{ tabId: TabId; url: string }>;
+  private readonly noActiveTab: boolean;
   /** How many times the gate actually asked for the tab list — the round-trip
    *  counter the caching path exists to keep at zero. */
   tabsListCalls = 0;
@@ -71,6 +79,8 @@ export class StubExecutor implements Executor {
     this.noTabs = opts.noTabs ?? false;
     this.blankTabUrl = opts.blankTabUrl ?? false;
     this.cached = opts.cachedUrl ?? null;
+    this.backgroundTabs = opts.backgroundTabs ?? [];
+    this.noActiveTab = opts.noActiveTab ?? false;
   }
 
   private tab(): TabInfo {
@@ -78,7 +88,7 @@ export class StubExecutor implements Executor {
       tabId: 'extension:stub:1',
       url: this.blankTabUrl ? '' : this.url,
       title: 'Stub Page',
-      active: true,
+      active: !this.noActiveTab,
       index: 0,
     };
   }
@@ -110,7 +120,17 @@ export class StubExecutor implements Executor {
   async tabsList(): Promise<TabInfo[]> {
     this.tabsListCalls++;
     if (this.tabsListThrows) throw new ExecutorError('EXTENSION_DISCONNECTED', 'stub bridge is down');
-    return this.noTabs ? [] : [this.tab()];
+    if (this.noTabs) return [];
+    return [
+      this.tab(),
+      ...this.backgroundTabs.map((t, i) => ({
+        tabId: t.tabId,
+        url: t.url,
+        title: 'Stub Background Page',
+        active: false,
+        index: i + 1,
+      })),
+    ];
   }
   async tabSelect(tabId: TabId): Promise<TabInfo> {
     return { ...this.tab(), tabId };
