@@ -1,6 +1,6 @@
 {
   "name": "@mehmoodqureshi/chrome-mcp",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Drive your real Chrome browser over MCP — real logins, real cookies. A stdio MCP server (CLI) plus an MV3 extension, driving Chrome via chrome.scripting/chrome.tabs. Multi-tab batch automation, accessibility snapshots, deny-all security by default.",
   "author": "Mehmood Ur Rehman Qureshi",
   "license": "MIT",

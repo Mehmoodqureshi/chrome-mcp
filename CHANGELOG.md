@@ -1,3 +1,30 @@
+## 0.6.7 - 2026-08-03
+
+- feat: `get_html`, `get_text` and `read_as_markdown` take a `maxBytes` cap
+  (default 256 KB, matching the long-standing `eval` cap) and report
+  `truncated` / `totalBytes` / `returnedBytes` when it bites. These were the last
+  uncapped read paths, so one call on a content-heavy page could consume an agent's
+  entire context window with no way to ask for less. HTML is cut at a tag boundary
+  so every returned element is well-formed, and the slice never splits a UTF-8
+  character. The FULL payload is still written to the task's `results/` dir — only
+  what crosses into the model's context is bounded.
+- feat: `batch` takes a `maxResultBytes` budget (default 1 MB). Each op was bounded
+  on its own, but a batch multiplies: 50 `screenshot` or `get_html` ops composed
+  into one unbounded result, which is exactly the case `batch` is most useful for.
+  Ops past the budget are replaced by a one-line summary naming the tool, block
+  count and size, and the header reports `omittedOps`/`omittedBytes`. The first op
+  always comes through whole, so a single over-budget op still returns something.
+- feat: a read that hits `EXTENSION_DISCONNECTED` mid-flight is retried once after
+  re-pairing. MV3 recycles the extension's service worker on its own schedule, so a
+  command can be in flight when the socket goes away — a fault with nothing to do
+  with the call, which users were fixing by re-issuing the identical request by
+  hand. Only idempotent tools are eligible: repeating a `click` or `type` could
+  submit a form twice, so mutations still fail on the first attempt.
+- fix: `--log-level` is honored. It was parsed and validated but never consumed, so
+  `--log-level silent` in an editor MCP config still emitted stderr noise the user
+  had explicitly asked to turn off. `silent` now suppresses stderr entirely and
+  `debug` enables verbose tracing (resolved config at startup, retry decisions).
+
 ## 0.6.6 - 2026-07-30
 
 - fix(security): the domain policy now authorizes the tab a call actually targets.
