@@ -35,6 +35,18 @@ const MAX_OPS = 50;
 const DEFAULT_CONCURRENCY = 6;
 const MAX_CONCURRENCY = 16;
 
+/**
+ * Default ceiling on the TOTAL payload a batch returns.
+ *
+ * Each op is individually bounded, but a batch multiplies: 50 screenshots or 50
+ * `get_html` reads compose into one unbounded result — which is exactly the case
+ * `batch` is most useful for. Past the budget, an op's blocks are replaced by a
+ * one-line summary so the caller still learns it ran and what it produced.
+ */
+const DEFAULT_MAX_RESULT_BYTES = 1024 * 1024;
+const MIN_RESULT_BYTES = 4 * 1024;
+const MAX_RESULT_BYTES = 32 * 1024 * 1024;
+
 type Mode = 'parallel' | 'serial';
 type OpStatus = 'ok' | 'error' | 'skipped';
 
@@ -94,6 +106,8 @@ export async function runBatch(rawArgs: unknown, deps: BatchDeps): Promise<CallT
   }
   const stopOnError = optionalBoolean(a, 'stopOnError') ?? false;
   const concurrency = optionalNumber(a, 'maxConcurrency', { min: 1, max: MAX_CONCURRENCY }) ?? DEFAULT_CONCURRENCY;
+  const maxResultBytes =
+    optionalNumber(a, 'maxResultBytes', { min: MIN_RESULT_BYTES, max: MAX_RESULT_BYTES }) ?? DEFAULT_MAX_RESULT_BYTES;
 
   /** Run one op through the firewall, after the per-op guards. Never throws. */
   const runOne = async (op: BatchOp): Promise<CallToolResult> => {
@@ -125,12 +139,27 @@ export async function runBatch(rawArgs: unknown, deps: BatchDeps): Promise<CallT
     outcomes = results.map((result) => ({ status: result.isError ? 'error' : 'ok', result }));
   }
 
-  return renderBatch(ops, outcomes, mode);
+  return renderBatch(ops, outcomes, mode, maxResultBytes);
+}
+
+/** Approximate wire size of one content block (base64 image data dominates when present). */
+function blockBytes(block: CallToolResult['content'][number]): number {
+  const b = block as { text?: string; data?: string };
+  if (typeof b.text === 'string') return Buffer.byteLength(b.text, 'utf8');
+  if (typeof b.data === 'string') return b.data.length;
+  return 0;
+}
+
+/** A one-line stand-in for an op whose blocks were dropped to stay inside the budget. */
+function elidedSummary(index: number, tool: string, blocks: CallToolResult['content'], bytes: number): string {
+  const kinds = [...new Set(blocks.map((b) => b.type))].join('+') || 'none';
+  return `--- op ${index} (${tool}) omitted: ${blocks.length} ${kinds} block(s), ~${bytes} bytes — batch result budget reached; re-run this op on its own to see it ---`;
 }
 
 /** Compose the per-op outcomes into one MCP result: a JSON summary block first,
- *  then each executed op's own content blocks (text/images flow through intact). */
-function renderBatch(ops: BatchOp[], outcomes: OpOutcome[], mode: Mode): CallToolResult {
+ *  then each executed op's own content blocks (text/images flow through intact),
+ *  stopping at `budget` bytes so one batch cannot flood the caller's context. */
+function renderBatch(ops: BatchOp[], outcomes: OpOutcome[], mode: Mode, budget: number): CallToolResult {
   const summary = outcomes.map((o, i) => ({ index: i, tool: ops[i].tool, status: o.status }));
   const counts = {
     total: ops.length,
@@ -139,15 +168,42 @@ function renderBatch(ops: BatchOp[], outcomes: OpOutcome[], mode: Mode): CallToo
     skipped: summary.filter((s) => s.status === 'skipped').length,
   };
 
-  const content: CallToolResult['content'] = [
-    { type: 'text', text: JSON.stringify({ batch: { mode, ...counts }, results: summary }, null, 2) },
-  ];
+  // Render the payload first so the header can report how much was elided — the
+  // caller needs that number to decide whether to re-run anything.
+  const body: CallToolResult['content'] = [];
+  let spent = 0;
+  let omittedOps = 0;
+  let omittedBytes = 0;
   for (let i = 0; i < outcomes.length; i++) {
     const o = outcomes[i];
     if (!o.result) continue; // skipped ops carry no payload
-    content.push({ type: 'text', text: `--- op ${i} (${ops[i].tool}) ${o.status} ---` });
-    for (const block of o.result.content) content.push(block);
+    const blocks = o.result.content;
+    const size = blocks.reduce((n, b) => n + blockBytes(b), 0);
+    if (spent + size > budget && spent > 0) {
+      // `spent > 0` guarantees the first op always gets through: a single op
+      // larger than the whole budget is still more useful than an empty batch.
+      body.push({ type: 'text', text: elidedSummary(i, ops[i].tool, blocks, size) });
+      omittedOps++;
+      omittedBytes += size;
+      continue;
+    }
+    body.push({ type: 'text', text: `--- op ${i} (${ops[i].tool}) ${o.status} ---` });
+    for (const block of blocks) body.push(block);
+    spent += size;
   }
+
+  const header = {
+    batch: {
+      mode,
+      ...counts,
+      ...(omittedOps > 0
+        ? { omittedOps, omittedBytes, resultBudgetBytes: budget, note: 'some op payloads were omitted to stay within the batch result budget; raise maxResultBytes or re-run those ops individually' }
+        : {}),
+    },
+    results: summary,
+  };
+
+  const content: CallToolResult['content'] = [{ type: 'text', text: JSON.stringify(header, null, 2) }, ...body];
 
   // The batch ran successfully even if some ops failed; only flag isError when
   // nothing succeeded, so a host sees partial success as success.

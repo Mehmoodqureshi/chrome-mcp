@@ -53,6 +53,22 @@ export interface StubOptions {
   /** When true, tabs exist but none is flagged active — the case the gate used to
    *  paper over by silently gating against `tabs[0]`. */
   noActiveTab?: boolean;
+  /** Text returned by `getText`. Set it large to exercise the output cap. */
+  textPayload?: string;
+  /** HTML returned by `getHtml`. Set it large to exercise the output cap. */
+  htmlPayload?: string;
+  /**
+   * How many of the first content reads reject with `EXTENSION_DISCONNECTED`
+   * before one succeeds — models MV3 recycling the service worker mid-command,
+   * the fault the dispatch layer retries once.
+   */
+  disconnectReads?: number;
+  /**
+   * Same, but for the mutating `type` path. Mutations are deliberately NOT
+   * retried — repeating a write could submit a form twice — so a test can assert
+   * exactly one attempt was made.
+   */
+  disconnectWrites?: number;
 }
 
 const ok: ActionOk = { ok: true };
@@ -63,6 +79,10 @@ export class StubExecutor implements Executor {
   private readonly evalThrows: boolean;
   private readonly tabsListThrows: boolean;
   private readonly noTabs: boolean;
+  private readonly textPayload: string;
+  private readonly htmlPayload: string;
+  private remainingDisconnects: number;
+  private remainingWriteDisconnects: number;
   private readonly blankTabUrl: boolean;
   private readonly cached: string | null;
   private readonly backgroundTabs: Array<{ tabId: TabId; url: string }>;
@@ -81,6 +101,27 @@ export class StubExecutor implements Executor {
     this.cached = opts.cachedUrl ?? null;
     this.backgroundTabs = opts.backgroundTabs ?? [];
     this.noActiveTab = opts.noActiveTab ?? false;
+    this.textPayload = opts.textPayload ?? 'stub text';
+    this.htmlPayload = opts.htmlPayload ?? '<html><body><a href="https://example.com">Example</a></body></html>';
+    this.remainingDisconnects = opts.disconnectReads ?? 0;
+    this.remainingWriteDisconnects = opts.disconnectWrites ?? 0;
+  }
+
+  /** Fail this read if a scripted disconnect is still pending, then consume it. */
+  private maybeDisconnect(): void {
+    if (this.remainingDisconnects <= 0) return;
+    this.remainingDisconnects--;
+    throw new ExecutorError('EXTENSION_DISCONNECTED', 'stub: service worker recycled mid-command');
+  }
+
+  /** How many scripted disconnects are left (lets a test assert one was consumed). */
+  get pendingDisconnects(): number {
+    return this.remainingDisconnects;
+  }
+
+  /** Same for the write path — a mutating call must consume exactly one. */
+  get pendingWriteDisconnects(): number {
+    return this.remainingWriteDisconnects;
   }
 
   private tab(): TabInfo {
@@ -161,6 +202,10 @@ export class StubExecutor implements Executor {
     return ok;
   }
   async type(): Promise<ActionOk> {
+    if (this.remainingWriteDisconnects > 0) {
+      this.remainingWriteDisconnects--;
+      throw new ExecutorError('EXTENSION_DISCONNECTED', 'stub: service worker recycled mid-command');
+    }
     return ok;
   }
   async fill(): Promise<ActionOk> {
@@ -180,10 +225,12 @@ export class StubExecutor implements Executor {
   }
 
   async getText(_t?: Target): Promise<{ text: string; ref?: string }> {
-    return { text: 'stub text', ref: 'el_stub_1' };
+    this.maybeDisconnect();
+    return { text: this.textPayload, ref: 'el_stub_1' };
   }
   async getHtml(): Promise<{ html: string }> {
-    return { html: '<html><body><a href="https://example.com">Example</a></body></html>' };
+    this.maybeDisconnect();
+    return { html: this.htmlPayload };
   }
   async snapshot(): Promise<SnapshotResult> {
     return {

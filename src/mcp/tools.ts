@@ -23,8 +23,17 @@ import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
 import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
+import {
+  capHtml,
+  capText,
+  DEFAULT_MAX_OUTPUT_BYTES,
+  MAX_OUTPUT_BYTES,
+  MIN_OUTPUT_BYTES,
+  truncationMeta,
+} from './limits';
 import { runBatch } from './batch';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
+import { logDebug } from './log';
 import { listTasks } from '../bridge/tasks';
 import {
   appendHistory,
@@ -65,6 +74,10 @@ const TARGET_PROPS = {
 } as const;
 
 const tabIdField = z.string().describe('Target tab id (defaults to the active tab)').optional();
+const maxBytesField = z
+  .number()
+  .describe(`Cap the returned content at this many UTF-8 bytes (default ${DEFAULT_MAX_OUTPUT_BYTES}). A truncated result reports truncated/totalBytes/returnedBytes. The full payload is still written to the task's results/ dir.`)
+  .optional();
 const waitUntilField = z.enum(['load', 'domcontentloaded', 'networkidle']).describe('When to consider navigation done').optional();
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -86,8 +99,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
   { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
-  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField } },
-  { name: 'get_html', description: 'Get HTML of the page or an element.', inputSchema: { ...TARGET_PROPS, outer: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
+  { name: 'get_html', description: 'Get HTML of the page or an element. Output is capped (see maxBytes) and cut at a tag boundary; narrow it with `selector` rather than raising the cap when you can.', inputSchema: { ...TARGET_PROPS, outer: z.boolean().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
   { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with stable refs to target by `ref` (more reliable than guessing CSS selectors).', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), tabId: tabIdField } },
   { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: { url: z.string().optional(), tabId: tabIdField } },
   { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: { op: z.enum(['get', 'set', 'remove', 'clear']), key: z.string().optional(), value: z.string().optional(), session: z.boolean().optional(), tabId: tabIdField } },
@@ -95,7 +108,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), tabId: tabIdField } },
 
   { name: 'extract_links', description: 'Extract anchors from the page or a subtree. dedupe=true collapses links sharing an href (nav/footer noise); limit caps the count.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), dedupe: z.boolean().optional(), limit: z.number().optional(), tabId: tabIdField } },
-  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), tabId: tabIdField } },
+  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
   { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), tabId: tabIdField } },
   { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: { url: z.string().optional(), ...TARGET_PROPS, suggestedName: z.string().optional(), tabId: tabIdField } },
   { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: { ...TARGET_PROPS, files: z.array(z.string()), tabId: tabIdField } },
@@ -118,6 +131,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       mode: z.enum(['parallel', 'serial']).describe('Default "parallel".').optional(),
       stopOnError: z.boolean().describe('Serial mode only: stop after the first failing op (the rest are skipped).').optional(),
       maxConcurrency: z.number().describe('Parallel mode: max ops in flight at once (default 6).').optional(),
+      maxResultBytes: z.number().describe('Total payload budget across all ops (default 1048576). Ops past the budget are replaced by a one-line summary instead of their content, so a 50-op screenshot/get_html batch cannot flood the caller.').optional(),
     },
   },
 ];
@@ -217,6 +231,9 @@ async function gate(ctx: ToolCtx, method: WireMethod, opts: { url?: string; tabI
 }
 
 const tabId = (args: Record<string, unknown>): string | undefined => optionalString(args, 'tabId');
+/** The caller's output cap for a content read, or the default. */
+const maxBytes = (args: Record<string, unknown>): number =>
+  optionalNumber(args, 'maxBytes', { min: MIN_OUTPUT_BYTES, max: MAX_OUTPUT_BYTES }) ?? DEFAULT_MAX_OUTPUT_BYTES;
 const waitUntil = (args: Record<string, unknown>): WaitUntil | undefined =>
   optionalString(args, 'waitUntil') as WaitUntil | undefined;
 
@@ -357,14 +374,17 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   get_text: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) });
     const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a) });
+    // Save the FULL read before capping — the artifact on disk stays lossless;
+    // only what crosses into the caller's context is bounded.
     saveResult('get_text', 'json', JSON.stringify(res, null, 2));
-    return jsonResult(res);
+    const capped = capText(res.text, maxBytes(a));
+    return jsonResult({ ...res, text: capped.text, ...truncationMeta(capped) });
   },
   get_html: async (a, ctx) => {
     await gate(ctx, 'get_html', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.getHtml(optionalTarget(a), { tabId: tabId(a), outer: optionalBoolean(a, 'outer') }),
-    );
+    const res = await ctx.ex.getHtml(optionalTarget(a), { tabId: tabId(a), outer: optionalBoolean(a, 'outer') });
+    const capped = capHtml(res.html, maxBytes(a));
+    return jsonResult({ ...res, html: capped.text, ...truncationMeta(capped) });
   },
   snapshot: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page structure
@@ -435,7 +455,14 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     await gate(ctx, 'get_text', { tabId: tabId(a) });
     const md = await readAsMarkdown(ctx.ex, { selector: optionalString(a, 'selector'), tabId: tabId(a) });
     saveResult('read_as_markdown', 'md', md);
-    return textResult(md);
+    const capped = capText(md, maxBytes(a));
+    // Markdown is returned as plain text, so the truncation notice has to ride in
+    // the body rather than as sibling JSON fields.
+    return textResult(
+      capped.truncated
+        ? `${capped.text}\n\n[truncated: ${capped.returnedBytes} of ${capped.totalBytes} bytes — raise maxBytes or narrow with selector; the full document was saved to the task's results/ dir]`
+        : capped.text,
+    );
   },
   fill_form: async (a, ctx) => {
     await gate(ctx, 'type', { tabId: tabId(a) }); // mutating
@@ -563,6 +590,29 @@ function recordHistory(tool: string, rawArgs: unknown, ok: boolean, error?: stri
   appendHistory({ ts: new Date().toISOString(), tool, args: summarizeArgs(rawArgs), ok, ...(error ? { error } : {}) });
 }
 
+/**
+ * Tools it is safe to re-issue after the extension drops mid-flight.
+ *
+ * MV3 recycles the extension's service worker on its own schedule, so a command
+ * can be in flight when the socket goes away — a fault that has nothing to do
+ * with the call and that the user currently fixes by re-issuing the identical
+ * request by hand. Only idempotent calls are eligible: repeating a `click` or a
+ * `type` could submit a form twice, which is not a cost worth paying to avoid one
+ * error message. `navigate` is included because landing on the same URL twice is
+ * the same end state.
+ */
+const RETRY_SAFE_TOOLS = new Set([
+  'tabs_list', 'chrome_status',
+  'get_text', 'get_html', 'snapshot', 'get_cookies',
+  'extract_links', 'read_as_markdown', 'screenshot',
+  'wait_for', 'navigate', 'reload',
+]);
+
+/** Whether `err` is the transient bridge fault that a single retry can clear. */
+function isRetryableFault(name: string, err: unknown): boolean {
+  return err instanceof ExecutorError && err.code === 'EXTENSION_DISCONNECTED' && RETRY_SAFE_TOOLS.has(name);
+}
+
 export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<CallToolResult> {
   const handler = TOOL_HANDLERS[name];
   if (!handler) return errorResult(`unknown tool: ${name}`);
@@ -572,7 +622,19 @@ export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<
     // Workspace-management tools run server-side and must work even with no
     // browser paired, so they skip the executor readiness check.
     const ex = NO_BACKEND_TOOLS.has(name) ? (null as unknown as Executor) : await mgr.ensureReady();
-    const result = await handler(asArgs(rawArgs), { ex, policy: mgr.policy });
+    let result: CallToolResult;
+    try {
+      result = await handler(asArgs(rawArgs), { ex, policy: mgr.policy });
+    } catch (err) {
+      if (!isRetryableFault(name, err)) throw err;
+      // Re-pair (ensureReady resolves the new connection) and try once more. A
+      // second failure propagates untouched, so a genuinely unpaired browser
+      // still reports EXTENSION_DISCONNECTED rather than retrying forever.
+      logDebug(`${name}: extension disconnected mid-call; re-pairing and retrying once`);
+      const reconnected = await mgr.ensureReady();
+      result = await handler(asArgs(rawArgs), { ex: reconnected, policy: mgr.policy });
+      logDebug(`${name}: retry after reconnect succeeded`);
+    }
     recordHistory(name, rawArgs, !result.isError);
     return result;
   } catch (err) {

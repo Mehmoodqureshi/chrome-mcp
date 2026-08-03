@@ -20,7 +20,7 @@ import { BridgeServer } from './bridge/server';
 import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/datadir';
 import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake } from './bridge/auth';
-import { logErr, startMcpServer, stopMcpServer } from './mcp/server';
+import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
 const SHUTDOWN_DEADLINE_MS = 3000;
@@ -152,6 +152,11 @@ async function main(): Promise<void> {
 
   const cfg = parseArgs(process.argv.slice(2));
 
+  // Apply verbosity before anything else logs, so `--log-level silent` really is
+  // silent from the first line rather than from wherever the first log happened
+  // to sit after startup.
+  setLogLevel(cfg.logLevel);
+
   if (cfg.showHelp) {
     process.stdout.write(HELP_TEXT);
     return;
@@ -177,6 +182,17 @@ async function main(): Promise<void> {
       logErr(`SECURITY: extension connection displaced (different id: ${d.differentId})`),
   });
   const port = await bridge.start();
+  // Never includes the pairing token — only the resolved, non-secret config.
+  logDebug(
+    `resolved config: ${JSON.stringify({
+      wsPort: port,
+      dataDir: cfg.dataDir,
+      profile: cfg.profile,
+      task: cfg.task,
+      prefer: cfg.prefer,
+      policy: cfg.policy,
+    })}`,
+  );
   const handshakePath = writeHandshake(dataDir, { port, token });
   logErr(`pairing handshake written to ${handshakePath} (mode 0600; token not logged)`);
   if (process.env.CHROME_MCP_TOKEN) {

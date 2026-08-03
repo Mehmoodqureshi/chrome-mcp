@@ -10,7 +10,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
+import { logErr } from './log';
 import { registerTools } from './tools';
+
+// Re-exported so existing callers (and the CLI) keep importing the logger from
+// here; the implementation lives in ./log to avoid a server↔tools import cycle.
+export { getLogLevel, logDebug, logErr, setLogLevel } from './log';
 
 const SERVER_NAME = 'chrome-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -20,11 +25,6 @@ const DEFAULT_VERSION = SERVER_VERSION;
 
 let server: McpServer | null = null;
 let transport: StdioServerTransport | null = null;
-
-/** stderr only — never stdout in stdio mode. */
-export function logErr(message: string): void {
-  process.stderr.write(`[chrome-mcp] ${message}\n`);
-}
 
 /** Build a fresh `Server` with the full tool surface registered (no transport). */
 export function createServer(version: string = DEFAULT_VERSION): McpServer {
