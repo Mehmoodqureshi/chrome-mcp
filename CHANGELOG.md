@@ -1,3 +1,15 @@
+## Unreleased
+
+- ci: drop `publish.yml`. Publishing from CI was abandoned back in 0.4.x — the
+  granular npm token cannot bypass 2FA, so every run failed with `EOTP` — and the
+  workflow fires on exactly the commits that matter (a version bump), turning each
+  release red for no reason. The 0.6.7 release failed it again. Publishing is
+  local, via `daily-publish`. Restoring a CI route would mean OIDC Trusted
+  Publishing, which is not set up.
+
+Note: no npm release — workflows are not part of the published tarball, so 0.6.7
+on npm is unaffected.
+
 ## 0.6.7 - 2026-08-03
 
 - feat: `get_html`, `get_text` and `read_as_markdown` take a `maxBytes` cap
