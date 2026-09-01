@@ -43,6 +43,11 @@ export { isReadMethod, isMutatingMethod, isUrlGated, hostOf, isDomainAllowed };
 export interface Policy extends WirePolicy {
   /** If set, `upload_file` may only read files inside this directory (absolute path). */
   uploadsDir?: string;
+  /** Pattern-based secret redaction on content reads (`--redact`). Password
+   *  field values are suppressed regardless of this setting. */
+  redact?: boolean;
+  /** Extra redaction patterns (regex sources) supplied by the operator. */
+  redactPatterns?: string[];
 }
 
 /** The SAFE default: deny everything until the user opts in. */
@@ -54,6 +59,9 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   uploadsDir: undefined,
   allowAllTabs: false,
   enableMutations: false,
+  allowObservers: false,
+  redact: false,
+  redactPatterns: [],
 });
 
 /** Merge a partial (from a policy file and/or CLI flags) over the safe default. */
@@ -66,6 +74,9 @@ export function resolvePolicy(partial?: Partial<Policy>): Policy {
     uploadsDir: partial?.uploadsDir ?? DEFAULT_POLICY.uploadsDir,
     allowAllTabs: partial?.allowAllTabs ?? DEFAULT_POLICY.allowAllTabs,
     enableMutations: partial?.enableMutations ?? DEFAULT_POLICY.enableMutations,
+    allowObservers: partial?.allowObservers ?? DEFAULT_POLICY.allowObservers,
+    redact: partial?.redact ?? DEFAULT_POLICY.redact,
+    redactPatterns: partial?.redactPatterns ?? [...(DEFAULT_POLICY.redactPatterns ?? [])],
   };
 }
 

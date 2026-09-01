@@ -5,7 +5,7 @@
  * (Only `download_file` is privileged and lives on the executor.)
  */
 
-import type { Executor, Target } from '../executor/types';
+import type { Executor, FrameOpts, Target } from '../executor/types';
 import { htmlToMarkdown } from './markdown-extract';
 
 export interface LinkOut {
@@ -24,7 +24,7 @@ export interface LinkOut {
  */
 export async function extractLinks(
   ex: Executor,
-  args: { selector?: string; sameOriginOnly?: boolean; dedupe?: boolean; limit?: number; tabId?: string },
+  args: { selector?: string; sameOriginOnly?: boolean; dedupe?: boolean; limit?: number; tabId?: string } & FrameOpts,
 ): Promise<{ links: LinkOut[] }> {
   const root = args.selector ? JSON.stringify(args.selector) : 'null';
   const expr = `(() => {
@@ -36,14 +36,16 @@ export async function extractLinks(
     })).filter(l => l.href && (${args.sameOriginOnly ? 'l.href.startsWith(here)' : 'true'}));
   })()`;
 
+  const frames: FrameOpts = { frameId: args.frameId, allFrames: args.allFrames };
   let links: LinkOut[];
-  const res = await ex.eval(expr, { tabId: args.tabId });
+  const res = await ex.eval(expr, { tabId: args.tabId, ...frames });
   if (res.ok && Array.isArray(res.value)) {
     links = res.value as LinkOut[];
   } else {
     // Fallback: parse hrefs out of the HTML (e.g. when eval is policy-denied).
     const { html } = await ex.getHtml(args.selector ? { selector: args.selector } : undefined, {
       tabId: args.tabId,
+      ...frames,
     });
     links = [];
     const re = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -78,10 +80,12 @@ function refineLinks(links: LinkOut[], opts: { dedupe?: boolean; limit?: number 
 /** Read a page (or subtree) as readable markdown. */
 export async function readAsMarkdown(
   ex: Executor,
-  args: { selector?: string; tabId?: string },
+  args: { selector?: string; tabId?: string } & FrameOpts,
 ): Promise<string> {
   const { html } = await ex.getHtml(args.selector ? { selector: args.selector } : undefined, {
     tabId: args.tabId,
+    frameId: args.frameId,
+    allFrames: args.allFrames,
   });
   return htmlToMarkdown(html);
 }
@@ -89,22 +93,23 @@ export async function readAsMarkdown(
 /** Fill a set of fields (keyed by selector) and optionally submit. */
 export async function fillForm(
   ex: Executor,
-  args: { fields: Record<string, string | boolean>; submitSelector?: string; tabId?: string },
+  args: { fields: Record<string, string | boolean>; submitSelector?: string; tabId?: string } & FrameOpts,
 ): Promise<{ filled: number; submitted: boolean }> {
+  const opts = { tabId: args.tabId, frameId: args.frameId, allFrames: args.allFrames };
   let filled = 0;
   for (const [selector, value] of Object.entries(args.fields)) {
     const target: Target = { selector };
     if (typeof value === 'boolean') {
       // Checkbox/radio: a click toggles it.
-      await ex.click(target, { tabId: args.tabId });
+      await ex.click(target, opts);
     } else {
-      await ex.fill(target, value, { tabId: args.tabId });
+      await ex.fill(target, value, opts);
     }
     filled++;
   }
   let submitted = false;
   if (args.submitSelector) {
-    await ex.click({ selector: args.submitSelector }, { tabId: args.tabId });
+    await ex.click({ selector: args.submitSelector }, opts);
     submitted = true;
   }
   return { filled, submitted };

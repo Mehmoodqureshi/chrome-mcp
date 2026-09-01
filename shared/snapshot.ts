@@ -16,6 +16,8 @@ export interface RawSnapshotNode {
   value?: string;
   disabled?: boolean;
   checked?: boolean;
+  /** A password field. `value` is never populated for one. */
+  secret?: boolean;
 }
 
 export interface RawSnapshot {
@@ -133,8 +135,14 @@ export function collectSnapshot(interactiveOnly = true, max = 200): RawSnapshot 
     const ref = `e${++n}`;
     el.setAttribute('data-mcp-ref', ref);
     const node: RawSnapshotNode = { ref, role: roleOf(el), name: accName(el), tag: el.tagName.toLowerCase() };
+    // A password field's characters never leave the page. The node still
+    // appears (so the model can target it) and is flagged `secret`, but the
+    // value is not something a caller has a use for and every caller would
+    // otherwise get it by default.
+    const isSecret = el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'password';
+    if (isSecret) node.secret = true;
     const v = (el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value;
-    if (typeof v === 'string' && v) node.value = v.slice(0, 200);
+    if (!isSecret && typeof v === 'string' && v) node.value = v.slice(0, 200);
     if ((el as HTMLInputElement).disabled) node.disabled = true;
     if ((el as HTMLInputElement).checked) node.checked = true;
     nodes.push(node);

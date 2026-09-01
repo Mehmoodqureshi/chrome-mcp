@@ -10,6 +10,10 @@
  * `mcp/helpers.ts` from these primitives; only `download` is privileged.
  */
 
+import type { ObserverReadResult, DialogPolicy } from '../../shared/observers';
+
+export type { ObserverReadResult, DialogPolicy };
+
 export type BackendKind = 'extension' | 'cdp';
 export type WaitUntil = 'load' | 'domcontentloaded' | 'networkidle';
 export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
@@ -29,6 +33,48 @@ export type Target = { selector: string; ref?: never } | { ref: string; selector
  * reconnect (a mismatch becomes a clean `STALE_TAB`, not a wrong-tab action).
  */
 export type TabId = string;
+
+/**
+ * Which frame(s) of a tab a call acts on. Omitted = the top frame, which is
+ * every call that predates frame support.
+ *
+ * `frameId` pins one frame (ids come from `framesList`). `allFrames` scans every
+ * frame and acts on the first that has the element — the answer to "the button
+ * is in the checkout iframe and my selector never matches". Each frame is
+ * authorized against ITS OWN url before anything runs there, so a scan can never
+ * reach into a frame the allowlist does not cover.
+ */
+export interface FrameOpts {
+  frameId?: number;
+  allFrames?: boolean;
+}
+
+export interface FrameInfo {
+  frameId: number;
+  top: boolean;
+  url: string;
+  title: string;
+}
+
+export interface PdfResult {
+  dataBase64: string;
+  mimeType: 'application/pdf';
+  url: string;
+  title: string;
+}
+
+export interface ObserverArgs extends FrameOpts {
+  tabId?: TabId;
+  console?: boolean;
+  network?: boolean;
+  dialogs?: boolean;
+  sinceSeq?: number;
+  limit?: number;
+  clear?: boolean;
+  setPolicy?: DialogPolicy;
+  promptText?: string;
+  includeResources?: boolean;
+}
 
 export interface TabInfo {
   tabId: TabId;
@@ -125,6 +171,8 @@ export interface SnapshotNode {
   value?: string;
   disabled?: boolean;
   checked?: boolean;
+  /** A password field: present so it can be targeted, `value` deliberately absent. */
+  secret?: boolean;
 }
 
 export interface SnapshotResult {
@@ -214,19 +262,19 @@ export interface Executor {
   // --- interaction (Target = {selector} XOR {ref}) ---
   click(
     t: Target,
-    opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean },
+    opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean } & FrameOpts,
   ): Promise<ActionOk>;
   type(
     t: Target,
     text: string,
-    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean },
+    opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean } & FrameOpts,
   ): Promise<ActionOk>;
   /** Choose option(s) of a <select> by value or visible label. */
-  selectOption(t: Target, values: string[], opts?: { tabId?: TabId }): Promise<ActionOk>;
+  selectOption(t: Target, values: string[], opts?: { tabId?: TabId } & FrameOpts): Promise<ActionOk>;
   /** Value-set + input/change events (used by fill_form). */
-  fill(t: Target, value: string, opts?: { tabId?: TabId }): Promise<ActionOk>;
+  fill(t: Target, value: string, opts?: { tabId?: TabId } & FrameOpts): Promise<ActionOk>;
   press(key: string, opts?: { tabId?: TabId; modifiers?: KeyModifier[] }): Promise<ActionOk>;
-  hover(t: Target, opts?: { tabId?: TabId }): Promise<ActionOk>;
+  hover(t: Target, opts?: { tabId?: TabId } & FrameOpts): Promise<ActionOk>;
   scroll(opts: {
     tabId?: TabId;
     x?: number;
@@ -234,26 +282,47 @@ export interface Executor {
     deltaX?: number;
     deltaY?: number;
     target?: Target;
-  }): Promise<ActionOk>;
+  } & FrameOpts): Promise<ActionOk>;
 
   // --- read (policy-gated by current tab URL) ---
-  getText(t?: Target, opts?: { tabId?: TabId }): Promise<{ text: string; ref?: string }>;
-  getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean }): Promise<{ html: string }>;
+  getText(t?: Target, opts?: { tabId?: TabId } & FrameOpts): Promise<{ text: string; ref?: string }>;
+  getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean } & FrameOpts): Promise<{ html: string }>;
   /** Accessibility snapshot: interactive/landmark elements with stable refs the model can target. */
-  snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult>;
+  snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number } & FrameOpts): Promise<SnapshotResult>;
   /** Read cookies visible to the active tab's URL (or a given url). */
   getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }>;
   /** localStorage/sessionStorage get/set/remove/clear for the active tab. */
   storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult>;
-  screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult>;
-  eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean }): Promise<EvalResult>;
+  screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & FrameOpts): Promise<ScreenshotResult>;
+  eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean } & FrameOpts): Promise<EvalResult>;
   waitFor(opts: {
     tabId?: TabId;
     selector?: string;
     textContains?: string;
     gone?: boolean;
     timeoutMs?: number;
-  }): Promise<WaitResult>;
+  } & FrameOpts): Promise<WaitResult>;
+
+  // --- optional capabilities -------------------------------------------
+  // Declared optional, like `cachedActiveUrl`, because a backend that cannot
+  // provide them should omit them rather than throw from a stub. The tool layer
+  // reports a clear "this backend cannot do that" instead of a mystery failure.
+
+  /** Every frame of a tab that the extension can inject into, with its URL. */
+  framesList?(opts?: { tabId?: TabId }): Promise<FrameInfo[]>;
+  /** Read (and configure) the in-page console / network / dialog observers. */
+  observers?(args: ObserverArgs): Promise<ObserverReadResult>;
+  /** Render the page to PDF (Chrome's own print pipeline). */
+  printPdf?(opts?: {
+    tabId?: TabId;
+    landscape?: boolean;
+    printBackground?: boolean;
+    scale?: number;
+    paperWidth?: number;
+    paperHeight?: number;
+    pageRanges?: string;
+    preferCSSPageSize?: boolean;
+  }): Promise<PdfResult>;
 
   // --- privileged, executor-owned (NOT composable) ---
   download(args: {
@@ -297,6 +366,9 @@ export type ExecutorErrorCodeLocal =
   | 'DEVTOOLS_OPEN'
   | 'DOWNLOAD_FAILED'
   | 'UPLOAD_FAILED'
+  | 'FRAME_NOT_FOUND'
+  | 'OBSERVERS_DISABLED'
+  | 'UNSUPPORTED'
   | 'BACKPRESSURE';
 
 export class ExecutorError extends Error {

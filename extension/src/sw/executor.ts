@@ -12,9 +12,12 @@
  * service-worker session is rejected (STALE/TARGET_GONE) rather than mis-routed.
  */
 
-import { type CommandFrame, type ExecutorErrorCode, type WireMethod } from '../../../shared/protocol';
+import { type CommandFrame, type ExecutorErrorCode, type WireMethod, type WirePolicy } from '../../../shared/protocol';
+import { evaluatePolicy } from '../../../shared/policy';
 import { sanitizeDownloadName } from '../../../shared/download';
 import { collectSnapshot } from '../../../shared/snapshot';
+import { pageOp, type PageOpArgs } from '../../../shared/page-fns';
+import { OBSERVER_GLOBAL, readObservers } from '../../../shared/observers';
 import { planScreenshot, type ElementRect, type PageDims } from '../../../shared/screenshot';
 import { KeyedMutex } from '../../../shared/mutex';
 
@@ -137,19 +140,69 @@ export async function observedTabUrl(cmd: CommandFrame): Promise<string> {
   }
 }
 
+/**
+ * Which frames an injection targets. `undefined` = the top frame only, which is
+ * the default and the historical behaviour. A list restricts to exactly those
+ * frame ids; every id in it has already been policy-checked against that
+ * frame's own URL by `ChromeExecutor.frames()`.
+ */
+type FrameIds = number[] | undefined;
+
+function scriptTarget(tabId: number, frameIds: FrameIds): chrome.scripting.InjectionTarget {
+  return frameIds && frameIds.length > 0 ? { tabId, frameIds } : { tabId };
+}
+
 async function execInTab<T>(
   tabId: number,
   func: (...args: unknown[]) => T,
   args: unknown[] = [],
   world?: 'MAIN' | 'ISOLATED',
+  frameIds?: FrameIds,
 ): Promise<T> {
   const [res] = await chrome.scripting.executeScript({
-    target: { tabId },
+    target: scriptTarget(tabId, frameIds),
     func: func as (...a: unknown[]) => unknown,
     args,
     world,
   });
   return res?.result as T;
+}
+
+/** What one frame returned from a `pageOp` injection. */
+interface OpOutcome {
+  found: boolean;
+  frameId: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Run one `pageOp` in the target frame(s) and pick the frame that actually has
+ * the element.
+ *
+ * With several frames in play "did it work" is per-frame, so the winner is the
+ * first frame reporting `found` — an element lives in exactly one of them, and
+ * scanning is the whole point of `allFrames`. When nothing matches anywhere we
+ * still return a frame's outcome (so the caller reports SELECTOR_NOT_FOUND, not
+ * an empty-result crash).
+ */
+async function execOp(
+  tabId: number,
+  args: PageOpArgs,
+  frameIds?: FrameIds,
+  world?: 'MAIN' | 'ISOLATED',
+): Promise<OpOutcome> {
+  const results = await chrome.scripting.executeScript({
+    target: scriptTarget(tabId, frameIds),
+    func: pageOp as unknown as (...a: unknown[]) => unknown,
+    args: [args as unknown as Record<string, unknown>],
+    world,
+  });
+  const outcomes: OpOutcome[] = results.map((r) => ({
+    ...((r.result as Record<string, unknown> | undefined) ?? { found: false }),
+    frameId: r.frameId ?? 0,
+  })) as OpOutcome[];
+  if (outcomes.length === 0) throw new CmdError('TARGET_GONE', 'the page returned no result for this command');
+  return outcomes.find((o) => o.found === true) ?? outcomes[0];
 }
 
 async function waitComplete(tabId: number, timeoutMs = 30_000): Promise<void> {
@@ -178,22 +231,9 @@ function selectorOf(cmd: CommandFrame): string | undefined {
 /** Poll the page for a selector so click/type/hover don't fail on not-yet-rendered
  *  elements. The poll runs INSIDE the page (one executeScript that resolves when the
  *  element appears or the deadline passes) instead of one round-trip per tick. */
-async function waitForSelector(tabId: number, selector: string, timeoutMs = 5_000): Promise<boolean> {
-  const found = await execInTab(
-    tabId,
-    ((s: string, timeout: number, interval: number) =>
-      new Promise<boolean>((resolve) => {
-        const deadline = Date.now() + timeout;
-        const tick = (): void => {
-          if (document.querySelector(s)) return resolve(true);
-          if (Date.now() > deadline) return resolve(false);
-          setTimeout(tick, interval);
-        };
-        tick();
-      })) as unknown as (...a: unknown[]) => boolean,
-    [selector, timeoutMs, 120],
-  );
-  return found === true;
+async function waitForSelector(tabId: number, selector: string, frameIds: FrameIds, timeoutMs = 5_000): Promise<boolean> {
+  const out = await execOp(tabId, { op: 'waitSelector', selector, timeoutMs, interval: 120 }, frameIds);
+  return out.found === true;
 }
 
 /** Attach the debugger for one op, always detaching (clears the banner).
@@ -213,47 +253,28 @@ async function withDebugger<T>(tabId: number, fn: (target: chrome.debugger.Debug
 }
 
 /** Real keystrokes via CDP Input.insertText — works on React/Vue controlled inputs. */
-async function trustedType(tabId: number, selector: string, text: string, clear: boolean): Promise<boolean> {
-  const focused = await execInTab(
-    tabId,
-    (s, doClear) => {
-      const el = document.querySelector(s as string) as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!el) return false;
-      el.focus();
-      if (doClear) {
-        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
-        setter ? setter.call(el, '') : (el.value = '');
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      return true;
-    },
-    [selector, clear],
-  );
-  if (!focused) return false;
+async function trustedType(tabId: number, selector: string, text: string, clear: boolean, frameIds: FrameIds): Promise<boolean> {
+  const focused = await execOp(tabId, { op: 'focus', selector, clear }, frameIds);
+  if (!focused.found) return false;
   await withDebugger(tabId, (t) => chrome.debugger.sendCommand(t, 'Input.insertText', { text }));
   return true;
 }
 
 /** A real mouse click via CDP Input.dispatchMouseEvent at the element's center. */
-async function trustedClick(tabId: number, selector: string): Promise<boolean> {
-  const pt = await execInTab(
-    tabId,
-    (s) => {
-      const el = document.querySelector(s as string) as HTMLElement | null;
-      if (!el) return null;
-      el.scrollIntoView({ block: 'center', inline: 'center' });
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    },
-    [selector],
-  );
-  if (!pt) return false;
+async function trustedClick(tabId: number, selector: string, frameIds: FrameIds): Promise<'ok' | 'missing' | 'inexact'> {
+  const pt = await execOp(tabId, { op: 'point', selector }, frameIds);
+  if (!pt.found) return 'missing';
+  // A CDP mouse event is dispatched in TOP-viewport coordinates. An element in a
+  // cross-origin iframe cannot report where that frame sits, so clicking the
+  // coordinates we have would land somewhere else on the page entirely — worse
+  // than not using trusted input. Say so and let the caller fall back.
+  if (pt.exact === false) return 'inexact';
   await withDebugger(tabId, async (t) => {
-    const base = { x: (pt as { x: number }).x, y: (pt as { y: number }).y, button: 'left' as const, clickCount: 1 };
+    const base = { x: pt.x as number, y: pt.y as number, button: 'left' as const, clickCount: 1 };
     await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mousePressed', buttons: 1, ...base });
     await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', { type: 'mouseReleased', buttons: 0, ...base });
   });
-  return true;
+  return 'ok';
 }
 
 /** Measure viewport + content dims, and (if a selector is given) the element's
@@ -262,27 +283,21 @@ async function trustedClick(tabId: number, selector: string): Promise<boolean> {
 async function measurePage(
   tabId: number,
   selector?: string,
+  frameIds?: FrameIds,
 ): Promise<{ dims: PageDims; element: ElementRect | null; missing: boolean } | undefined> {
-  return execInTab(
-    tabId,
-    (sel) => {
-      const d = document.documentElement;
-      const dims = {
-        w: window.innerWidth,
-        h: window.innerHeight,
-        fullW: Math.max(d.scrollWidth, d.clientWidth),
-        fullH: Math.max(d.scrollHeight, d.clientHeight),
-      };
-      if (!sel) return { dims, element: null, missing: false };
-      const el = document.querySelector(sel as string) as HTMLElement | null;
-      if (!el) return { dims, element: null, missing: true };
-      el.scrollIntoView({ block: 'center', inline: 'center' });
-      const r = el.getBoundingClientRect();
-      // viewport rect + scroll offset → document coordinates.
-      return { dims, element: { x: r.left + window.scrollX, y: r.top + window.scrollY, w: r.width, h: r.height }, missing: false };
-    },
-    [selector ?? null],
-  ) as Promise<{ dims: PageDims; element: ElementRect | null; missing: boolean } | undefined>;
+  // With a selector we want the frame that HAS the element; the page dimensions
+  // for the clip must still come from the top frame, which is what the
+  // screenshot actually captures.
+  const found = await execOp(tabId, { op: 'measure', selector: selector ?? null }, frameIds);
+  const top =
+    selector && frameIds && frameIds.length > 0
+      ? await execOp(tabId, { op: 'measure', selector: null })
+      : found;
+  return {
+    dims: top.dims as PageDims,
+    element: (found.element ?? null) as ElementRect | null,
+    missing: found.missing === true,
+  };
 }
 
 /** Capture via CDP (no tab activation). Reports CSS-px logical dimensions. */
@@ -290,8 +305,9 @@ async function screenshotViaDebugger(
   tabId: number,
   fullPage: boolean,
   selector?: string,
+  frameIds?: FrameIds,
 ): Promise<Record<string, unknown>> {
-  const measured = await measurePage(tabId, selector);
+  const measured = await measurePage(tabId, selector, frameIds);
   if (!measured) throw new CmdError('CDP_ERROR', 'could not read page dimensions');
   if (selector && measured.missing) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selector}`);
 
@@ -360,9 +376,73 @@ export const HANDLED: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'screenshot', 'get_text', 'get_html', 'snapshot',
   'select_option', 'get_cookies', 'storage', 'eval', 'wait_for',
   'download_file', 'upload_file', 'ping_probe',
+  'frames_list', 'observers', 'print_pdf',
 ]);
 
 export class ChromeExecutor {
+  /**
+   * The live wire policy, so frame-scoped commands can be gated against the
+   * FRAME's origin rather than the tab's. The router gates the tab; only this
+   * side knows which frames an injection would actually reach, and an
+   * allowlisted page embedding a third-party iframe is the ordinary case, not an
+   * exotic one.
+   */
+  constructor(private readonly getPolicy: () => WirePolicy | null = () => null) {}
+
+  /**
+   * Resolve `frameId` / `allFrames` params into the frame ids an injection may
+   * touch, dropping any whose own URL the policy does not allow for this method.
+   * `undefined` means the top frame only (the default, and every call that
+   * predates frame support).
+   *
+   * The URL probe is a separate round-trip on purpose: filtering AFTER running
+   * the command would mean a mutation had already fired inside a frame nobody
+   * authorized.
+   */
+  private async frames(cmd: CommandFrame, tabId: number): Promise<FrameIds> {
+    const explicit = typeof cmd.params.frameId === 'number' ? (cmd.params.frameId as number) : undefined;
+    const all = cmd.params.allFrames === true;
+    if (explicit === undefined && !all) return undefined;
+
+    const probes = await chrome.scripting
+      .executeScript({
+        target: explicit !== undefined ? { tabId, frameIds: [explicit] } : { tabId, allFrames: true },
+        func: pageOp as unknown as (...a: unknown[]) => unknown,
+        args: [{ op: 'probe' } as unknown as Record<string, unknown>],
+      })
+      .catch(() => []);
+
+    const seen = probes.map((r) => ({
+      frameId: r.frameId ?? 0,
+      url: String((r.result as { url?: string } | undefined)?.url ?? ''),
+    }));
+    if (seen.length === 0) {
+      throw new CmdError(
+        'FRAME_NOT_FOUND',
+        explicit !== undefined
+          ? `frame ${explicit} is not in this tab (or the extension cannot inject into it) — call frames_list`
+          : 'no injectable frames in this tab',
+      );
+    }
+
+    const policy = this.getPolicy();
+    if (!policy) throw new CmdError('POLICY_DENIED', 'no policy has arrived yet, so no frame is authorized');
+
+    const allowed: number[] = [];
+    const denied: string[] = [];
+    for (const f of seen) {
+      if (evaluatePolicy(f.url, cmd.method, policy).ok) allowed.push(f.frameId);
+      else denied.push(f.url || `frame ${f.frameId}`);
+    }
+    if (allowed.length === 0) {
+      throw new CmdError(
+        'POLICY_DENIED',
+        `no targeted frame is on the allowed-sites list (skipped: ${denied.slice(0, 5).join(', ')})`,
+      );
+    }
+    return allowed;
+  }
+
   async run(cmd: CommandFrame): Promise<unknown> {
     switch (cmd.method) {
       case 'ping_probe':
@@ -463,29 +543,21 @@ export class ChromeExecutor {
       // -- reads (isolated world; CSP-safe) --
       case 'get_text': {
         const id = await targetTab(cmd);
-        const text = await execInTab(
-          id,
-          (sel) => {
-            const el = sel ? document.querySelector(sel as string) : document.body;
-            return el ? (el as HTMLElement).innerText : '';
-          },
-          [selectorOf(cmd) ?? null],
-        );
-        return { text: text ?? '' };
+        const frameIds = await this.frames(cmd, id);
+        const out = await execOp(id, { op: 'text', selector: selectorOf(cmd) ?? null }, frameIds);
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selectorOf(cmd)}`);
+        return { text: String(out.text ?? ''), frameId: out.frameId };
       }
       case 'get_html': {
         const id = await targetTab(cmd);
-        const outer = cmd.params.outer === true;
-        const html = await execInTab(
+        const frameIds = await this.frames(cmd, id);
+        const out = await execOp(
           id,
-          (sel, isOuter) => {
-            const el = sel ? document.querySelector(sel as string) : document.documentElement;
-            if (!el) return '';
-            return isOuter || !sel ? (el as Element).outerHTML : (el as HTMLElement).innerHTML;
-          },
-          [selectorOf(cmd) ?? null, outer],
+          { op: 'html', selector: selectorOf(cmd) ?? null, outer: cmd.params.outer === true },
+          frameIds,
         );
-        return { html: html ?? '' };
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selectorOf(cmd)}`);
+        return { html: String(out.html ?? ''), frameId: out.frameId };
       }
 
       // -- accessibility snapshot (tags elements with data-mcp-ref so refs work) --
@@ -493,10 +565,13 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const interactiveOnly = cmd.params.interactiveOnly !== false;
         const max = typeof cmd.params.max === 'number' ? cmd.params.max : 200;
+        const frameIds = await this.frames(cmd, id);
         const raw = await execInTab(
           id,
           collectSnapshot as unknown as (...a: unknown[]) => unknown,
           [interactiveOnly, max],
+          undefined,
+          frameIds,
         );
         return raw ?? { url: '', title: '', nodes: [], truncated: false };
       }
@@ -505,28 +580,13 @@ export class ChromeExecutor {
       case 'select_option': {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
+        const frameIds = await this.frames(cmd, id);
         const values = Array.isArray(cmd.params.values) ? cmd.params.values.map(String) : [];
-        await waitForSelector(id, sel);
-        const matched = await execInTab(
-          id,
-          (s, vals) => {
-            const el = document.querySelector(s as string) as HTMLSelectElement | null;
-            if (!el || !el.options) return false;
-            const set = new Set(vals as string[]);
-            let hit = false;
-            for (const opt of Array.from(el.options)) {
-              const on = set.has(opt.value) || set.has(opt.label) || set.has(opt.text);
-              opt.selected = on;
-              if (on) hit = true;
-            }
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return hit;
-          },
-          [sel, values],
-        );
-        if (!matched) throw new CmdError('SELECTOR_NOT_FOUND', `no <select> option matched for ${sel}`);
-        return { ok: true };
+        await waitForSelector(id, sel, frameIds);
+        const out = await execOp(id, { op: 'select', selector: sel, values }, frameIds);
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (out.matched !== true) throw new CmdError('SELECTOR_NOT_FOUND', `no <select> option matched for ${sel}`);
+        return { ok: true, frameId: out.frameId };
       }
 
       // -- cookies for the tab's URL (chrome.cookies; needs "cookies" permission) --
@@ -551,58 +611,46 @@ export class ChromeExecutor {
         const key = typeof cmd.params.key === 'string' ? cmd.params.key : null;
         const value = typeof cmd.params.value === 'string' ? cmd.params.value : null;
         const session = cmd.params.session === true;
-        const res = await execInTab(
-          id,
-          (o, k, v, s) => {
-            const store = s ? window.sessionStorage : window.localStorage;
-            if (o === 'set') { store.setItem(String(k), String(v ?? '')); return { ok: true }; }
-            if (o === 'remove') { store.removeItem(String(k)); return { ok: true }; }
-            if (o === 'clear') { store.clear(); return { ok: true }; }
-            if (k) return { ok: true, value: store.getItem(k as string) };
-            const entries: Record<string, string> = {};
-            for (let i = 0; i < store.length; i++) {
-              const kk = store.key(i);
-              if (kk) entries[kk] = store.getItem(kk) ?? '';
-            }
-            return { ok: true, entries };
-          },
-          [op, key, value, session],
-        );
-        return res ?? { ok: false };
+        const frameIds = await this.frames(cmd, id);
+        const out = await execOp(id, { op: 'storage', storageOp: op, key, value, session }, frameIds);
+        const { found: _found, frameId: _frameId, ...rest } = out;
+        return Object.keys(rest).length > 0 ? rest : { ok: false };
       }
 
       // -- interaction (synthetic events in the isolated world) --
       case 'click': {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
-        if (!(await waitForSelector(id, sel))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-        if (cmd.params.trusted === true) {
-          if (!(await trustedClick(id, sel))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-          return { ok: true };
+        const frameIds = await this.frames(cmd, id);
+        if (!(await waitForSelector(id, sel, frameIds))) {
+          throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         }
-        const found = await execInTab(
-          id,
-          (s) => {
-            const el = document.querySelector(s as string) as HTMLElement | null;
-            if (!el) return false;
-            el.scrollIntoView({ block: 'center' });
-            el.click();
-            return true;
-          },
-          [sel],
-        );
-        if (!found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-        return { ok: true };
+        if (cmd.params.trusted === true) {
+          const verdict = await trustedClick(id, sel, frameIds);
+          if (verdict === 'missing') throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+          // 'inexact': the element is in a cross-origin frame whose position we
+          // cannot map. Fall through to the synthetic click rather than
+          // dispatching a real mouse event at the wrong pixel.
+          if (verdict === 'ok') return { ok: true };
+        }
+        const out = await execOp(id, { op: 'click', selector: sel }, frameIds);
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        return { ok: true, frameId: out.frameId, ...(cmd.params.trusted === true ? { trusted: false } : {}) };
       }
       case 'type': {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
+        const frameIds = await this.frames(cmd, id);
         const text = String(cmd.params.text ?? '');
         const clear = cmd.params.clear === true;
-        if (!(await waitForSelector(id, sel))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!(await waitForSelector(id, sel, frameIds))) {
+          throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        }
         if (cmd.params.trusted === true) {
           // Trusted keystrokes: works on React/Vue controlled inputs that ignore direct value-sets.
-          if (!(await trustedType(id, sel, text, clear))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+          if (!(await trustedType(id, sel, text, clear, frameIds))) {
+            throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+          }
           if (cmd.params.pressEnter === true) {
             await withDebugger(id, async (t) => {
               for (const type of ['keyDown', 'keyUp'] as const) {
@@ -612,24 +660,9 @@ export class ChromeExecutor {
           }
           return { ok: true };
         }
-        const found = await execInTab(
-          id,
-          (s, value, doClear) => {
-            const el = document.querySelector(s as string) as HTMLInputElement | HTMLTextAreaElement | null;
-            if (!el) return false;
-            el.focus();
-            // Use the native value setter so React/Vue see the change (they patch the instance setter).
-            const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
-            const next = (doClear ? '' : (el.value ?? '')) + value;
-            setter ? setter.call(el, next) : (el.value = next);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-          },
-          [sel, text, clear],
-        );
-        if (!found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-        return { ok: true };
+        const out = await execOp(id, { op: 'type', selector: sel, text, clear }, frameIds);
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        return { ok: true, frameId: out.frameId };
       }
       case 'press': {
         const id = await targetTab(cmd);
@@ -649,27 +682,26 @@ export class ChromeExecutor {
       case 'hover': {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
-        await waitForSelector(id, sel);
-        await execInTab(
-          id,
-          (s) => {
-            const el = document.querySelector(s as string);
-            el?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-            el?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-          },
-          [sel],
-        );
-        return { ok: true };
+        const frameIds = await this.frames(cmd, id);
+        await waitForSelector(id, sel, frameIds);
+        const out = await execOp(id, { op: 'hover', selector: sel }, frameIds);
+        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        return { ok: true, frameId: out.frameId };
       }
       case 'scroll': {
         const id = await targetTab(cmd);
-        await execInTab(
+        const frameIds = await this.frames(cmd, id);
+        await execOp(
           id,
-          (x, y, dx, dy) => {
-            if (x != null || y != null) window.scrollTo((x as number) ?? 0, (y as number) ?? 0);
-            else window.scrollBy((dx as number) ?? 0, (dy as number) ?? 0);
+          {
+            op: 'scroll',
+            selector: selectorOf(cmd) ?? null,
+            x: (cmd.params.x as number | null) ?? null,
+            y: (cmd.params.y as number | null) ?? null,
+            deltaX: (cmd.params.deltaX as number | null) ?? null,
+            deltaY: (cmd.params.deltaY as number | null) ?? null,
           },
-          [cmd.params.x ?? null, cmd.params.y ?? null, cmd.params.deltaX ?? null, cmd.params.deltaY ?? null],
+          frameIds,
         );
         return { ok: true };
       }
@@ -683,8 +715,9 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const fullPage = cmd.params.fullPage === true;
         const selector = selectorOf(cmd);
+        const frameIds = await this.frames(cmd, id);
         try {
-          return await screenshotViaDebugger(id, fullPage, selector);
+          return await screenshotViaDebugger(id, fullPage, selector, frameIds);
         } catch (err) {
           // A genuinely missing element is a real failure — don't mask it with a fallback.
           if (err instanceof CmdError && err.code === 'SELECTOR_NOT_FOUND') throw err;
@@ -709,6 +742,7 @@ export class ChromeExecutor {
           },
           [expr],
           'MAIN',
+          await this.frames(cmd, id),
         );
         return result ?? { ok: false, error: 'no result' };
       }
@@ -718,30 +752,22 @@ export class ChromeExecutor {
       // passes, rather than one executeScript round-trip per tick.
       case 'wait_for': {
         const id = await targetTab(cmd);
+        const frameIds = await this.frames(cmd, id);
         const timeout = typeof cmd.params.timeoutMs === 'number' ? cmd.params.timeoutMs : 30_000;
         const start = Date.now();
-        const matched = await execInTab(
+        const out = await execOp(
           id,
-          ((sel: string | null, text: string | null, gone: boolean, timeoutMs: number, interval: number) =>
-            new Promise<boolean>((resolve) => {
-              const deadline = Date.now() + timeoutMs;
-              const hit = (): boolean => {
-                let present: boolean;
-                if (sel) present = !!document.querySelector(sel);
-                else if (text) present = (document.body?.innerText ?? '').includes(text);
-                else present = true;
-                return gone ? !present : present;
-              };
-              const tick = (): void => {
-                if (hit()) return resolve(true);
-                if (Date.now() > deadline) return resolve(false);
-                setTimeout(tick, interval);
-              };
-              tick();
-            })) as unknown as (...a: unknown[]) => boolean,
-          [cmd.params.selector ?? null, cmd.params.textContains ?? null, cmd.params.gone === true, timeout, 150],
+          {
+            op: 'waitFor',
+            selector: (cmd.params.selector as string | null) ?? null,
+            textContains: (cmd.params.textContains as string | null) ?? null,
+            gone: cmd.params.gone === true,
+            timeoutMs: timeout,
+            interval: 150,
+          },
+          frameIds,
         );
-        return { matched: matched === true, waitedMs: Date.now() - start };
+        return { matched: out.matched === true, waitedMs: Date.now() - start };
       }
 
       // -- download (saved to the user's Downloads dir; the server then moves it
@@ -772,7 +798,9 @@ export class ChromeExecutor {
         const sel = requireSelector(cmd);
         const files = Array.isArray(cmd.params.files) ? cmd.params.files.map(String) : [];
         if (files.length === 0) throw new CmdError('BAD_ARGS', 'upload_file requires a non-empty "files" array');
-        if (!(await waitForSelector(id, sel))) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!(await waitForSelector(id, sel, undefined))) {
+          throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        }
         await withDebugger(id, async (t) => {
           const doc = (await chrome.debugger.sendCommand(t, 'DOM.getDocument', { depth: 0 })) as { root?: { nodeId: number } };
           const rootId = doc.root?.nodeId;
@@ -782,6 +810,135 @@ export class ChromeExecutor {
           await chrome.debugger.sendCommand(t, 'DOM.setFileInputFiles', { files, nodeId: found.nodeId });
         });
         return { ok: true };
+      }
+
+      // -- frames: the ids an injection can target, plus each frame's URL.
+      //    Read via a probe injection rather than chrome.webNavigation so no
+      //    extra host-level permission is needed to see them. --
+      case 'frames_list': {
+        const id = await targetTab(cmd);
+        const probes = await chrome.scripting
+          .executeScript({
+            target: { tabId: id, allFrames: true },
+            func: pageOp as unknown as (...a: unknown[]) => unknown,
+            args: [{ op: 'probe' } as unknown as Record<string, unknown>],
+          })
+          .catch(() => []);
+        const frames = probes.map((r) => {
+          const res = (r.result ?? {}) as { url?: string; title?: string };
+          return {
+            frameId: r.frameId ?? 0,
+            top: (r.frameId ?? 0) === 0,
+            url: res.url ?? '',
+            title: res.title ?? '',
+          };
+        });
+        return { frames, count: frames.length };
+      }
+
+      // -- observers: read (and configure) the in-page console/network/dialog
+      //    buffers. The hook is normally registered at document_start; a page
+      //    that loaded before registration gets it injected here, and the caller
+      //    is told capture only starts from that moment. --
+      case 'observers': {
+        const id = await targetTab(cmd);
+        const frameIds = await this.frames(cmd, id);
+        const opts = {
+          console: cmd.params.console === true,
+          network: cmd.params.network === true,
+          dialogs: cmd.params.dialogs === true,
+          sinceSeq: typeof cmd.params.sinceSeq === 'number' ? (cmd.params.sinceSeq as number) : 0,
+          limit: typeof cmd.params.limit === 'number' ? (cmd.params.limit as number) : 200,
+          clear: cmd.params.clear === true,
+          setPolicy: typeof cmd.params.setPolicy === 'string' ? (cmd.params.setPolicy as string) : null,
+          promptText: typeof cmd.params.promptText === 'string' ? (cmd.params.promptText as string) : null,
+          includeResources: cmd.params.includeResources === true,
+        };
+
+        // The hook records per FRAME (it is registered in all of them), so a
+        // read spans exactly the frames this command is authorized for — the
+        // top one by default, like every other tool.
+        const read = async (): Promise<Array<{ frameId: number; out: Record<string, unknown> }>> => {
+          const results = await chrome.scripting.executeScript({
+            target: scriptTarget(id, frameIds),
+            func: readObservers as unknown as (...a: unknown[]) => unknown,
+            args: [OBSERVER_GLOBAL, opts],
+            world: 'MAIN',
+          });
+          return results.map((r) => ({
+            frameId: r.frameId ?? 0,
+            out: ((r.result as Record<string, unknown> | undefined) ?? { installed: false }),
+          }));
+        };
+
+        let frames = await read();
+        let justInstalled = false;
+        if (!frames.some((f) => f.out.installed === true)) {
+          // Late install: everything from here on is captured, nothing before it.
+          await chrome.scripting
+            .executeScript({ target: scriptTarget(id, frameIds), files: ['page-hook.js'], world: 'MAIN' })
+            .catch(() => undefined);
+          frames = await read();
+          justInstalled = frames.some((f) => f.out.installed === true);
+        }
+
+        const live = frames.filter((f) => f.out.installed === true);
+        if (live.length === 0) return { installed: false };
+
+        // Merge across frames, tagging each entry with the frame it came from and
+        // ordering by time so a cross-frame story reads in the order it happened.
+        const merge = (key: string): unknown[] => {
+          const all: Array<Record<string, unknown>> = [];
+          for (const f of live) {
+            for (const e of (f.out[key] as Array<Record<string, unknown>>) ?? []) {
+              all.push(f.frameId === 0 ? e : { ...e, frameId: f.frameId });
+            }
+          }
+          return all.sort((a, b) => Number(a.ts ?? 0) - Number(b.ts ?? 0));
+        };
+
+        const top = live.find((f) => f.frameId === 0) ?? live[0];
+        return {
+          installed: true,
+          hookVersion: top.out.hookVersion,
+          dialogPolicy: top.out.dialogPolicy,
+          dropped: live.some((f) => f.out.dropped === true),
+          ...(opts.console ? { console: merge('console') } : {}),
+          ...(opts.network ? { network: merge('network') } : {}),
+          ...(opts.dialogs ? { dialogs: merge('dialogs') } : {}),
+          ...(live.length > 1 ? { frames: live.length } : {}),
+          ...(justInstalled
+            ? {
+                justInstalled: true,
+                note:
+                  'the observer hook was installed just now, so these buffers start empty - ' +
+                  'reload the page to capture what happens during load',
+              }
+            : {}),
+        };
+      }
+
+      // -- print_pdf: Page.printToPDF over the same one-op debugger attach the
+      //    screenshot path uses. Returns base64; the server writes the file. --
+      case 'print_pdf': {
+        const id = await targetTab(cmd);
+        const params: Record<string, unknown> = {
+          printBackground: cmd.params.printBackground !== false,
+          landscape: cmd.params.landscape === true,
+          preferCSSPageSize: cmd.params.preferCSSPageSize === true,
+        };
+        if (typeof cmd.params.scale === 'number') params.scale = cmd.params.scale;
+        if (typeof cmd.params.paperWidth === 'number') params.paperWidth = cmd.params.paperWidth;
+        if (typeof cmd.params.paperHeight === 'number') params.paperHeight = cmd.params.paperHeight;
+        if (typeof cmd.params.pageRanges === 'string') params.pageRanges = cmd.params.pageRanges;
+
+        const data = await withDebugger(id, async (t) => {
+          const res = (await chrome.debugger.sendCommand(t, 'Page.printToPDF', params)) as { data?: string };
+          return res.data ?? '';
+        });
+        if (!data) throw new CmdError('CDP_ERROR', 'Chrome returned an empty PDF');
+        const t = await chrome.tabs.get(id);
+        return { dataBase64: data, mimeType: 'application/pdf', url: t.url ?? '', title: t.title ?? '' };
       }
 
       default:

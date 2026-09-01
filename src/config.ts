@@ -168,6 +168,18 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--allow-all-tabs':
         policyFlags.allowAllTabs = true;
         break;
+      case '--enable-observers':
+        policyFlags.allowObservers = true;
+        break;
+      case '--redact':
+        policyFlags.redact = true;
+        break;
+      case '--redact-pattern':
+        // A custom pattern only means anything with redaction on, so asking for
+        // one turns it on rather than being silently ignored.
+        policyFlags.redact = true;
+        (policyFlags.redactPatterns ??= []).push(requireValue(argv[++i], '--redact-pattern'));
+        break;
       case '--cdp-fallback':
         cdpFallback = true;
         break;
@@ -213,6 +225,17 @@ export function parseArgs(argv: string[]): CliConfig {
   // but no dir, rather than silently allow unrestricted local-file access.
   if (policy.allowUploads && !policy.uploadsDir) {
     throw new Error('--enable-uploads requires --uploads-dir <path> (uploads must be confined to a directory)');
+  }
+
+  // Fail at startup, not on the first read, if a redaction pattern is malformed:
+  // a pattern the user believes is scrubbing secrets but that never compiled is
+  // the worst of both worlds.
+  for (const source of policy.redactPatterns ?? []) {
+    try {
+      new RegExp(source);
+    } catch (err) {
+      throw new Error(`--redact-pattern ${JSON.stringify(source)} is not a valid regular expression: ${String(err)}`);
+    }
   }
 
   return {
@@ -308,6 +331,14 @@ Security (default: deny-all safe mode):
   --enable-uploads       Enable upload_file — sends local files to a page (off by default)
   --uploads-dir <path>   Restrict upload_file to files inside <path> (recommended with --enable-uploads)
   --allow-all-tabs       Relax tab list/select to all tabs
+  --enable-observers     Enable console_logs / network_log / dialogs. Installs an
+                         in-page hook on allowlisted sites that records console
+                         output, fetch/XHR traffic, and intercepts alert/confirm/
+                         prompt (off by default: it patches page globals).
+  --redact               Scrub secret-shaped strings (JWTs, cloud keys, bearer
+                         tokens, private keys) out of page reads. Password field
+                         values are always suppressed, with or without this.
+  --redact-pattern <re>  Add a redaction regex (repeatable; implies --redact)
 
 Misc:
   --log-level <lvl>      silent | info | debug (default info)

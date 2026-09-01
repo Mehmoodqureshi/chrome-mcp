@@ -201,6 +201,99 @@ silently mis-routed. (`tab_new`, `tabs_list`, `chrome_status` are exempt.)
 > `navigate`, to open without losing the current tab). Pass `active: false` to
 > open in the background; parallel batches do this automatically.
 
+### Reaching into iframes and shadow roots
+
+A selector that "should" match but doesn't almost always means the element is
+somewhere your selector cannot reach: inside an `<iframe>` (checkout widgets,
+OAuth consent screens, embedded editors) or inside a web component's shadow root.
+
+Shadow roots are handled for you — every selector and every `ref` now resolves
+through open shadow roots, so anything `snapshot` shows you is something you can
+click. (It used to show you elements no click could reach: the snapshot walked
+shadow roots, the actions did not.)
+
+Frames are opt-in, because reaching into one is a decision:
+
+```jsonc
+frames_list {}                                  // what frames exist, and their URLs
+click { "selector": "#pay", "allFrames": true } // find it in whichever frame has it
+get_text { "frameId": 7 }                       // pin one frame
+```
+
+Every frame is authorized against **its own** URL before anything runs in it, so
+an allowlisted page embedding a third-party iframe does not become a way to read
+that third party. Frames whose origin isn't on your allowlist are skipped.
+
+### Seeing why a page broke — `console_logs`, `network_log`, `dialogs`
+
+Reading the DOM tells you what a page looks like after it failed, not why. With
+`--enable-observers`, an in-page hook records console output, uncaught errors,
+and `fetch`/`XMLHttpRequest` traffic, and intercepts native dialogs:
+
+```jsonc
+console_logs { "level": "error" }        // the exception the page swallowed
+network_log  { "failedOnly": true }      // the 500 behind the blank screen
+dialogs      { "policy": "accept" }      // answer confirm() with true from here on
+```
+
+It is **off by default and deliberately so**: the hook patches `console`,
+`fetch`, `XMLHttpRequest` and the dialog functions on every allowlisted page in
+your real browser. When it's on, it is registered only for the domains on your
+allowlist, at document_start (so it catches load-time failures), and nothing it
+records leaves the page until a tool call reads it — through the same gate as any
+other page read.
+
+Dialog interception is also a fix, not just an observation: `alert`/`confirm`/
+`beforeunload` block the renderer, so a click that opened one used to hang every
+injected script until the command timed out and reported `TIMEOUT` with nothing
+to point at. With observers on, the dialog is answered (`dismiss` by default:
+confirm → false, prompt → null) and recorded.
+
+> **What `network_log` sees:** the requests page code makes — `fetch` and
+> `XMLHttpRequest`, with method, URL, status and duration — plus Resource Timing
+> entries (scripts, images, styles) when you ask for them. Not the document
+> request, redirects, or headers. That is the cost of not holding a debugger
+> session open on your browser.
+
+### Only what changed — `snapshot { diff: true }`
+
+A snapshot is the most expensive read in the tool surface, and the loop that uses
+it most (snapshot → click → snapshot) re-sends a page that is mostly identical
+every time. Ask for the delta instead:
+
+```jsonc
+snapshot { "diff": true }                       // added / removed / changed only
+click { "selector": "#save", "snapshotAfter": true }   // what the click changed
+```
+
+Nodes are matched across snapshots by role + accessible name, not by `ref` —
+refs renumber in document order on every snapshot, so diffing on them would
+report an unchanged button as removed-and-re-added the moment anything above it
+appears.
+
+### Targeting by role and name
+
+Actions accept a locator instead of a CSS selector, so you don't need a snapshot
+first just to learn a ref:
+
+```jsonc
+click { "role": "button", "name": "Sign in" }
+type  { "role": "textbox", "name": "Email", "text": "a@b.com" }
+```
+
+Resolution is server-side and refuses to guess: an ambiguous locator fails with
+the candidates listed rather than acting on the first one (pass `nth` to pick).
+
+### Printing — `print_pdf`
+
+```jsonc
+print_pdf { "landscape": true }
+```
+
+Renders through Chrome's own print pipeline and saves to the task's `results/`
+dir, returning the path and size. The bytes themselves are never returned — a
+PDF is megabytes of base64 no model can read.
+
 ## Status
 
 v0.5.0 — **safe multi-tab concurrency.** Adds the `batch` fan-out tool, makes
@@ -261,7 +354,30 @@ status badge, and a stable pairing token (`--persist-token`).
 chrome-mcp --allow-domain example.com --enable-mutations
 chrome-mcp --policy ./policy.json          # see policy.example.json
 chrome-mcp --unsafe-all-domains            # loud footgun
+chrome-mcp --enable-observers              # console/network/dialog capture (patches page globals)
+chrome-mcp --redact                        # scrub secret-shaped strings out of page reads
 ```
+
+**What comes back is gated too.** The allowlist decides which pages may be read;
+it says nothing about what is on them. A logged-in page routinely renders a
+session token into a script tag or an API key onto a settings screen.
+
+- **Password field values are always suppressed** — in `get_html`, and in
+  `snapshot`, where the field still appears (so you can type into it) flagged
+  `secret: true` with no value. No flag, no opt-in: nobody wants those characters.
+- `--redact` additionally scrubs secret-shaped strings — JWTs, AWS/GitHub/Slack/
+  Google keys, `Bearer` headers, private-key blocks — out of `get_text`,
+  `get_html`, `read_as_markdown` and `eval`. It is opt-in because a pattern will
+  eventually fire on something you actually wanted. `--redact-pattern <regex>`
+  adds your own (and implies `--redact`); an invalid one fails at startup rather
+  than silently never matching.
+- Redaction runs **before** the output cap, so a truncated read cannot leak what
+  a full one would have hidden.
+
+Every call is recorded to the task's `history.jsonl` with the URL it touched, the
+policy verdict (`allowed`/`denied`), how long it took, how many bytes came back,
+and how many secrets were scrubbed — so "what did the agent do in my browser" has
+an answer after the fact.
 
 The per-boot 256-bit token in `~/.chrome-mcp/handshake.json` (mode 0600) is the
 only trust boundary; it is never written to stdout/stderr. On POSIX the mode is

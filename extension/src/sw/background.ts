@@ -14,6 +14,7 @@
 import { WsClient, type ConnState } from './ws-client';
 import { CommandRouter } from './router';
 import { ChromeExecutor } from './executor';
+import { syncObserverScript } from './observers';
 import type { WirePolicy } from '../../../shared/protocol';
 
 interface PairConfig {
@@ -29,12 +30,17 @@ const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
  *  against it. Null until a welcome arrives (commands only flow after welcome). */
 let currentPolicy: WirePolicy | null = null;
 
-const executor = new ChromeExecutor();
+// The executor reads the live policy so a frame-scoped command can be gated
+// against the FRAME's origin, not just the tab's.
+const executor = new ChromeExecutor(() => currentPolicy);
 const ws = new WsClient({
   onCommand: (cmd) => void router.dispatch(cmd),
   onState: (state) => void persistState(state),
   onPolicy: (policy) => {
     currentPolicy = policy;
+    // The observer hook is registered from the policy, so it covers exactly the
+    // allowlisted sites and only when the operator opted in.
+    void syncObserverScript(policy, (m) => console.debug('[chrome-mcp]', m));
   },
   log: (m) => console.debug('[chrome-mcp]', m),
 });

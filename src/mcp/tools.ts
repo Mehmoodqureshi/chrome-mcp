@@ -18,7 +18,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import type { WireMethod } from '../../shared/protocol';
-import type { Executor, TabInfo, Target, WaitUntil } from '../executor/types';
+import type { DialogPolicy, Executor, FrameOpts, TabInfo, Target, WaitUntil } from '../executor/types';
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
 import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
@@ -33,11 +33,17 @@ import {
 } from './limits';
 import { runBatch } from './batch';
 import { extractLinks, fillForm, readAsMarkdown } from './helpers';
+import { compileRedactionPattern, NO_REDACTION, redactHtml, redactText, type RedactionConfig } from './redact';
+import { resolveLocator, hasLocator, type Locator } from './locate';
+import { diffSnapshots, lastSnapshot, rememberSnapshot, resetSnapshots, scopeOf } from './snapdiff';
+import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
 import { logDebug } from './log';
 import { listTasks } from '../bridge/tasks';
 import {
   appendHistory,
   getActiveWorkspace,
+  peekActiveWorkspace,
+  saveBinary,
   saveResult,
   saveScreenshot,
   switchWorkspace,
@@ -74,6 +80,38 @@ const TARGET_PROPS = {
 } as const;
 
 const tabIdField = z.string().describe('Target tab id (defaults to the active tab)').optional();
+
+/**
+ * Frame targeting. Omitted = the top frame, which is what every call did before
+ * frames were addressable. `allFrames` is the one to reach for when a selector
+ * "should" match but does not: the element is almost always inside an iframe
+ * (checkout widgets, OAuth consent, embedded editors). Every frame is
+ * authorized against its own URL, so a scan never reaches a site the allowlist
+ * does not cover.
+ */
+const FRAME_PROPS = {
+  frameId: z.number().describe('Act inside this frame (ids come from frames_list)').optional(),
+  allFrames: z
+    .boolean()
+    .describe('Search every frame of the tab and act on the first that matches - use when a selector should match but does not (the element is in an iframe)')
+    .optional(),
+} as const;
+
+/**
+ * Target an element by role + accessible name instead of a CSS selector, so an
+ * action needs no snapshot first. Resolution is server-side and fails loudly on
+ * ambiguity rather than acting on the wrong element.
+ */
+const LOCATOR_PROPS = {
+  role: z.string().describe('Target by ARIA role (e.g. button, link, textbox) - alternative to selector/ref').optional(),
+  name: z.string().describe('Target by accessible name/visible label (pairs with role)').optional(),
+  nth: z.number().describe('Pick the nth (0-based) match when a role+name locator is legitimately ambiguous').optional(),
+} as const;
+
+const snapshotAfterField = z
+  .boolean()
+  .describe('Return what CHANGED on the page after this action (added/removed/changed elements vs the last snapshot) instead of making you re-read the page')
+  .optional();
 const maxBytesField = z
   .number()
   .describe(`Cap the returned content at this many UTF-8 bytes (default ${DEFAULT_MAX_OUTPUT_BYTES}). A truncated result reports truncated/totalBytes/returnedBytes. The full payload is still written to the task's results/ dir.`)
@@ -91,27 +129,91 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField } },
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField } },
 
-  { name: 'click', description: 'Click an element (target by selector or a snapshot ref). trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional() } },
-  { name: 'type', description: 'Type text into an element. trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional() } },
-  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, values: z.array(z.string()), tabId: tabIdField } },
+  { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField } },
+  { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField } },
+  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField } },
   { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField } },
-  { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField } },
-  { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
+  { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, snapshotAfter: snapshotAfterField } },
+  { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
-  { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
-  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
-  { name: 'get_html', description: 'Get HTML of the page or an element. Output is capped (see maxBytes) and cut at a tag boundary; narrow it with `selector` rather than raising the cap when you can.', inputSchema: { ...TARGET_PROPS, outer: z.boolean().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
-  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with stable refs to target by `ref` (more reliable than guessing CSS selectors).', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), tabId: tabIdField } },
+  { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
+  { name: 'get_html', description: 'Get HTML of the page or an element. Output is capped (see maxBytes) and cut at a tag boundary; narrow it with `selector` rather than raising the cap when you can. Password field values are always blanked.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, outer: z.boolean().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
+  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with refs to target by `ref` (more reliable than guessing CSS selectors). Pass diff:true to get only what changed since the last snapshot of this tab - far cheaper in a click/read loop. Password fields appear as secret:true with no value.', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), diff: z.boolean().describe('Return added/removed/changed elements since the previous snapshot of this tab instead of the whole tree').optional(), ...FRAME_PROPS, tabId: tabIdField } },
   { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: { url: z.string().optional(), tabId: tabIdField } },
   { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: { op: z.enum(['get', 'set', 'remove', 'clear']), key: z.string().optional(), value: z.string().optional(), session: z.boolean().optional(), tabId: tabIdField } },
-  { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: { expression: z.string(), awaitPromise: z.boolean().optional(), tabId: tabIdField } },
-  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), tabId: tabIdField } },
+  { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: { expression: z.string(), awaitPromise: z.boolean().optional(), ...FRAME_PROPS, tabId: tabIdField } },
+  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), ...FRAME_PROPS, tabId: tabIdField } },
 
-  { name: 'extract_links', description: 'Extract anchors from the page or a subtree. dedupe=true collapses links sharing an href (nav/footer noise); limit caps the count.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), dedupe: z.boolean().optional(), limit: z.number().optional(), tabId: tabIdField } },
-  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
-  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), tabId: tabIdField } },
+  { name: 'extract_links', description: 'Extract anchors from the page or a subtree. dedupe=true collapses links sharing an href (nav/footer noise); limit caps the count.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), dedupe: z.boolean().optional(), limit: z.number().optional(), ...FRAME_PROPS, tabId: tabIdField } },
+  { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), ...FRAME_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
+  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), ...FRAME_PROPS, tabId: tabIdField } },
   { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: { url: z.string().optional(), ...TARGET_PROPS, suggestedName: z.string().optional(), tabId: tabIdField } },
   { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: { ...TARGET_PROPS, files: z.array(z.string()), tabId: tabIdField } },
+
+  {
+    name: 'frames_list',
+    description:
+      "List the tab's frames (the top document plus every iframe the extension can reach), with each frame's id and URL. Use it when a selector that should match does not: the element is probably in one of these frames, and you can then pass frameId (or allFrames:true) to act inside it.",
+    inputSchema: { tabId: tabIdField },
+  },
+  {
+    name: 'console_logs',
+    description:
+      'Console output and uncaught errors recorded on the page (requires --enable-observers). This is how you find out WHY a page misbehaved rather than only what it looks like afterwards. Pass sinceSeq to poll for what is new, clear:true to drain.',
+    inputSchema: {
+      level: z.enum(['log', 'info', 'warn', 'error', 'debug', 'exception']).describe('Only entries at this level').optional(),
+      ...FRAME_PROPS,
+      sinceSeq: z.number().describe('Only entries newer than this seq (from a previous call)').optional(),
+      limit: z.number().describe('Max entries to return (default 200)').optional(),
+      clear: z.boolean().describe('Empty the buffer after reading').optional(),
+      tabId: tabIdField,
+    },
+  },
+  {
+    name: 'network_log',
+    description:
+      "Requests the page made - fetch and XMLHttpRequest with method, URL, status and duration (requires --enable-observers). Set includeResources:true to also list scripts/images/styles from Resource Timing (those carry timing and size but no status). Does not include the document request or headers.",
+    inputSchema: {
+      urlContains: z.string().describe('Only requests whose URL contains this substring').optional(),
+      ...FRAME_PROPS,
+      failedOnly: z.boolean().describe('Only requests that errored or returned status >= 400').optional(),
+      includeResources: z.boolean().describe('Also include Resource Timing entries (scripts, images, styles)').optional(),
+      sinceSeq: z.number().optional(),
+      limit: z.number().optional(),
+      clear: z.boolean().optional(),
+      tabId: tabIdField,
+    },
+  },
+  {
+    name: 'dialogs',
+    description:
+      "Native dialogs (alert/confirm/prompt/beforeunload) the page raised, and how they were answered (requires --enable-observers). With observers on, dialogs are intercepted rather than left to block the renderer - which is what otherwise turns a click that opens a confirm() into a mystery TIMEOUT. Set policy:'accept' to answer confirms with true.",
+    inputSchema: {
+      policy: z.enum(['dismiss', 'accept']).describe("How to answer future dialogs (default dismiss: confirm->false, prompt->null)").optional(),
+      ...FRAME_PROPS,
+      promptText: z.string().describe("Text to answer prompt() with when policy is 'accept'").optional(),
+      sinceSeq: z.number().optional(),
+      limit: z.number().optional(),
+      clear: z.boolean().optional(),
+      tabId: tabIdField,
+    },
+  },
+  {
+    name: 'print_pdf',
+    description:
+      "Render the page to PDF through Chrome's own print pipeline and save it to the task's results/ dir. Returns the path and size, not the bytes - a PDF is not something to spend context on.",
+    inputSchema: {
+      landscape: z.boolean().optional(),
+      printBackground: z.boolean().describe('Include background graphics (default true)').optional(),
+      scale: z.number().describe('0.1 - 2.0').optional(),
+      paperWidth: z.number().describe('Inches').optional(),
+      paperHeight: z.number().describe('Inches').optional(),
+      pageRanges: z.string().describe("e.g. '1-3, 5'").optional(),
+      preferCSSPageSize: z.boolean().optional(),
+      tabId: tabIdField,
+    },
+  },
 
   { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: {} },
 
@@ -227,10 +329,128 @@ async function gatedUrl(ex: Executor, tabId?: string): Promise<string> {
  */
 async function gate(ctx: ToolCtx, method: WireMethod, opts: { url?: string; tabId?: string } = {}): Promise<void> {
   const url = opts.url ?? (isUrlGated(method) ? await gatedUrl(ctx.ex, opts.tabId) : '');
-  assertUrlAllowed(url, method, ctx.policy);
+  try {
+    assertUrlAllowed(url, method, ctx.policy);
+  } catch (err) {
+    noteGate(url, false);
+    throw err;
+  }
+  noteGate(url, true);
 }
 
 const tabId = (args: Record<string, unknown>): string | undefined => optionalString(args, 'tabId');
+
+/** Frame targeting pulled off the raw args. */
+const frameOpts = (args: Record<string, unknown>): FrameOpts => ({
+  frameId: optionalNumber(args, 'frameId', { min: 0 }),
+  allFrames: optionalBoolean(args, 'allFrames'),
+});
+
+const locatorOf = (args: Record<string, unknown>): Locator => ({
+  role: optionalString(args, 'role'),
+  name: optionalString(args, 'name'),
+  nth: optionalNumber(args, 'nth', { min: 0, max: 999 }),
+});
+
+/**
+ * Resolve whatever the caller used to point at an element: a CSS selector, a
+ * snapshot ref, or a role+name locator. Exactly one of the three — mixing them
+ * is a mistake worth reporting rather than silently preferring one.
+ */
+async function resolveTargetArg(ctx: ToolCtx, a: Record<string, unknown>): Promise<Target> {
+  const direct = optionalString(a, 'selector') !== undefined || optionalString(a, 'ref') !== undefined;
+  const loc = locatorOf(a);
+  if (direct && hasLocator(loc)) {
+    throw new McpToolError('give exactly one of selector | ref | role+name — not several at once');
+  }
+  if (!direct && hasLocator(loc)) {
+    const found = await resolveLocator(ctx.ex, loc, { tabId: tabId(a), ...frameOpts(a) });
+    return found.target;
+  }
+  // No locator: keep the original exactly-one-of validation and its message.
+  return requireTarget(a);
+}
+
+/** Re-parse a redacted JSON string, falling back to the string when the
+ *  substitution broke its syntax (a marker inside a string literal never does,
+ *  but a caller is better served by the scrubbed text than by a throw). */
+function safeParse(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return json;
+  }
+}
+
+/** Compiled redaction config per policy object (compiling per call is waste). */
+const redactionCache = new WeakMap<Policy, RedactionConfig>();
+function redaction(policy: Policy): RedactionConfig {
+  if (!policy.redact) return NO_REDACTION;
+  const hit = redactionCache.get(policy);
+  if (hit) return hit;
+  const cfg: RedactionConfig = {
+    enabled: true,
+    extra: (policy.redactPatterns ?? []).map(compileRedactionPattern),
+  };
+  redactionCache.set(policy, cfg);
+  return cfg;
+}
+
+/** The scope a tab's remembered snapshot lives under. */
+const snapScope = (a: Record<string, unknown>): string =>
+  scopeOf(peekActiveWorkspace()?.profile ?? 'default', tabId(a));
+
+/**
+ * Render an action's result, optionally with what the action CHANGED on the
+ * page. One extra round-trip buys the caller the delta instead of a full
+ * re-read, which is the expensive half of every click-then-look loop.
+ */
+async function actionResult(
+  ctx: ToolCtx,
+  a: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): Promise<CallToolResult> {
+  if (optionalBoolean(a, 'snapshotAfter') !== true) return jsonResult(payload);
+  const scope = snapScope(a);
+  const previous = lastSnapshot(scope);
+  const snap = await ctx.ex.snapshot({ tabId: tabId(a), max: 200, ...frameOpts(a) });
+  const diff = diffSnapshots(previous, snap);
+  const stored = rememberSnapshot(scope, snap);
+  return jsonResult({ ...payload, changed: { ...diff, snapshotId: stored.id, url: snap.url } });
+}
+
+/**
+ * Shared body of console_logs / network_log / dialogs: one gate, one read, and
+ * a straight answer when the hook is not there rather than an empty list that
+ * reads like "nothing happened".
+ */
+async function readObservers(
+  ctx: ToolCtx,
+  a: Record<string, unknown>,
+  which: { console?: boolean; network?: boolean; dialogs?: boolean },
+  extra: { setPolicy?: DialogPolicy; promptText?: string; includeResources?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  await gate(ctx, 'observers', { tabId: tabId(a) });
+  if (!ctx.ex.observers) {
+    throw new ExecutorError('UNSUPPORTED', 'this backend cannot read in-page observers');
+  }
+  const res = await ctx.ex.observers({
+    tabId: tabId(a),
+    ...frameOpts(a),
+    ...which,
+    ...extra,
+    sinceSeq: optionalNumber(a, 'sinceSeq', { min: 0 }),
+    limit: optionalNumber(a, 'limit', { min: 1, max: 1000 }),
+    clear: optionalBoolean(a, 'clear'),
+  });
+  if (!res.installed) {
+    throw new McpToolError(
+      'the observer hook is not present on this page. It is registered for allowlisted sites when the ' +
+        'server runs with --enable-observers; if it is on, reload the page so the hook is installed at load.',
+    );
+  }
+  return res as unknown as Record<string, unknown>;
+}
 /** The caller's output cap for a content read, or the default. */
 const maxBytes = (args: Record<string, unknown>): number =>
   optionalNumber(args, 'maxBytes', { min: MIN_OUTPUT_BYTES, max: MAX_OUTPUT_BYTES }) ?? DEFAULT_MAX_OUTPUT_BYTES;
@@ -301,36 +521,37 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   click: async (a, ctx) => {
-    const t = requireTarget(a);
     await gate(ctx, 'click', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.click(t, {
-        tabId: tabId(a),
-        button: optionalString(a, 'button') as 'left' | 'right' | 'middle' | undefined,
-        clickCount: optionalNumber(a, 'clickCount', { min: 1, max: 3 }),
-        trusted: optionalBoolean(a, 'trusted'),
-      }),
-    );
+    const t = await resolveTargetArg(ctx, a);
+    const res = await ctx.ex.click(t, {
+      tabId: tabId(a),
+      ...frameOpts(a),
+      button: optionalString(a, 'button') as 'left' | 'right' | 'middle' | undefined,
+      clickCount: optionalNumber(a, 'clickCount', { min: 1, max: 3 }),
+      trusted: optionalBoolean(a, 'trusted'),
+    });
+    return actionResult(ctx, a, res as unknown as Record<string, unknown>);
   },
   type: async (a, ctx) => {
-    const t = requireTarget(a);
     await gate(ctx, 'type', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.type(t, requireWithinLength(requireString(a, 'text'), 'text', MAX_TEXT_LEN), {
-        tabId: tabId(a),
-        clear: optionalBoolean(a, 'clear'),
-        pressEnter: optionalBoolean(a, 'pressEnter'),
-        keyEvents: optionalBoolean(a, 'keyEvents'),
-        trusted: optionalBoolean(a, 'trusted'),
-      }),
-    );
+    const t = await resolveTargetArg(ctx, a);
+    const res = await ctx.ex.type(t, requireWithinLength(requireString(a, 'text'), 'text', MAX_TEXT_LEN), {
+      tabId: tabId(a),
+      ...frameOpts(a),
+      clear: optionalBoolean(a, 'clear'),
+      pressEnter: optionalBoolean(a, 'pressEnter'),
+      keyEvents: optionalBoolean(a, 'keyEvents'),
+      trusted: optionalBoolean(a, 'trusted'),
+    });
+    return actionResult(ctx, a, res as unknown as Record<string, unknown>);
   },
   select_option: async (a, ctx) => {
-    const t = requireTarget(a);
     await gate(ctx, 'type', { tabId: tabId(a) }); // mutating
+    const t = await resolveTargetArg(ctx, a);
     const values = optionalStringArray(a, 'values');
     if (!values || values.length === 0) throw new McpToolError('"values" must be a non-empty array of strings');
-    return jsonResult(await ctx.ex.selectOption(t, values, { tabId: tabId(a) }));
+    const res = await ctx.ex.selectOption(t, values, { tabId: tabId(a), ...frameOpts(a) });
+    return actionResult(ctx, a, res as unknown as Record<string, unknown>);
   },
   press: async (a, ctx) => {
     await gate(ctx, 'press', { tabId: tabId(a) });
@@ -342,15 +563,17 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     );
   },
   hover: async (a, ctx) => {
-    const t = requireTarget(a);
     await gate(ctx, 'hover', { tabId: tabId(a) });
-    return jsonResult(await ctx.ex.hover(t, { tabId: tabId(a) }));
+    const t = await resolveTargetArg(ctx, a);
+    const res = await ctx.ex.hover(t, { tabId: tabId(a), ...frameOpts(a) });
+    return actionResult(ctx, a, res as unknown as Record<string, unknown>);
   },
   scroll: async (a, ctx) => {
     await gate(ctx, 'scroll', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.scroll({
         tabId: tabId(a),
+        ...frameOpts(a),
         x: optionalNumber(a, 'x'),
         y: optionalNumber(a, 'y'),
         deltaX: optionalNumber(a, 'deltaX'),
@@ -364,6 +587,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     await gate(ctx, 'screenshot', { tabId: tabId(a) });
     const shot = await ctx.ex.screenshot({
       tabId: tabId(a),
+      ...frameOpts(a),
       fullPage: optionalBoolean(a, 'fullPage'),
       target: optionalTarget(a),
     });
@@ -373,28 +597,65 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   get_text: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) });
-    const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a) });
+    const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a), ...frameOpts(a) });
     // Save the FULL read before capping — the artifact on disk stays lossless;
     // only what crosses into the caller's context is bounded.
     saveResult('get_text', 'json', JSON.stringify(res, null, 2));
-    const capped = capText(res.text, maxBytes(a));
-    return jsonResult({ ...res, text: capped.text, ...truncationMeta(capped) });
+    const clean = redactText(res.text, redaction(ctx.policy));
+    noteRedactions(clean.redactions);
+    const capped = capText(clean.value, maxBytes(a));
+    noteBytes(capped.returnedBytes);
+    return jsonResult({
+      ...res,
+      text: capped.text,
+      ...truncationMeta(capped),
+      ...(clean.redactions ? { redactions: clean.redactions } : {}),
+    });
   },
   get_html: async (a, ctx) => {
     await gate(ctx, 'get_html', { tabId: tabId(a) });
-    const res = await ctx.ex.getHtml(optionalTarget(a), { tabId: tabId(a), outer: optionalBoolean(a, 'outer') });
-    const capped = capHtml(res.html, maxBytes(a));
-    return jsonResult({ ...res, html: capped.text, ...truncationMeta(capped) });
+    const res = await ctx.ex.getHtml(optionalTarget(a), {
+      tabId: tabId(a),
+      ...frameOpts(a),
+      outer: optionalBoolean(a, 'outer'),
+    });
+    // Password values go before the cap, so a truncated read cannot leak what a
+    // full one would have hidden.
+    const clean = redactHtml(res.html, redaction(ctx.policy));
+    noteRedactions(clean.redactions);
+    const capped = capHtml(clean.value, maxBytes(a));
+    noteBytes(capped.returnedBytes);
+    return jsonResult({
+      ...res,
+      html: capped.text,
+      ...truncationMeta(capped),
+      ...(clean.redactions ? { redactions: clean.redactions } : {}),
+    });
   },
   snapshot: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page structure
-    return jsonResult(
-      await ctx.ex.snapshot({
-        tabId: tabId(a),
-        interactiveOnly: optionalBoolean(a, 'interactiveOnly'),
-        max: optionalNumber(a, 'max', { min: 1, max: 1000 }),
-      }),
-    );
+    const snap = await ctx.ex.snapshot({
+      tabId: tabId(a),
+      ...frameOpts(a),
+      interactiveOnly: optionalBoolean(a, 'interactiveOnly'),
+      max: optionalNumber(a, 'max', { min: 1, max: 1000 }),
+    });
+    const scope = snapScope(a);
+    const previous = lastSnapshot(scope);
+    const stored = rememberSnapshot(scope, snap);
+    if (optionalBoolean(a, 'diff') !== true) {
+      return jsonResult({ ...snap, snapshotId: stored.id });
+    }
+    const diff = diffSnapshots(previous, snap);
+    return jsonResult({
+      url: snap.url,
+      title: snap.title,
+      snapshotId: stored.id,
+      ...diff,
+      ...(diff.since === null
+        ? { note: 'no previous snapshot for this tab, so everything is reported as added' }
+        : {}),
+    });
   },
   get_cookies: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) }); // reads tab-scoped secrets; same domain gate as content reads
@@ -419,18 +680,29 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   eval: async (a, ctx) => {
     await gate(ctx, 'eval', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.eval(requireString(a, 'expression'), {
-        tabId: tabId(a),
-        awaitPromise: optionalBoolean(a, 'awaitPromise'),
-      }),
-    );
+    const res = await ctx.ex.eval(requireString(a, 'expression'), {
+      tabId: tabId(a),
+      ...frameOpts(a),
+      awaitPromise: optionalBoolean(a, 'awaitPromise'),
+    });
+    // eval returns arbitrary page data — the widest read there is, so it gets
+    // the same scrub as the content reads.
+    const cfg = redaction(ctx.policy);
+    if (!cfg.enabled || res.value === undefined) return jsonResult(res);
+    const asText = typeof res.value === 'string' ? res.value : JSON.stringify(res.value);
+    if (asText === undefined) return jsonResult(res);
+    const clean = redactText(asText, cfg);
+    if (clean.redactions === 0) return jsonResult(res);
+    noteRedactions(clean.redactions);
+    const value = typeof res.value === 'string' ? clean.value : safeParse(clean.value);
+    return jsonResult({ ...res, value, redactions: clean.redactions });
   },
   wait_for: async (a, ctx) => {
     await gate(ctx, 'wait_for', { tabId: tabId(a) });
     return jsonResult(
       await ctx.ex.waitFor({
         tabId: tabId(a),
+        ...frameOpts(a),
         selector: optionalString(a, 'selector'),
         textContains: optionalString(a, 'textContains'),
         gone: optionalBoolean(a, 'gone'),
@@ -442,6 +714,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   extract_links: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page content
     const res = await extractLinks(ctx.ex, {
+      ...frameOpts(a),
       selector: optionalString(a, 'selector'),
       sameOriginOnly: optionalBoolean(a, 'sameOriginOnly'),
       dedupe: optionalBoolean(a, 'dedupe'),
@@ -453,9 +726,16 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   read_as_markdown: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) });
-    const md = await readAsMarkdown(ctx.ex, { selector: optionalString(a, 'selector'), tabId: tabId(a) });
+    const md = await readAsMarkdown(ctx.ex, {
+      selector: optionalString(a, 'selector'),
+      tabId: tabId(a),
+      ...frameOpts(a),
+    });
     saveResult('read_as_markdown', 'md', md);
-    const capped = capText(md, maxBytes(a));
+    const clean = redactText(md, redaction(ctx.policy));
+    noteRedactions(clean.redactions);
+    const capped = capText(clean.value, maxBytes(a));
+    noteBytes(capped.returnedBytes);
     // Markdown is returned as plain text, so the truncation notice has to ride in
     // the body rather than as sibling JSON fields.
     return textResult(
@@ -475,6 +755,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     }
     return jsonResult(
       await fillForm(ctx.ex, {
+        ...frameOpts(a),
         fields: fields as Record<string, string | boolean>,
         submitSelector: optionalString(a, 'submitSelector'),
         tabId: tabId(a),
@@ -512,10 +793,104 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return jsonResult(await ctx.ex.uploadFile(t, files, { tabId: tabId(a) }));
   },
 
+  frames_list: async (a, ctx) => {
+    await gate(ctx, 'frames_list', { tabId: tabId(a) });
+    if (!ctx.ex.framesList) throw new ExecutorError('UNSUPPORTED', 'this backend cannot enumerate frames');
+    const frames = await ctx.ex.framesList({ tabId: tabId(a) });
+    return jsonResult({
+      frames,
+      count: frames.length,
+      ...(frames.length > 1
+        ? { hint: 'pass frameId (or allFrames:true) on a click/type/get_text to act inside one of these' }
+        : {}),
+    });
+  },
+
+  console_logs: async (a, ctx) => {
+    const res = await readObservers(ctx, a, { console: true });
+    const level = optionalString(a, 'level');
+    const entries = ((res.console as Array<{ level: string }>) ?? []).filter((e) => !level || e.level === level);
+    return jsonResult({
+      entries,
+      count: entries.length,
+      ...(res.dropped ? { dropped: true, dropNote: 'older entries were dropped from the in-page ring buffer' } : {}),
+      ...(res.justInstalled ? { note: res.note } : {}),
+    });
+  },
+
+  network_log: async (a, ctx) => {
+    const res = await readObservers(ctx, a, { network: true }, {
+      includeResources: optionalBoolean(a, 'includeResources'),
+    });
+    const contains = optionalString(a, 'urlContains');
+    const failedOnly = optionalBoolean(a, 'failedOnly') === true;
+    const entries = ((res.network as Array<{ url: string; status?: number; error?: string }>) ?? []).filter((e) => {
+      if (contains && !e.url.includes(contains)) return false;
+      if (failedOnly && !e.error && (e.status ?? 0) < 400) return false;
+      return true;
+    });
+    return jsonResult({
+      entries,
+      count: entries.length,
+      ...(res.dropped ? { dropped: true } : {}),
+      ...(res.justInstalled ? { note: res.note } : {}),
+    });
+  },
+
+  dialogs: async (a, ctx) => {
+    const policy = optionalString(a, 'policy') as DialogPolicy | undefined;
+    if (policy && policy !== 'dismiss' && policy !== 'accept') {
+      throw new McpToolError('"policy" must be "dismiss" or "accept"');
+    }
+    const res = await readObservers(ctx, a, { dialogs: true }, {
+      setPolicy: policy,
+      promptText: optionalString(a, 'promptText'),
+    });
+    return jsonResult({
+      entries: res.dialogs ?? [],
+      count: ((res.dialogs as unknown[]) ?? []).length,
+      policy: res.dialogPolicy,
+      ...(res.justInstalled ? { note: res.note } : {}),
+    });
+  },
+
+  print_pdf: async (a, ctx) => {
+    await gate(ctx, 'print_pdf', { tabId: tabId(a) });
+    if (!ctx.ex.printPdf) throw new ExecutorError('UNSUPPORTED', 'this backend cannot print to PDF');
+    const pdf = await ctx.ex.printPdf({
+      tabId: tabId(a),
+      landscape: optionalBoolean(a, 'landscape'),
+      printBackground: optionalBoolean(a, 'printBackground'),
+      scale: optionalNumber(a, 'scale', { min: 0.1, max: 2 }),
+      paperWidth: optionalNumber(a, 'paperWidth', { min: 0.1, max: 200 }),
+      paperHeight: optionalNumber(a, 'paperHeight', { min: 0.1, max: 200 }),
+      pageRanges: optionalString(a, 'pageRanges'),
+      preferCSSPageSize: optionalBoolean(a, 'preferCSSPageSize'),
+    });
+    const bytes = Buffer.from(pdf.dataBase64, 'base64');
+    const path = saveBinary('print_pdf', 'pdf', bytes);
+    noteBytes(bytes.byteLength);
+    // The bytes themselves are deliberately NOT returned: a PDF is megabytes of
+    // base64 that no model can read, and the file on disk is the useful artifact.
+    return jsonResult({
+      path,
+      bytes: bytes.byteLength,
+      url: pdf.url,
+      title: pdf.title,
+      ...(path ? {} : { note: 'no active task workspace, so the PDF was not saved to disk' }),
+    });
+  },
+
   chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
 
   // --- task workspace management (server-side; no browser needed) ---
-  profile_use: async (a) => jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') }))),
+  profile_use: async (a) => {
+    // Snapshots are keyed by profile+tab, and a profile switch routes to a
+    // different browser entirely — keeping the old tree would diff a page
+    // against one from another machine.
+    resetSnapshots();
+    return jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') })));
+  },
   task_new: async (a) => jsonResult(workspaceView(switchWorkspace({ task: requireString(a, 'name') }))),
   task_status: async () => jsonResult(workspaceView(getActiveWorkspace())),
   tasks_list: async () => jsonResult(listTasks(getActiveWorkspace().dataDir)),
@@ -585,9 +960,33 @@ function summarizeArgs(rawArgs: unknown): Record<string, unknown> | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Append one action record to the active task's history.jsonl (best-effort). */
-function recordHistory(tool: string, rawArgs: unknown, ok: boolean, error?: string): void {
-  appendHistory({ ts: new Date().toISOString(), tool, args: summarizeArgs(rawArgs), ok, ...(error ? { error } : {}) });
+/**
+ * Append one action record to the active task's history.jsonl (best-effort).
+ *
+ * The audit fields — which URL the policy was evaluated against, whether it
+ * denied, how many bytes came back, how many secrets were scrubbed — are the
+ * ones someone actually wants when reviewing what an agent did in their real
+ * browser, and they exist only inside the call.
+ */
+function recordHistory(
+  tool: string,
+  rawArgs: unknown,
+  ok: boolean,
+  extra: { error?: string; ms?: number; audit?: CallAudit } = {},
+): void {
+  const a = extra.audit ?? {};
+  appendHistory({
+    ts: new Date().toISOString(),
+    tool,
+    args: summarizeArgs(rawArgs),
+    ok,
+    ...(extra.ms !== undefined ? { ms: extra.ms } : {}),
+    ...(a.url ? { url: a.url } : {}),
+    ...(a.denied ? { policy: 'denied' } : a.url ? { policy: 'allowed' } : {}),
+    ...(a.bytes !== undefined ? { bytes: a.bytes } : {}),
+    ...(a.redactions ? { redactions: a.redactions } : {}),
+    ...(extra.error ? { error: extra.error } : {}),
+  });
 }
 
 /**
@@ -606,6 +1005,7 @@ const RETRY_SAFE_TOOLS = new Set([
   'get_text', 'get_html', 'snapshot', 'get_cookies',
   'extract_links', 'read_as_markdown', 'screenshot',
   'wait_for', 'navigate', 'reload',
+  'frames_list', 'print_pdf',
 ]);
 
 /** Whether `err` is the transient bridge fault that a single retry can clear. */
@@ -617,6 +1017,22 @@ export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<
   const handler = TOOL_HANDLERS[name];
   if (!handler) return errorResult(`unknown tool: ${name}`);
   if (!allowCall(Date.now())) return errorResult('rate limit exceeded; slow down');
+  const started = Date.now();
+  // One audit record per call, carried through async hops so a parallel `batch`
+  // cannot cross-attribute one op's target URL to another's log line.
+  const { result: outcome } = await withAudit(async (audit) =>
+    dispatchInner(name, handler, rawArgs, audit, started),
+  );
+  return outcome;
+}
+
+async function dispatchInner(
+  name: string,
+  handler: ToolHandler,
+  rawArgs: unknown,
+  audit: CallAudit,
+  started: number,
+): Promise<CallToolResult> {
   try {
     const mgr = getManager();
     // Workspace-management tools run server-side and must work even with no
@@ -635,11 +1051,11 @@ export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<
       result = await handler(asArgs(rawArgs), { ex: reconnected, policy: mgr.policy });
       logDebug(`${name}: retry after reconnect succeeded`);
     }
-    recordHistory(name, rawArgs, !result.isError);
+    recordHistory(name, rawArgs, !result.isError, { ms: Date.now() - started, audit });
     return result;
   } catch (err) {
     const message = errMessage(err);
-    recordHistory(name, rawArgs, false, message);
+    recordHistory(name, rawArgs, false, { error: message, ms: Date.now() - started, audit });
     return errorResult(message);
   }
 }

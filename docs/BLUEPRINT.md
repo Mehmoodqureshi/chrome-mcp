@@ -350,7 +350,7 @@ export type ExecutorErrorCode =
 
 ## 5. The Complete MCP Tool Surface
 
-26 tools. `readOnly` is metadata (not a JSON-Schema field) consumed by the host
+38 tools. `readOnly` is metadata (not a JSON-Schema field) consumed by the host
 and by **safe-mode** (shipped in v1, default ON). Every handler:
 `withReadyExecutor()` → validate args (`requireTarget` for selector|ref) →
 **`policy.assertUrlAllowed(currentTabUrl, method)`** → call executor/helper →
@@ -381,9 +381,23 @@ never-throw firewall converting any thrown `Error` to `{isError:true}`.
 | `read_as_markdown` | `{selector?, tabId?}` | raw markdown text | read | **server helper** (md-reducer IIFE) |
 | `fill_form` | `{fields:{[selector]:string\|bool}, submitSelector?, tabId?}` | `{filled, submitted}` | mutate | **server helper** (seq `ex.fill`/`ex.click`) |
 | `download_file` | `{url?\|(selector?\|ref?), suggestedName?, tabId?}` | `DownloadResult` | mutate | **executor `download`** (privileged) |
+| `frames_list` | `{tabId?}` | `{frames:[{frameId,top,url,title}]}` | read | executor primitive |
+| `console_logs` | `{level?, sinceSeq?, limit?, clear?, tabId?}` | `{entries,count}` | read | executor `observers` |
+| `network_log` | `{urlContains?, failedOnly?, includeResources?, …}` | `{entries,count}` | read | executor `observers` |
+| `dialogs` | `{policy?, promptText?, sinceSeq?, …}` | `{entries,count,policy}` | read | executor `observers` |
+| `print_pdf` | `{landscape?, printBackground?, scale?, …}` | `{path,bytes,url,title}` | read* | executor `printPdf` (CDP `Page.printToPDF`) |
 | `chrome_status` | `{}` | `ExecutorStatus` + displacement/heartbeat flags | read | manager (defensive cached fallback) |
 
 Notes:
+- **Frame targeting.** Every target-taking tool also accepts `frameId` (pin one
+  frame) or `allFrames` (act in whichever frame has the element). Frame ids come
+  from `frames_list`. Each frame is gated against ITS OWN url by the extension
+  before injection, so a scan can never reach a frame the allowlist excludes.
+- **Locators.** `click`/`type`/`hover`/`select_option` accept `role` + `name`
+  (+ `nth`) in place of selector|ref; `mcp/locate.ts` resolves it through one
+  snapshot server-side and fails loudly on ambiguity.
+- **`observers` is one wire method** behind three tools, gated by `allowObservers`
+  (`--enable-observers`) on top of the domain allowlist.
 - **`screenshot` is `readOnly:true` but auto-scrolls the target into view** before capture — documented benign side effect. Returns a real `{type:'image',data,mimeType}` block (the one envelope extension over the LinkedIn repo). `read*` = read with a benign side effect.
 - **`eval` is `readOnly:false`** (arbitrary JS). Safe-mode disables `eval` and the entire mutating set unless `--unsafe-enable-eval` / `--enable-mutations`. [RESOLVED — security major eval]
 - **`eval`/all reads/all navigations call `policy.assertUrlAllowed(tab.currentUrl, method)`** before dispatch — reads are gated because reads are the exfil payload. [RESOLVED — security major 4]

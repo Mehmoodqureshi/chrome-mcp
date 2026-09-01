@@ -79,6 +79,9 @@ export type WireMethod =
   | 'wait_for'
   | 'download_file'
   | 'upload_file'
+  | 'frames_list'
+  | 'observers'
+  | 'print_pdf'
   | 'ping_probe';
 
 /** Runtime list of every WireMethod, for boot-time drift assertions on both ends. */
@@ -107,6 +110,9 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'wait_for',
   'download_file',
   'upload_file',
+  'frames_list',
+  'observers',
+  'print_pdf',
   'ping_probe',
 ] as const;
 
@@ -128,6 +134,8 @@ export type ExecutorErrorCode =
   | 'POLICY_DENIED'
   | 'DOWNLOAD_FAILED'
   | 'UPLOAD_FAILED'
+  | 'FRAME_NOT_FOUND'
+  | 'OBSERVERS_DISABLED'
   | 'UNKNOWN_METHOD';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +174,15 @@ export interface WirePolicy {
   allowUploads: boolean;
   allowAllTabs: boolean;
   enableMutations: boolean;
+  /**
+   * Whether the in-page observer hook (console / network / dialog capture) may
+   * be installed. Off by default: it patches `console`, `fetch`,
+   * `XMLHttpRequest` and the dialog functions on every allowlisted page in the
+   * user's real browser, which is too invasive to turn on for someone silently.
+   * Optional so an older extension deserializing a newer welcome frame reads it
+   * as undefined -> falsy -> the safe answer.
+   */
+  allowObservers?: boolean;
 }
 
 export interface WelcomeFrame extends BaseFrame {

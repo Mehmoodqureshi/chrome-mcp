@@ -103,6 +103,24 @@ export function saveResult(tool: string, ext: string, body: string): string | nu
   }
 }
 
+/**
+ * Save a binary artifact (a PDF, today) into the active task's results dir.
+ * Same contract as `saveResult`: best-effort, returns the path or null, and a
+ * failure here never fails the tool call that produced the bytes.
+ */
+export function saveBinary(tool: string, ext: string, bytes: Buffer): string | null {
+  const w = peekActiveWorkspace();
+  if (!w) return null;
+  try {
+    const path = join(w.resultsDir, `${stem(tool)}.${ext}`);
+    writeFileSync(path, bytes, { mode: 0o600 });
+    return path;
+  } catch (err) {
+    logErr(`results save failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /** Save a screenshot PNG (base64) into the active task's `screenshots/`. */
 export function saveScreenshot(dataBase64: string): string | null {
   const w = peekActiveWorkspace();

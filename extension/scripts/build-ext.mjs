@@ -18,6 +18,9 @@ await build({
   entryPoints: {
     background: join(extRoot, 'src/sw/background.ts'),
     options: join(extRoot, 'src/options/options.ts'),
+    // MAIN-world observer hook, registered as a document_start content script
+    // (and injected on demand as a fallback) — must be its own file.
+    'page-hook': join(extRoot, 'src/page/hook.ts'),
   },
   outdir: outDir,
   bundle: true,

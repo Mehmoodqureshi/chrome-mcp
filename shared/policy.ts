@@ -21,6 +21,12 @@ const READ_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'get_html',
   'screenshot',
   'wait_for',
+  // A frame list leaks the URLs a page embeds; console/network buffers are the
+  // page's own traffic and error text; a PDF is a screenshot by another name.
+  // All three are page CONTENT and gate exactly like the reads above.
+  'frames_list',
+  'observers',
+  'print_pdf',
 ]);
 
 /** Content-mutating actions — URL-gated AND mutation-gated. */
@@ -93,7 +99,7 @@ function isAboutBlank(url: string): boolean {
  * leading "*." wildcard and the two catch-all forms. Returns '' for a pattern
  * that carries no host (which then matches nothing).
  */
-function normalizeDomainPattern(pattern: string): string {
+export function normalizeDomainPattern(pattern: string): string {
   let p = pattern.trim().toLowerCase();
   if (p === '*' || p === '*://*/*') return '*';
   // Strip a leading scheme ("https://", "http://", any "scheme://").
@@ -142,6 +148,15 @@ export function evaluatePolicy(url: string, method: WireMethod, policy: WirePoli
   }
   if (method === 'download_file' && !policy.allowDownloads) {
     return { ok: false, reason: 'downloads are disabled. Pass --enable-downloads or set allowDownloads.' };
+  }
+  if (method === 'observers' && !policy.allowObservers) {
+    return {
+      ok: false,
+      reason:
+        'the in-page observers (console_logs / network_log / dialogs) are disabled. They patch console, ' +
+        'fetch, XMLHttpRequest and the dialog functions on every allowlisted page in your real browser, ' +
+        'so they are opt-in: pass --enable-observers or set allowObservers.',
+    };
   }
   if (method === 'upload_file' && !policy.allowUploads) {
     return {
@@ -199,4 +214,5 @@ export const DENY_ALL_WIRE_POLICY: WirePolicy = {
   allowUploads: false,
   allowAllTabs: false,
   enableMutations: false,
+  allowObservers: false,
 };

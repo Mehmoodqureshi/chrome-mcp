@@ -17,8 +17,13 @@ import {
   type EvalResult,
   type Executor,
   type ExecutorStatus,
+  type FrameInfo,
   type NavResult,
+  type ObserverArgs,
+  type ObserverReadResult,
+  type PdfResult,
   type ScreenshotResult,
+  type SnapshotNode,
   type SnapshotResult,
   type StorageOp,
   type StorageResult,
@@ -69,6 +74,15 @@ export interface StubOptions {
    * exactly one attempt was made.
    */
   disconnectWrites?: number;
+  /** Nodes the stub snapshot reports — lets a test drive locator resolution and
+   *  the snapshot diff without a browser. Mutate between calls to model a page
+   *  changing under an action. */
+  snapshotNodes?: SnapshotNode[];
+  /** Frames the stub reports for `frames_list`. */
+  frames?: FrameInfo[];
+  /** What the in-page observers return. Absent = the hook is not installed,
+   *  which is the case the tools must report clearly rather than as an empty list. */
+  observers?: ObserverReadResult;
 }
 
 const ok: ActionOk = { ok: true };
@@ -87,6 +101,12 @@ export class StubExecutor implements Executor {
   private readonly cached: string | null;
   private readonly backgroundTabs: Array<{ tabId: TabId; url: string }>;
   private readonly noActiveTab: boolean;
+  /** Mutable so a test can change the page between two snapshots. */
+  snapshotNodes: SnapshotNode[];
+  private readonly frames: FrameInfo[];
+  private readonly observerState?: ObserverReadResult;
+  /** The last observer args received, so a test can assert what was requested. */
+  lastObserverArgs?: ObserverArgs;
   /** How many times the gate actually asked for the tab list — the round-trip
    *  counter the caching path exists to keep at zero. */
   tabsListCalls = 0;
@@ -105,6 +125,9 @@ export class StubExecutor implements Executor {
     this.htmlPayload = opts.htmlPayload ?? '<html><body><a href="https://example.com">Example</a></body></html>';
     this.remainingDisconnects = opts.disconnectReads ?? 0;
     this.remainingWriteDisconnects = opts.disconnectWrites ?? 0;
+    this.snapshotNodes = opts.snapshotNodes ?? [{ ref: 'e1', role: 'link', name: 'Example', tag: 'a' }];
+    this.frames = opts.frames ?? [{ frameId: 0, top: true, url: opts.activeUrl ?? 'about:blank', title: 'Stub Page' }];
+    this.observerState = opts.observers;
   }
 
   /** Fail this read if a scripted disconnect is still pending, then consume it. */
@@ -233,12 +256,7 @@ export class StubExecutor implements Executor {
     return { html: this.htmlPayload };
   }
   async snapshot(): Promise<SnapshotResult> {
-    return {
-      url: this.url,
-      title: 'Stub Page',
-      nodes: [{ ref: 'e1', role: 'link', name: 'Example', tag: 'a' }],
-      truncated: false,
-    };
+    return { url: this.url, title: 'Stub Page', nodes: this.snapshotNodes, truncated: false };
   }
   async getCookies(): Promise<{ cookies: CookieItem[] }> {
     return { cookies: [{ name: 'stub', value: '1', domain: 'example.com', path: '/', secure: true, httpOnly: false }] };
@@ -270,5 +288,20 @@ export class StubExecutor implements Executor {
 
   async uploadFile(): Promise<ActionOk> {
     return ok;
+  }
+
+  // -- optional capabilities ----------------------------------------------
+  async framesList(): Promise<FrameInfo[]> {
+    return this.frames;
+  }
+
+  async observers(args: ObserverArgs): Promise<ObserverReadResult> {
+    this.lastObserverArgs = args;
+    return this.observerState ?? { installed: false };
+  }
+
+  async printPdf(): Promise<PdfResult> {
+    // "%PDF-1.4" in base64 — enough for a caller to assert real bytes landed.
+    return { dataBase64: 'JVBERi0xLjQK', mimeType: 'application/pdf', url: this.url, title: 'Stub Page' };
   }
 }
