@@ -1,4 +1,73 @@
-## Unreleased
+## 0.7.0 - 2026-09-01
+
+- fix: a `ref` (or selector) that lands inside an open shadow root can now be
+  acted on. `snapshot` has always walked shadow roots and stamped `data-mcp-ref`
+  on what it found there, while every action resolved that ref with a plain
+  `document.querySelector` — which cannot cross a shadow boundary. The snapshot
+  was advertising elements that no `click` or `type` could ever reach, and the
+  failure surfaced as `SELECTOR_NOT_FOUND` with nothing to point at. Every
+  DOM-touching command now resolves through one shared page-side resolver
+  (`shared/page-fns.ts`) that descends open shadow roots, so what a snapshot
+  shows is what an action can hit. Affects any site built on web components.
+- feat: frames are addressable. `frames_list` reports the top document and every
+  iframe the extension can inject into, with each frame's URL; every
+  target-taking tool accepts `frameId` to pin one, or `allFrames: true` to find
+  the element in whichever frame has it. Until now every selector ran in the top
+  frame only, so an embedded checkout, OAuth consent screen or editor was
+  unreachable and looked like a broken selector. Each frame is authorized
+  against ITS OWN url before anything runs there — an allowlisted page embedding
+  a third-party iframe is not a way to read that third party — and the probe that
+  resolves frame URLs runs BEFORE the command, so a mutation never fires inside a
+  frame nobody authorized.
+- feat: `console_logs`, `network_log` and `dialogs` (behind `--enable-observers`).
+  Nothing captured console output, uncaught errors, or network traffic, so an
+  agent could see what a page looked like after it broke but never why. An
+  in-page hook, registered at document_start for allowlisted domains only,
+  records `console.*`, uncaught errors and unhandled rejections, and
+  `fetch`/`XMLHttpRequest` (plus Resource Timing on request). Off by default and
+  deliberately so: it patches page globals in your real browser. It does not see
+  the document request, redirects or headers — the cost of not holding a debugger
+  session open across commands.
+- fix: a click that opens `alert`/`confirm`/`prompt` no longer hangs. Those block
+  the renderer, so every injected script on the page stalled until the command
+  timed out and reported `TIMEOUT` — a misleading error for a very ordinary flow
+  (delete buttons, "leave site?"). With observers on, dialogs are answered
+  (`dismiss` by default: confirm → false, prompt → null; `dialogs { policy:
+  "accept" }` switches it) and recorded, and a page's `beforeunload` handler can
+  no longer strand an automated navigation.
+- feat: password field values never leave the page. `get_html` blanks the `value`
+  of every `<input type=password>`, and `snapshot` reports the field flagged
+  `secret: true` with no value — it is still targetable, its contents are simply
+  not something any caller wanted. Unconditional: no flag to remember.
+- feat: `--redact` scrubs secret-shaped strings — JWTs, AWS/GitHub/Slack/Google
+  keys, `Bearer` headers, private-key blocks — out of `get_text`, `get_html`,
+  `read_as_markdown` and `eval`, with `--redact-pattern <regex>` for your own
+  (repeatable; implies `--redact`; an invalid pattern fails at startup rather
+  than silently never matching). Opt-in, because a pattern eventually fires on
+  something you meant to read. Redaction runs BEFORE the output cap, so a
+  truncated read cannot leak what a full one would have hidden.
+- feat: `snapshot { diff: true }` returns only what changed since the previous
+  snapshot of that tab (added / removed / state-changed), and every action takes
+  `snapshotAfter: true` to report what it changed. The snapshot is the most
+  token-expensive read in the tool surface and the loop that leans on it hardest
+  re-sent a near-identical page every time. Nodes are matched across snapshots by
+  role + accessible name rather than by `ref`: refs renumber in document order on
+  every snapshot, so diffing on them would report an unchanged button as
+  removed-and-re-added the moment anything above it appeared.
+- feat: actions accept a `role` + `name` locator instead of a CSS selector, so
+  clicking "Sign in" no longer costs a full snapshot read first. Resolution is
+  server-side, strongest-match-first, and refuses to guess: an ambiguous locator
+  fails with the candidates listed (pass `nth` to choose) rather than acting on
+  whichever matched first.
+- feat: `print_pdf` renders the page through Chrome's own print pipeline into the
+  task's `results/` dir, returning the path and size. The base64 is deliberately
+  not returned — a PDF is megabytes no model can read.
+- feat: the action log records what a call actually touched — the URL the policy
+  was evaluated against, the verdict (`allowed`/`denied`), duration, bytes
+  returned, and secrets scrubbed. "What did the agent do in my browser" had no
+  answer after the fact; the facts existed only inside the call. Carried on
+  `AsyncLocalStorage` so a parallel `batch` cannot attribute one op's URL to
+  another's log line.
 
 - ci: drop `publish.yml`. Publishing from CI was abandoned back in 0.4.x — the
   granular npm token cannot bypass 2FA, so every run failed with `EOTP` — and the
