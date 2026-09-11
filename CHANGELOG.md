@@ -1,3 +1,10 @@
+## 0.7.1 - 2026-09-11
+
+- fix: `--log-level silent` now silences the task workspace too. The memory
+  writers (`results/`, `screenshots/`, `history.jsonl`) kept a private copy of
+  `logErr` from before logging moved into `mcp/log.ts`, so a failed persist still
+  wrote to stderr after you asked for silence. They now share the gated logger.
+
 ## 0.7.0 - 2026-09-01
 
 - fix: a `ref` (or selector) that lands inside an open shadow root can now be
