@@ -16,13 +16,11 @@ import { appendFileSync, copyFileSync, renameSync, statSync, unlinkSync, writeFi
 import { basename, join } from 'node:path';
 
 import { sanitizeName } from '../config';
+// `mcp/log` (not `mcp/server`) so this stays free of the server import cycle
+// while still honouring `--log-level silent`.
+import { logErr } from '../mcp/log';
 import { MAX_DOWNLOAD_BYTES, sanitizeDownloadName } from '../../shared/download';
 import { ensureWorkspace, type Workspace } from './datadir';
-
-/** stderr only (never stdout in stdio mode); local to avoid an import cycle with mcp/server. */
-function logErr(message: string): void {
-  process.stderr.write(`[chrome-mcp] ${message}\n`);
-}
 
 let active: Workspace | null = null;
 /** Monotonic counter so saved result/screenshot filenames sort in capture order. */

@@ -8,7 +8,7 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,7 @@ import {
   setActiveWorkspace,
   switchWorkspace,
 } from '../src/bridge/workspace';
+import { getLogLevel, setLogLevel } from '../src/mcp/log';
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'chrome-mcp-ws-'));
@@ -104,6 +105,34 @@ test('memory writers no-op (return null) when no workspace is active', () => {
   assert.equal(saveResult('get_text', 'json', '{}'), null);
   assert.equal(saveScreenshot('AAAA'), null);
   assert.doesNotThrow(() => appendHistory({ tool: 'x', ok: true }));
+});
+
+test('a failed persist honours --log-level silent', () => {
+  boot();
+  rmSync(getActiveWorkspace().resultsDir, { recursive: true, force: true });
+  const run = (): string => {
+    const original = process.stderr.write.bind(process.stderr);
+    let captured = '';
+    (process.stderr as { write: unknown }).write = (chunk: unknown): boolean => {
+      captured += String(chunk);
+      return true;
+    };
+    try {
+      assert.equal(saveResult('get_text', 'json', '{}'), null, 'failure is swallowed');
+    } finally {
+      (process.stderr as { write: unknown }).write = original;
+    }
+    return captured;
+  };
+  const previous = getLogLevel();
+  try {
+    setLogLevel('info');
+    assert.match(run(), /results save failed/);
+    setLogLevel('silent');
+    assert.equal(run(), '', 'workspace logging bypassed --log-level silent');
+  } finally {
+    setLogLevel(previous);
+  }
 });
 
 // --- C. captureDownload -----------------------------------------------------
