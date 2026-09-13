@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { HELP_TEXT, parseArgs, resolveDataDir } from './config';
 import { type GcOptions, gcTasks, listTasks } from './bridge/tasks';
@@ -19,7 +19,7 @@ import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
 import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/datadir';
 import { setActiveWorkspace } from './bridge/workspace';
-import { removeHandshake, resolveToken, writeHandshake } from './bridge/auth';
+import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -54,6 +54,15 @@ function version(): string {
   } catch {
     return '0.0.0';
   }
+}
+
+/**
+ * Absolute path of the bundled extension. `dist/src/cli.js` -> `<pkg>/extension-dist`,
+ * which `files` in package.json ships in the tarball, so this is right for a global
+ * install, an npx cache entry, and a git checkout alike.
+ */
+function extensionPath(): string {
+  return resolve(__dirname, '..', '..', 'extension-dist');
 }
 
 /** Render a byte count as a short human string (1.2 MB, 904 KB, …). */
@@ -165,6 +174,10 @@ async function main(): Promise<void> {
     process.stdout.write(`${version()}\n`);
     return;
   }
+  if (cfg.showExtensionPath) {
+    process.stdout.write(`${extensionPath()}\n`);
+    return;
+  }
 
   const dataDir = ensureDataDir(cfg.dataDir);
   const token = resolveToken(dataDir, { persist: cfg.persistToken });
@@ -195,6 +208,15 @@ async function main(): Promise<void> {
   );
   const handshakePath = writeHandshake(dataDir, { port, token });
   logErr(`pairing handshake written to ${handshakePath} (mode 0600; token not logged)`);
+  // Drop the same port + token into the bundled extension folder so a Load
+  // unpacked from there pairs itself. Best-effort: a read-only install just
+  // falls back to the Options-page paste.
+  const bundled = writeBundledPairing(extensionPath(), { port, token });
+  if (bundled) {
+    logErr(`auto-pairing file written to ${bundled} — Load unpacked from that folder needs no token paste`);
+  } else {
+    logDebug(`auto-pairing file not written (extension folder missing or read-only at ${extensionPath()})`);
+  }
   if (process.env.CHROME_MCP_TOKEN) {
     logErr('token: pinned from CHROME_MCP_TOKEN (stable; pair once, never again).');
   } else if (cfg.persistToken) {

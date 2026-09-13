@@ -36,8 +36,10 @@ export interface CliConfig {
   prefer: BackendPreference;
   /** Run the CDP-fallback Chromium headless. */
   headless: boolean;
-  /** `--print-pairing`: write the handshake and print its path (never the token). */
+  /** `--print-pairing`: write the handshake, print its path (never the token), and keep the bridge up until Ctrl-C. */
   printPairing: boolean;
+  /** `--extension-path`: print the absolute path of the bundled extension (for Load unpacked) and exit. */
+  showExtensionPath: boolean;
   /** `--persist-token`: reuse a stable on-disk token so the extension never re-pairs. */
   persistToken: boolean;
   showHelp: boolean;
@@ -112,6 +114,7 @@ export function parseArgs(argv: string[]): CliConfig {
   let persistToken = false;
   let showHelp = false;
   let showVersion = false;
+  let showExtensionPath = false;
   let logLevel: LogLevel = 'info';
 
   // Policy assembled from flags, layered over an optional file.
@@ -128,6 +131,9 @@ export function parseArgs(argv: string[]): CliConfig {
       case '-v':
       case '--version':
         showVersion = true;
+        break;
+      case '--extension-path':
+        showExtensionPath = true;
         break;
       case '--port':
         wsPort = requireInt(argv[++i], '--port');
@@ -252,6 +258,7 @@ export function parseArgs(argv: string[]): CliConfig {
     persistToken,
     showHelp,
     showVersion,
+    showExtensionPath,
     logLevel,
   };
 }
@@ -306,7 +313,10 @@ Connection:
                          the extension Options; tools route to the active profile.
   --task <name>          Task label (default "default"). Downloads and a meta.json
                          land in profiles/<profile>/tasks/<task>/.
-  --print-pairing        Write the handshake and print its path, then exit
+  --print-pairing        Write the handshake, print its path, and keep the bridge
+                         up until Ctrl-C (manual pairing; never serves MCP)
+  --extension-path       Print the absolute path of the bundled extension folder
+                         (what to pick in chrome://extensions -> Load unpacked)
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.

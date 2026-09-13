@@ -9,7 +9,7 @@
 
 import { type Executor, ExecutorError } from './types';
 import { ExtensionExecutor } from './extension-executor';
-import { CdpExecutor, type CdpOptions } from './cdp-executor';
+import type { CdpOptions } from './cdp-executor';
 import type { BridgeServer } from '../bridge/server';
 import type { BackendPreference } from '../config';
 
@@ -32,7 +32,25 @@ type Pingable = Executor & { ping(deadlineMs?: number): Promise<boolean> };
 
 export function createSelector(deps: SelectorDeps): () => Promise<Executor> {
   const makeExt = deps.makeExtension ?? ((b) => new ExtensionExecutor(b));
-  const makeCdp = deps.makeCdp ?? ((o) => new CdpExecutor(o));
+  const makeCdp =
+    deps.makeCdp ??
+    ((o) => {
+      // Loaded lazily: playwright is a devDependency (tests + HITL only). The
+      // published CLI is extension-only, so a fresh install never pulls a
+      // browser. Reaching this without playwright present is a config error.
+      let mod: typeof import('./cdp-executor');
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        mod = require('./cdp-executor') as typeof import('./cdp-executor');
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        throw new ExecutorError(
+          'NO_BACKEND',
+          `CDP backend requested but this build is extension-only (playwright is not installed: ${why}). Pair the extension instead.`,
+        );
+      }
+      return new mod.CdpExecutor(o);
+    });
   const pingMs = deps.pingDeadlineMs ?? 800;
   const pingCacheMs = deps.pingCacheMs ?? 2_000;
 

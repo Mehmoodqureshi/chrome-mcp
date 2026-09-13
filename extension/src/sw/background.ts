@@ -35,7 +35,12 @@ let currentPolicy: WirePolicy | null = null;
 const executor = new ChromeExecutor(() => currentPolicy);
 const ws = new WsClient({
   onCommand: (cmd) => void router.dispatch(cmd),
-  onState: (state) => void persistState(state),
+  onState: (state) => {
+    void persistState(state);
+    // A reject with an auto-adopted token usually means the server rotated it
+    // (no --persist-token) and rewrote pairing.json — re-read and retry once.
+    if (state === 'unauthorized') void adoptBundledPairing();
+  },
   onPolicy: (policy) => {
     currentPolicy = policy;
     // The observer hook is registered from the policy, so it covers exactly the
@@ -50,6 +55,48 @@ const router = new CommandRouter({
   getPolicy: () => currentPolicy,
   log: (m) => console.debug('[chrome-mcp]', m),
 });
+
+/** Shape of the auto-pairing file the server writes next to this extension. */
+interface BundledPairing {
+  wsPort: number;
+  token: string;
+}
+
+/**
+ * Read `pairing.json` from this extension's own folder. The chrome-mcp server
+ * writes it into its bundled `extension-dist/` on every boot, so an extension
+ * loaded unpacked from that folder can pair with no Options-page paste. Absent
+ * (a copied folder, a read-only install, or the server never ran) → null.
+ */
+async function readBundledPairing(): Promise<BundledPairing | null> {
+  try {
+    const res = await fetch(chrome.runtime.getURL('pairing.json'), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { port?: unknown; token?: unknown };
+    if (typeof j.port === 'number' && j.port > 0 && typeof j.token === 'string' && j.token.length > 0) {
+      return { wsPort: j.port, token: j.token };
+    }
+  } catch {
+    /* no bundled file — manual pairing only */
+  }
+  return null;
+}
+
+/**
+ * Adopt the bundled pairing unless the user pinned values by hand in Options
+ * (`pairingSource: 'manual'`). Only writes when something actually changed, so
+ * a stale reject retries exactly once per new file — never in a loop. Returns
+ * true when storage was updated (the onChanged listener then reconnects).
+ */
+async function adoptBundledPairing(): Promise<boolean> {
+  const { wsPort, token, pairingSource } = await chrome.storage.local.get(['wsPort', 'token', 'pairingSource']);
+  if (pairingSource === 'manual') return false;
+  const bundled = await readBundledPairing();
+  if (!bundled) return false;
+  if (bundled.wsPort === wsPort && bundled.token === token) return false;
+  await chrome.storage.local.set({ wsPort: bundled.wsPort, token: bundled.token, pairingSource: 'auto' });
+  return true;
+}
 
 async function getConfig(): Promise<PairConfig | null> {
   const { wsPort, token, profile } = await chrome.storage.local.get(['wsPort', 'token', 'profile']);
@@ -96,6 +143,9 @@ async function ensureConnected(): Promise<void> {
 // --- keepalive: an awaited extension-API call resets the 30s idle timer -----
 async function keepalivePulse(): Promise<void> {
   await chrome.storage.local.get('connState'); // the await is what keeps us warm
+  // Not paired yet (extension loaded before the server first ran)? The server
+  // may have written pairing.json since — pick it up without a reload.
+  if (!ws.isConnected() && !(await getConfig())) await adoptBundledPairing();
   await ensureConnected();
 }
 
@@ -128,7 +178,9 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 async function bootstrap(): Promise<void> {
   await chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
-  await ensureConnected();
+  // Zero-paste pairing: if this folder carries the server's pairing.json, adopt
+  // it. When that writes storage, onChanged reconnects; otherwise connect now.
+  if (!(await adoptBundledPairing())) await ensureConnected();
 }
 
 // Eager attempt on worker spin-up (covers wakes not covered by the events above).

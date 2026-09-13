@@ -13,14 +13,7 @@
  *   - The token is NEVER written to stdout/stderr or any log (a test asserts it).
  */
 
-import {
-  chmodSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
@@ -117,6 +110,40 @@ export interface WriteHandshakeFields {
   port: number;
   token: string;
   expectedExtensionId?: string;
+}
+
+/** Name of the auto-pairing file the server drops into its bundled extension folder. */
+export const BUNDLED_PAIRING_FILE = 'pairing.json';
+
+/**
+ * Write `<extDir>/pairing.json` so an extension loaded unpacked from that very
+ * folder can pair itself: its service worker fetches the file from its own
+ * package and adopts the port + token with no Options-page paste. Same secret,
+ * same 0600 mode, same trust boundary as the handshake (only this user can read
+ * it, and the file is neither web-accessible nor shipped in the npm tarball).
+ *
+ * Best-effort: returns the path on success, or null when the folder is missing
+ * or read-only (a locked-down global install). Never throws — manual pairing
+ * still works without it.
+ */
+export function writeBundledPairing(extDir: string, fields: WriteHandshakeFields): string | null {
+  const path = join(extDir, BUNDLED_PAIRING_FILE);
+  const tmp = `${path}.tmp.${process.pid}`;
+  const payload = { v: PROTOCOL_VERSION, port: fields.port, token: fields.token, ts: Date.now() };
+  try {
+    writeFileSync(tmp, JSON.stringify(payload), { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
+    chmodSync(path, 0o600);
+    return path;
+  } catch {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* nothing to clean */
+    }
+    return null;
+  }
 }
 
 /**

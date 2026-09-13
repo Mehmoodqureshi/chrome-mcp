@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { chmodSync, mkdtempSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -23,6 +23,7 @@ import {
   resolveToken,
   tokenPath,
   tokensMatch,
+  writeBundledPairing,
   writeHandshake,
   writePersistedToken,
 } from '../src/bridge/auth';
@@ -116,6 +117,26 @@ test('auth: handshake is written 0600 and round-trips; tokensMatch is exact', ()
   assert.equal(back.v, PROTOCOL_VERSION);
   assert.ok(tokensMatch(token, back.token));
   assert.ok(!tokensMatch(token, token + 'x'));
+});
+
+test('auth: bundled pairing.json is written 0600 into the extension folder; missing folder → null, never throws', () => {
+  const extDir = mkdtempSync(join(tmpdir(), 'cmcp-ext-'));
+  const token = generateToken();
+  const path = writeBundledPairing(extDir, { port: 38017, token });
+  assert.equal(path, join(extDir, 'pairing.json'));
+  if (POSIX) {
+    const mode = statSync(path!).mode & 0o777;
+    assert.equal(mode & 0o077, 0, 'pairing file must not be group/other accessible');
+  }
+  const back = JSON.parse(readFileSync(path!, 'utf8')) as { v: number; port: number; token: string };
+  assert.equal(back.port, 38017);
+  assert.equal(back.token, token);
+  assert.equal(back.v, PROTOCOL_VERSION);
+  // Overwrite is atomic and idempotent.
+  assert.equal(writeBundledPairing(extDir, { port: 38018, token }), path);
+  assert.equal((JSON.parse(readFileSync(path!, 'utf8')) as { port: number }).port, 38018);
+  // A folder that does not exist (read-only / relocated install) degrades to null.
+  assert.equal(writeBundledPairing(join(extDir, 'nope', 'deeper'), { port: 1, token }), null);
 });
 
 test('correct token → welcome; hasActiveExtension true', async () => {

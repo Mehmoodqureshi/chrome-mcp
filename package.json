@@ -24,8 +24,9 @@
     "dist/shared/**/*.js",
     "dist/shared/**/*.d.ts",
     "extension-dist",
-    "scripts/postinstall.js",
+    "!extension-dist/pairing.json",
     "README.md",
+    "SETUP.md",
     "LICENSE",
     "docs/BLUEPRINT.md"
   ],
@@ -55,12 +56,10 @@
     "clean": "rimraf dist extension-dist",
     "test": "npm run clean && npm run build && npm run build:ext && node --test dist/test/*.test.js",
     "test:hitl": "npm run build && node dist/hitl/index.js",
-    "prepack": "npm run clean && npm run build && npm run build:ext",
-    "postinstall": "node scripts/postinstall.js"
+    "prepack": "npm run clean && npm run build && npm run build:ext"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "playwright": "^1.49.1",
     "ws": "^8.18.0",
     "zod": "^4.4.3"
   },
@@ -69,6 +68,7 @@
     "@types/node": "^20.17.10",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.24.0",
+    "playwright": "^1.49.1",
     "rimraf": "^5.0.10",
     "typescript": "^5.7.2"
   },

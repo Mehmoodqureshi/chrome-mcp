@@ -29,6 +29,21 @@ Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
 
 ## Quickstart
 
+### Up and running in one paste
+
+Hand this to your AI agent (Claude Code, Cursor, Windsurf, anything MCP) and it
+installs the server, wires it into the client, and walks you through the two
+steps that must happen inside Chrome:
+
+```text
+Set up chrome-mcp on this machine by fetching and following
+https://raw.githubusercontent.com/Mehmoodqureshi/chrome-mcp/main/SETUP.md
+exactly, step by step. Work autonomously and verify each step.
+```
+
+Prefer to read before you run an agent on your machine? [`SETUP.md`](SETUP.md)
+is the exact file the agent follows. The manual steps are below.
+
 **1. Register the MCP server** with your host.
 
 <details open>
@@ -98,16 +113,24 @@ compile. Install globally to get a stable path to it:
 
 ```bash
 npm install -g @mehmoodqureshi/chrome-mcp
-npm root -g     # → <root>; the extension is at <root>/@mehmoodqureshi/chrome-mcp/extension-dist
+chrome-mcp --extension-path   # prints the absolute path of extension-dist
 ```
 
 Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
 select that `extension-dist/` directory. (Working from a git clone instead? Run
 `npm install && npm run build:ext` first — `extension-dist/` is gitignored.)
 
-**3. Pair it:** run `npx chrome-mcp --print-pairing` to write the handshake and
-print its path, open the extension's **Options** page, and paste the `port` +
-`token` from `~/.chrome-mcp/handshake.json`.
+**3. Pair it — usually nothing to do.** Every time the server boots it writes
+`pairing.json` (mode 0600, never shipped in the tarball) into the very
+`extension-dist/` folder you just loaded. The extension reads that file from its
+own folder on startup and pairs itself, so the toolbar badge turns green with no
+token to paste. Load the extension before the server has ever run? It re-checks
+every 30 seconds and pairs as soon as the file appears.
+
+Manual fallback (a copied folder, a read-only install): run
+`npx chrome-mcp --print-pairing`, open the extension's **Options** page, and
+paste the `port` + `token` from `~/.chrome-mcp/handshake.json`. Values saved
+there take precedence over the bundled file.
 
 ### Running more than one session
 
@@ -155,7 +178,7 @@ start. Wrap it in `cmd /c`:
 
 Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp --allow-domain example.com`
 
-Everything else is the same — load `extension-dist/` from `npm root -g` and pair
+Everything else is the same — load the folder `chrome-mcp --extension-path` prints and pair
 as above.
 
 The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
@@ -400,10 +423,10 @@ RUN_EXT_SMOKE=1 node --test dist/test/extension-smoke.test.js   # live, headed
 ## The extension
 
 `extension/` builds (esbuild) to `extension-dist/`, loaded via
-`chrome://extensions` → **Load unpacked** → select `extension-dist/`. Pair it
-from the extension's **Options** page using the `port` + `token` from
-`~/.chrome-mcp/handshake.json` (run `npx chrome-mcp --print-pairing` to get the
-path).
+`chrome://extensions` → **Load unpacked** → select `extension-dist/`. It pairs
+itself from the `pairing.json` the server writes into that folder on boot; the
+**Options** page paste of `port` + `token` from `~/.chrome-mcp/handshake.json`
+(run `npx chrome-mcp --print-pairing` to get the path) is only the fallback.
 
 > **Reads/interaction use `chrome.scripting`/`chrome.tabs`** — no "is being
 > debugged" banner, CSP-safe reads (isolated world), testable under Playwright.
