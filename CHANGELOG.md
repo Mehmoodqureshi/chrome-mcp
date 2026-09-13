@@ -1,3 +1,23 @@
+## 0.9.0 - 2026-09-13
+
+- feat: the extension installs to a folder you can find. On every boot, and on
+  `--extension-path`, the server mirrors the bundled extension into
+  `~/chrome-mcp-extension` (`%USERPROFILE%\chrome-mcp-extension` on Windows;
+  `CHROME_MCP_EXTENSION_DIR` overrides) and writes `pairing.json` there. Load
+  unpacked now points at a plain folder under your home directory instead of a
+  path buried under `npm root -g`, and no global install is needed:
+  `npx -y @mehmoodqureshi/chrome-mcp --extension-path` creates it and prints
+  the path. Unchanged boots write nothing; after an upgrade the next boot
+  refreshes the files and logs a reminder to click Reload on
+  `chrome://extensions`. Anyone who loaded the extension straight from the
+  package folder on 0.8.0 keeps pairing, since that folder still gets
+  `pairing.json` too.
+- docs: README and SETUP.md say where the status badge lives (on the toolbar
+  icon, behind the puzzle-piece button until pinned) and what each badge means.
+- fix: docs and the Options page no longer say `npx chrome-mcp`, which resolves
+  to an unrelated npm package of the same name; every example spells out
+  `npx -y @mehmoodqureshi/chrome-mcp`.
+
 ## 0.8.0 - 2026-09-13
 
 - feat: zero-paste pairing. On every boot the server writes `pairing.json`
