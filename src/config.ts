@@ -315,8 +315,10 @@ Connection:
                          land in profiles/<profile>/tasks/<task>/.
   --print-pairing        Write the handshake, print its path, and keep the bridge
                          up until Ctrl-C (manual pairing; never serves MCP)
-  --extension-path       Print the absolute path of the bundled extension folder
-                         (what to pick in chrome://extensions -> Load unpacked)
+  --extension-path       Install the extension to ~/chrome-mcp-extension (or
+                         CHROME_MCP_EXTENSION_DIR) and print that path — the folder
+                         to pick in chrome://extensions -> Load unpacked. The server
+                         also refreshes it on every boot.
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.

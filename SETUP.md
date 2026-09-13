@@ -33,25 +33,22 @@ npm --version
 
 If Node is below 18, stop and tell the human to upgrade before anything else.
 
-## Step 2 — Install the package globally
+## Step 2 — Install the extension folder
 
-A global install gives the extension a stable path that Chrome can load from.
-
-```
-npm install -g @mehmoodqureshi/chrome-mcp
-chrome-mcp --version
-```
-
-Verify: the second command prints a version. Then locate the extension folder:
+No global install is needed. This one command fetches the package, copies the
+extension to a plain folder directly under the home directory, and prints its
+path:
 
 ```
-chrome-mcp --extension-path
+npx -y @mehmoodqureshi/chrome-mcp --extension-path
 ```
 
-It prints the absolute path of the bundled `extension-dist` folder. Verify with
-`ls` (or `dir`) that the folder holds `manifest.json` and `background.js`.
-Record the absolute path; the human needs it in step 4. The install is small
-and downloads no browser: the server drives the Chrome the human already has.
+It prints `~/chrome-mcp-extension` (on Windows `%USERPROFILE%\chrome-mcp-extension`).
+Verify with `ls` (or `dir`) that the folder holds `manifest.json` and
+`background.js`. Record the path; the human needs it in step 4. The install is
+small and downloads no browser: the server drives the Chrome the human already
+has. The server refreshes this folder on every boot, so upgrades need no
+re-copy, only a Reload on `chrome://extensions`.
 
 ## Step 3 — Wire the server into this MCP client
 
@@ -108,7 +105,8 @@ You cannot do this step yourself. Give the human these exact instructions:
 
 1. Open `chrome://extensions` in Chrome.
 2. Turn on **Developer mode** (top right).
-3. Click **Load unpacked** and choose the `extension-dist` folder from step 2.
+3. Click **Load unpacked** and choose the `chrome-mcp-extension` folder in
+   their home directory (the path from step 2).
 4. Confirm an extension named **Chrome MCP Bridge** now appears in the list.
 
 Wait for the human to confirm before continuing.
@@ -116,7 +114,7 @@ Wait for the human to confirm before continuing.
 ## Step 5 — Pairing (automatic; verify it)
 
 Pairing needs no paste. Every time the server boots it writes `pairing.json`
-(mode 0600) into the same `extension-dist` folder the human loaded in step 4.
+(mode 0600) into the same `chrome-mcp-extension` folder the human loaded in step 4.
 The extension reads that file from its own folder and pairs itself. So make
 sure a server has booted at least once since step 2, in either of these ways:
 
@@ -124,19 +122,33 @@ sure a server has booted at least once since step 2, in either of these ways:
 - start one yourself in pairing mode and leave it running in the background:
 
   ```
-  chrome-mcp --print-pairing --persist-token
+  npx -y @mehmoodqureshi/chrome-mcp --print-pairing --persist-token
   ```
 
 Verify the file exists (do not print it):
 
 ```
-ls "$(chrome-mcp --extension-path)/pairing.json"
+ls "$(npx -y @mehmoodqureshi/chrome-mcp --extension-path)/pairing.json"
 ```
 
-Then ask the human to look at the extension's toolbar icon on
-`chrome://extensions` or in the toolbar: a green dot badge means paired and
-connected. It can take up to 30 seconds if the extension was loaded before the
-server first ran. Wait for the human to confirm.
+Then tell the human where to look. The status badge is on the extension's
+icon in Chrome's toolbar, not on the `chrome://extensions` page. Chrome hides
+new extensions behind the puzzle-piece button at the right of the address bar,
+so give them these exact steps:
+
+1. Click the puzzle-piece button at the right of the address bar.
+2. Find **Chrome MCP Bridge** in the list and click the pin icon next to it.
+   The extension icon now stays in the toolbar.
+3. Look at the small badge on that icon. Hovering it shows the status in words.
+
+Badge meanings: a green dot means paired and connected. Yellow dots mean
+connecting. A grey circle means not paired yet, usually because no server has
+run since the extension was loaded. A red exclamation mark means the token was
+rejected, which the extension fixes by itself within a few seconds by re-reading
+the pairing file.
+
+A green dot can take up to 30 seconds if the extension was loaded before the
+server first ran. Wait for the human to confirm the green dot.
 
 **Manual fallback**, only if the badge stays grey after a minute (a copied
 extension folder or a read-only global install): read the port without
@@ -178,10 +190,10 @@ not stick. Re-check the port and token before anything else.
 Summarize for the human:
 
 - Node and package versions installed.
-- The absolute `extension-dist` path they loaded.
+- The absolute `chrome-mcp-extension` path they loaded.
 - Which MCP client was configured, at which scope, with which domains and gates.
-- Whether pairing, `tabs_list`, an allowed navigation, and a refused navigation
-  each verified green.
+- Whether the badge went green, and whether `tabs_list`, an allowed
+  navigation, and a refused navigation each verified.
 - Anything still open on their side, such as restarting the client.
 
 For any failure, name the exact symptom, what you tried, and the matching

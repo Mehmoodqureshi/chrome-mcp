@@ -10,7 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { HELP_TEXT, parseArgs, resolveDataDir } from './config';
 import { type GcOptions, gcTasks, listTasks } from './bridge/tasks';
@@ -21,6 +21,7 @@ import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/da
 import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
+import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
 const SHUTDOWN_DEADLINE_MS = 3000;
@@ -57,12 +58,22 @@ function version(): string {
 }
 
 /**
- * Absolute path of the bundled extension. `dist/src/cli.js` -> `<pkg>/extension-dist`,
- * which `files` in package.json ships in the tarball, so this is right for a global
- * install, an npx cache entry, and a git checkout alike.
+ * Mirror the bundled extension into the visible install folder
+ * (`~/chrome-mcp-extension`) and report where Chrome should load it from. On a
+ * read-only home the bundled folder is returned instead; both are loadable.
  */
-function extensionPath(): string {
-  return resolve(__dirname, '..', '..', 'extension-dist');
+function installExtension(): string {
+  const r = syncExtension();
+  if (!r.ok) {
+    logDebug(`extension not mirrored to the home folder (${r.error}); using the bundled copy at ${r.dir}`);
+    return r.dir;
+  }
+  if (r.created) {
+    logErr(`extension installed at ${r.dir} — chrome://extensions -> Load unpacked -> pick that folder`);
+  } else if (r.copied.length > 0) {
+    logErr(`extension files updated at ${r.dir} — click Reload on chrome://extensions to pick up the new version`);
+  }
+  return r.dir;
 }
 
 /** Render a byte count as a short human string (1.2 MB, 904 KB, …). */
@@ -175,7 +186,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cfg.showExtensionPath) {
-    process.stdout.write(`${extensionPath()}\n`);
+    process.stdout.write(`${installExtension()}\n`);
     return;
   }
 
@@ -211,12 +222,16 @@ async function main(): Promise<void> {
   // Drop the same port + token into the bundled extension folder so a Load
   // unpacked from there pairs itself. Best-effort: a read-only install just
   // falls back to the Options-page paste.
-  const bundled = writeBundledPairing(extensionPath(), { port, token });
+  const extDir = installExtension();
+  const bundled = writeBundledPairing(extDir, { port, token });
   if (bundled) {
-    logErr(`auto-pairing file written to ${bundled} — Load unpacked from that folder needs no token paste`);
+    logErr(`auto-pairing file written to ${bundled} — Load unpacked from ${extDir} needs no token paste`);
   } else {
-    logDebug(`auto-pairing file not written (extension folder missing or read-only at ${extensionPath()})`);
+    logDebug(`auto-pairing file not written (extension folder missing or read-only at ${extDir})`);
   }
+  // Anyone who loaded the extension straight from the package folder (0.8.0
+  // docs) keeps pairing too.
+  if (extDir !== bundledExtensionDir()) writeBundledPairing(bundledExtensionDir(), { port, token });
   if (process.env.CHROME_MCP_TOKEN) {
     logErr('token: pinned from CHROME_MCP_TOKEN (stable; pair once, never again).');
   } else if (cfg.persistToken) {

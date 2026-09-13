@@ -108,29 +108,55 @@ explicitly (and is never written to disk).
 
 **2. Load the extension** — **required**; the server can drive nothing without it.
 
-`extension-dist/` ships prebuilt inside the npm package, so there is nothing to
-compile. Install globally to get a stable path to it:
+The extension ships prebuilt inside the npm package, and every time the server
+boots it copies it to a plain folder right under your home directory:
+
+```
+~/chrome-mcp-extension          (macOS / Linux)
+%USERPROFILE%\chrome-mcp-extension   (Windows)
+```
+
+So after step 1 has started the server once (restart your client, or `/mcp` in
+Claude Code), the folder is already there. To create it without a client, or
+to print the exact path:
 
 ```bash
-npm install -g @mehmoodqureshi/chrome-mcp
-chrome-mcp --extension-path   # prints the absolute path of extension-dist
+npx -y @mehmoodqureshi/chrome-mcp --extension-path
 ```
 
 Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-select that `extension-dist/` directory. (Working from a git clone instead? Run
-`npm install && npm run build:ext` first — `extension-dist/` is gitignored.)
+pick `chrome-mcp-extension` in your home folder. After upgrading the package the
+server refreshes the files on its next boot; click **Reload** on
+`chrome://extensions` to pick them up. `CHROME_MCP_EXTENSION_DIR` moves the
+folder somewhere else. (Working from a git clone instead? Run
+`npm install && npm run build:ext` first — `extension-dist/` is gitignored, and
+the server mirrors it to the same home folder.)
 
 **3. Pair it — usually nothing to do.** Every time the server boots it writes
 `pairing.json` (mode 0600, never shipped in the tarball) into the very
-`extension-dist/` folder you just loaded. The extension reads that file from its
-own folder on startup and pairs itself, so the toolbar badge turns green with no
-token to paste. Load the extension before the server has ever run? It re-checks
-every 30 seconds and pairs as soon as the file appears.
+`chrome-mcp-extension` folder you just loaded. The extension reads that file
+from its own folder on startup and pairs itself, so the toolbar badge turns
+green with no token to paste. Load the extension before the server has ever
+run? It re-checks every 30 seconds and pairs as soon as the file appears.
 
-Manual fallback (a copied folder, a read-only install): run
-`npx chrome-mcp --print-pairing`, open the extension's **Options** page, and
-paste the `port` + `token` from `~/.chrome-mcp/handshake.json`. Values saved
-there take precedence over the bundled file.
+**Where to see the badge:** it sits on the extension's icon in Chrome's
+toolbar, not on the `chrome://extensions` page. Chrome hides new extensions
+behind the puzzle-piece button at the right of the address bar, so click that,
+find **Chrome MCP Bridge**, and click the pin next to it once; the icon then
+stays in the toolbar. Hover it for the status in words.
+
+| Badge | Meaning |
+|---|---|
+| green dot | paired and connected |
+| yellow dots | connecting |
+| grey circle | not paired yet (no server has run, or no pairing file) |
+| red exclamation mark | token rejected; the server rotated it, re-pairs by itself in a moment |
+
+Manual fallback (a copied folder, a read-only home): run
+`npx -y @mehmoodqureshi/chrome-mcp --print-pairing`, open the extension's
+**Options** page, and paste the `port` + `token` from
+`~/.chrome-mcp/handshake.json`. Values saved there take precedence over the
+bundled file.
 
 ### Running more than one session
 
@@ -178,7 +204,7 @@ start. Wrap it in `cmd /c`:
 
 Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp --allow-domain example.com`
 
-Everything else is the same — load the folder `chrome-mcp --extension-path` prints and pair
+Everything else is the same — load `%USERPROFILE%\chrome-mcp-extension` and pair
 as above.
 
 The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
@@ -423,10 +449,13 @@ RUN_EXT_SMOKE=1 node --test dist/test/extension-smoke.test.js   # live, headed
 ## The extension
 
 `extension/` builds (esbuild) to `extension-dist/`, loaded via
-`chrome://extensions` → **Load unpacked** → select `extension-dist/`. It pairs
-itself from the `pairing.json` the server writes into that folder on boot; the
-**Options** page paste of `port` + `token` from `~/.chrome-mcp/handshake.json`
-(run `npx chrome-mcp --print-pairing` to get the path) is only the fallback.
+`chrome://extensions` → **Load unpacked** → select `~/chrome-mcp-extension`, the
+mirror the server refreshes from `extension-dist/` on every boot (loading
+`extension-dist/` directly also works). It pairs itself from the `pairing.json`
+the server writes into that folder; the **Options** page paste of `port` +
+`token` from `~/.chrome-mcp/handshake.json` (run
+`npx -y @mehmoodqureshi/chrome-mcp --print-pairing` to get the path) is only
+the fallback.
 
 > **Reads/interaction use `chrome.scripting`/`chrome.tabs`** — no "is being
 > debugged" banner, CSP-safe reads (isolated world), testable under Playwright.
