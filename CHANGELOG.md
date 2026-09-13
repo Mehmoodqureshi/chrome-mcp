@@ -1,3 +1,30 @@
+## 0.8.0 - 2026-09-13
+
+- feat: zero-paste pairing. On every boot the server writes `pairing.json`
+  (mode 0600) into its bundled `extension-dist/`; an extension loaded unpacked
+  from that folder reads the file from its own package and pairs itself, so
+  Load unpacked is the only manual step. The Options-page paste stays as the
+  fallback and values saved there take precedence. After a reject (a rotated
+  token without `--persist-token`) the extension re-reads the file and retries
+  once; while unpaired it re-checks on every keepalive tick, so loading the
+  extension before the server ever ran still pairs on its own. The file is
+  excluded from the npm tarball and is not web-accessible.
+- feat: `SETUP.md`, step-by-step instructions written for an AI agent to
+  install, wire, pair and verify chrome-mcp end to end. The README opens with
+  the one-paste prompt that points at it.
+- feat: `--extension-path` prints the absolute path of the bundled extension
+  folder, the thing to pick in Load unpacked, for a global install, an npx
+  cache entry and a git checkout alike.
+- fix: a fresh install no longer downloads a Chromium it never uses. Playwright
+  moves to devDependencies (tests and HITL only) and the postinstall hook is
+  gone; the CDP executor is loaded lazily and raises a clear error if anyone
+  asks for it. Install from the tarball drops from a browser download to about
+  seven seconds and 93 packages.
+- fix: `--print-pairing` help said it exits after writing the handshake; it
+  keeps the bridge up until Ctrl-C, which is what manual pairing needs.
+- chore: the extension manifest version now tracks the package (it had sat at
+  0.5.0 since June).
+
 ## 0.7.1 - 2026-09-11
 
 - fix: `--log-level silent` now silences the task workspace too. The memory
