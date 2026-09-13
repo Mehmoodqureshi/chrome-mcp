@@ -98,6 +98,32 @@ async function adoptBundledPairing(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Self-update for unpacked installs. The server mirrors a new extension build
+ * into this folder on every boot; Chrome keeps running the old one until the
+ * extension is reloaded. An unpacked extension reads its own files from disk,
+ * so compare the manifest on disk with the one Chrome loaded and reload once
+ * per new version. A packed (Web Store) install always sees its own manifest,
+ * so this is a no-op there. Guarded by storage so a broken manifest on disk
+ * cannot cause a reload loop.
+ */
+async function reloadIfFilesChanged(): Promise<void> {
+  try {
+    const res = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' });
+    if (!res.ok) return;
+    const onDisk = (await res.json()) as { version?: unknown };
+    const loaded = chrome.runtime.getManifest().version;
+    if (typeof onDisk.version !== 'string' || onDisk.version === loaded) return;
+    const { reloadedFor } = await chrome.storage.local.get('reloadedFor');
+    if (reloadedFor === onDisk.version) return; // already tried this version once
+    await chrome.storage.local.set({ reloadedFor: onDisk.version });
+    console.info(`[chrome-mcp] extension files updated on disk (${loaded} -> ${onDisk.version}); reloading`);
+    chrome.runtime.reload();
+  } catch {
+    /* packed install, or the folder is unreadable — nothing to do */
+  }
+}
+
 async function getConfig(): Promise<PairConfig | null> {
   const { wsPort, token, profile } = await chrome.storage.local.get(['wsPort', 'token', 'profile']);
   // wsPort must be > 0 — a stored 0 would dial ws://127.0.0.1:0 (ERR_UNSAFE_PORT).
@@ -143,6 +169,7 @@ async function ensureConnected(): Promise<void> {
 // --- keepalive: an awaited extension-API call resets the 30s idle timer -----
 async function keepalivePulse(): Promise<void> {
   await chrome.storage.local.get('connState'); // the await is what keeps us warm
+  await reloadIfFilesChanged();
   // Not paired yet (extension loaded before the server first ran)? The server
   // may have written pairing.json since — pick it up without a reload.
   if (!ws.isConnected() && !(await getConfig())) await adoptBundledPairing();
@@ -178,6 +205,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 async function bootstrap(): Promise<void> {
   await chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+  await reloadIfFilesChanged();
   // Zero-paste pairing: if this folder carries the server's pairing.json, adopt
   // it. When that writes storage, onChanged reconnects; otherwise connect now.
   if (!(await adoptBundledPairing())) await ensureConnected();

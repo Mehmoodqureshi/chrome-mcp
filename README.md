@@ -126,8 +126,8 @@ npx -y @mehmoodqureshi/chrome-mcp --extension-path
 
 Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
 pick `chrome-mcp-extension` in your home folder. After upgrading the package the
-server refreshes the files on its next boot; click **Reload** on
-`chrome://extensions` to pick them up. `CHROME_MCP_EXTENSION_DIR` moves the
+server refreshes the files on its next boot and the extension reloads itself
+within 30 seconds; nothing to click. `CHROME_MCP_EXTENSION_DIR` moves the
 folder somewhere else. (Working from a git clone instead? Run
 `npm install && npm run build:ext` first — `extension-dist/` is gitignored, and
 the server mirrors it to the same home folder.)

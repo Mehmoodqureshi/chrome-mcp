@@ -47,8 +47,9 @@ It prints `~/chrome-mcp-extension` (on Windows `%USERPROFILE%\chrome-mcp-extensi
 Verify with `ls` (or `dir`) that the folder holds `manifest.json` and
 `background.js`. Record the path; the human needs it in step 4. The install is
 small and downloads no browser: the server drives the Chrome the human already
-has. The server refreshes this folder on every boot, so upgrades need no
-re-copy, only a Reload on `chrome://extensions`.
+has. The server refreshes this folder on every boot and the loaded extension
+reloads itself when the version changes, so upgrades need nothing from the
+human.
 
 ## Step 3 — Wire the server into this MCP client
 

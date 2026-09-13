@@ -26,7 +26,9 @@ async function loadExisting(): Promise<void> {
       ? 'Paired automatically from the pairing.json the server wrote into this extension folder. Saving here overrides it.'
       : pairingSource === 'manual'
         ? 'Paired by hand. Saved values take precedence over the bundled pairing.json.'
-        : 'Not paired yet. If you loaded this extension from the chrome-mcp package folder, start the server once and it pairs itself; otherwise paste the values below.';
+        : typeof wsPort === 'number' && wsPort > 0 && connState !== 'idle'
+          ? 'Paired with values saved by an earlier version. Saving here keeps them manual.'
+          : 'Not paired yet. If you loaded this extension from the chrome-mcp package folder, start the server once and it pairs itself; otherwise paste the values below.';
   // Prefill a real value (not just the placeholder) so an empty Save can never
   // store port 0 → ws://127.0.0.1:0 → ERR_UNSAFE_PORT. Defaults to the server's port.
   portEl.value = typeof wsPort === 'number' && wsPort > 0 ? String(wsPort) : String(DEFAULT_WS_PORT);

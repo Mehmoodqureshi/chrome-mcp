@@ -71,7 +71,7 @@ function installExtension(): string {
   if (r.created) {
     logErr(`extension installed at ${r.dir} — chrome://extensions -> Load unpacked -> pick that folder`);
   } else if (r.copied.length > 0) {
-    logErr(`extension files updated at ${r.dir} — click Reload on chrome://extensions to pick up the new version`);
+    logErr(`extension files updated at ${r.dir} — a loaded extension reloads itself within 30 s`);
   }
   return r.dir;
 }
