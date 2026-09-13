@@ -1,3 +1,21 @@
+## 0.9.1 - 2026-09-13
+
+- feat: the extension reloads itself after an upgrade. An unpacked extension
+  reads its own files from disk, so it compares the manifest version on disk
+  with the one Chrome loaded, on boot and every 30 seconds, and reloads once
+  per new version. After the server mirrors a new build into
+  `~/chrome-mcp-extension`, the running extension picks it up with nothing to
+  click. No-op for Web Store installs; a storage guard prevents reload loops.
+- feat: Web Store packaging. The extension is now named "MCP Extension for
+  Chrome", ships icons at 16/32/48/128 (an original ring-and-dot mark, no
+  Google branding), and `npm run pack:ext` builds the upload zip with
+  `pairing.json` excluded. `docs/PRIVACY.md` and `docs/WEBSTORE.md` hold the
+  privacy policy and every dashboard field ready to paste.
+- fix: the Options page no longer says "Not paired yet" under a connected
+  status for a browser paired before the pairing-source field existed.
+- fix: docs and the Options page spell out `npx -y @mehmoodqureshi/chrome-mcp`;
+  bare `npx chrome-mcp` resolves to an unrelated package of the same name.
+
 ## 0.9.0 - 2026-09-13
 
 - feat: the extension installs to a folder you can find. On every boot, and on
