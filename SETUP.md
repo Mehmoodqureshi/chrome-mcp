@@ -107,7 +107,7 @@ You cannot do this step yourself. Give the human these exact instructions:
 2. Turn on **Developer mode** (top right).
 3. Click **Load unpacked** and choose the `chrome-mcp-extension` folder in
    their home directory (the path from step 2).
-4. Confirm an extension named **Chrome MCP Bridge** now appears in the list.
+4. Confirm an extension named **MCP Extension for Chrome** now appears in the list.
 
 Wait for the human to confirm before continuing.
 
@@ -137,7 +137,7 @@ new extensions behind the puzzle-piece button at the right of the address bar,
 so give them these exact steps:
 
 1. Click the puzzle-piece button at the right of the address bar.
-2. Find **Chrome MCP Bridge** in the list and click the pin icon next to it.
+2. Find **MCP Extension for Chrome** in the list and click the pin icon next to it.
    The extension icon now stays in the toolbar.
 3. Look at the small badge on that icon. Hovering it shows the status in words.
 
@@ -158,7 +158,7 @@ printing the token,
 node -e "console.log(require(require('os').homedir()+'/.chrome-mcp/handshake.json').port)"
 ```
 
-then have the human open **Details** on Chrome MCP Bridge, then **Extension
+then have the human open **Details** on MCP Extension for Chrome, then **Extension
 options**, enter that **Port**, open `~/.chrome-mcp/handshake.json` in a text
 editor and paste its `token` into the **Token** field, leave **Profile** as
 `default`, and click **Save**. The status line should read **connected** within

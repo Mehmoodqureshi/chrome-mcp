@@ -3,7 +3,7 @@
  * assemble the load-unpacked root at <repo>/extension-dist.
  */
 import { build } from 'esbuild';
-import { mkdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,5 +32,9 @@ await build({
 
 copyFileSync(join(extRoot, 'manifest.json'), join(outDir, 'manifest.json'));
 copyFileSync(join(extRoot, 'src/options/options.html'), join(outDir, 'options.html'));
+// Icons sit flat in the root: the home-folder mirror copies top-level files only.
+for (const f of readdirSync(join(extRoot, 'icons'))) {
+  if (f.endsWith('.png')) copyFileSync(join(extRoot, 'icons', f), join(outDir, f));
+}
 
 console.log(`[build-ext] wrote ${outDir}`);

@@ -2,6 +2,7 @@ node_modules/
 dist/
 extension-dist/
 *.tsbuildinfo
+chrome-mcp-extension-*.zip
 
 # Local, secret, or machine-specific
 .claude/settings.local.json

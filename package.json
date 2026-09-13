@@ -51,6 +51,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:ext": "node extension/scripts/build-ext.mjs",
+    "pack:ext": "npm run build:ext && rm -f chrome-mcp-extension-$npm_package_version.zip && cd extension-dist && zip -q -r ../chrome-mcp-extension-$npm_package_version.zip . -x pairing.json '.*' && cd .. && ls -la chrome-mcp-extension-$npm_package_version.zip",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:ext": "tsc -p tsconfig.ext.json",
     "clean": "rimraf dist extension-dist",

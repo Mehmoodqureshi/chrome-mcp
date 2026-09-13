@@ -142,7 +142,7 @@ run? It re-checks every 30 seconds and pairs as soon as the file appears.
 **Where to see the badge:** it sits on the extension's icon in Chrome's
 toolbar, not on the `chrome://extensions` page. Chrome hides new extensions
 behind the puzzle-piece button at the right of the address bar, so click that,
-find **Chrome MCP Bridge**, and click the pin next to it once; the icon then
+find **MCP Extension for Chrome**, and click the pin next to it once; the icon then
 stays in the toolbar. Hover it for the status in words.
 
 | Badge | Meaning |
