@@ -80,6 +80,12 @@ export interface StubOptions {
   snapshotNodes?: SnapshotNode[];
   /** Frames the stub reports for `frames_list`. */
   frames?: FrameInfo[];
+  /** Applied after any action or history move: models a click/submit/back that
+   *  lands the tab on a different page (e.g. a redirect to a sign-in wall). */
+  afterAction?: { url?: string; nodes?: SnapshotNode[] };
+  /** When true, `waitFor` rejects with TIMEOUT - the error a wait on a page
+   *  that silently became a login form used to surface. */
+  waitForTimesOut?: boolean;
   /** What the in-page observers return. Absent = the hook is not installed,
    *  which is the case the tools must report clearly rather than as an empty list. */
   observers?: ObserverReadResult;
@@ -105,6 +111,10 @@ export class StubExecutor implements Executor {
   snapshotNodes: SnapshotNode[];
   private readonly frames: FrameInfo[];
   private readonly observerState?: ObserverReadResult;
+  private readonly afterAction?: { url?: string; nodes?: SnapshotNode[] };
+  private readonly waitForTimesOut: boolean;
+  /** How many snapshots were taken - the auth guard must cost none when off. */
+  snapshotCalls = 0;
   /** The last observer args received, so a test can assert what was requested. */
   lastObserverArgs?: ObserverArgs;
   /** How many times the gate actually asked for the tab list — the round-trip
@@ -114,6 +124,8 @@ export class StubExecutor implements Executor {
 
   constructor(opts: StubOptions = {}) {
     this.url = opts.activeUrl ?? 'about:blank';
+    this.afterAction = opts.afterAction;
+    this.waitForTimesOut = opts.waitForTimesOut ?? false;
     this.evalThrows = opts.evalThrows ?? false;
     this.tabsListThrows = opts.tabsListThrows ?? false;
     this.noTabs = opts.noTabs ?? false;
@@ -212,16 +224,27 @@ export class StubExecutor implements Executor {
     return { url: args.url, title: 'Stub Page', httpStatus: 200 };
   }
   async back(): Promise<NavResult> {
+    this.landed();
     return { url: this.url, title: 'Stub Page' };
   }
   async forward(): Promise<NavResult> {
+    this.landed();
     return { url: this.url, title: 'Stub Page' };
   }
   async reload(): Promise<NavResult> {
+    this.landed();
     return { url: this.url, title: 'Stub Page' };
   }
 
+  /** Move the stub tab to the configured post-action page, if any. */
+  private landed(): void {
+    if (!this.afterAction) return;
+    if (this.afterAction.url !== undefined) this.url = this.afterAction.url;
+    if (this.afterAction.nodes !== undefined) this.snapshotNodes = this.afterAction.nodes;
+  }
+
   async click(): Promise<ActionOk> {
+    this.landed();
     return ok;
   }
   async type(): Promise<ActionOk> {
@@ -229,18 +252,22 @@ export class StubExecutor implements Executor {
       this.remainingWriteDisconnects--;
       throw new ExecutorError('EXTENSION_DISCONNECTED', 'stub: service worker recycled mid-command');
     }
+    this.landed();
     return ok;
   }
   async fill(): Promise<ActionOk> {
+    this.landed();
     return ok;
   }
   async press(): Promise<ActionOk> {
+    this.landed();
     return ok;
   }
   async hover(): Promise<ActionOk> {
     return ok;
   }
   async selectOption(): Promise<ActionOk> {
+    this.landed();
     return ok;
   }
   async scroll(): Promise<ActionOk> {
@@ -256,6 +283,7 @@ export class StubExecutor implements Executor {
     return { html: this.htmlPayload };
   }
   async snapshot(): Promise<SnapshotResult> {
+    this.snapshotCalls++;
     return { url: this.url, title: 'Stub Page', nodes: this.snapshotNodes, truncated: false };
   }
   async getCookies(): Promise<{ cookies: CookieItem[] }> {
@@ -275,6 +303,7 @@ export class StubExecutor implements Executor {
     return { ok: true, value: 'stub-value', type: 'string' };
   }
   async waitFor(): Promise<WaitResult> {
+    if (this.waitForTimesOut) throw new ExecutorError('TIMEOUT', 'stub: wait_for timed out');
     return { matched: true, waitedMs: 0 };
   }
 

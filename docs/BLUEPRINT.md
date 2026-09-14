@@ -350,7 +350,7 @@ export type ExecutorErrorCode =
 
 ## 5. The Complete MCP Tool Surface
 
-38 tools. `readOnly` is metadata (not a JSON-Schema field) consumed by the host
+39 tools. `readOnly` is metadata (not a JSON-Schema field) consumed by the host
 and by **safe-mode** (shipped in v1, default ON). Every handler:
 `withReadyExecutor()` → validate args (`requireTarget` for selector|ref) →
 **`policy.assertUrlAllowed(currentTabUrl, method)`** → call executor/helper →

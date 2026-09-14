@@ -48,6 +48,10 @@ export interface Policy extends WirePolicy {
   redact?: boolean;
   /** Extra redaction patterns (regex sources) supplied by the operator. */
   redactPatterns?: string[];
+  /** `--fail-on-auth-wall`: every navigating tool and action fails with
+   *  `AUTH_REQUIRED` when the page it lands on is a high-confidence sign-in
+   *  wall, so an expired session is never scored as some other failure. */
+  failOnAuthWall?: boolean;
 }
 
 /** The SAFE default: deny everything until the user opts in. */
@@ -62,6 +66,7 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   allowObservers: false,
   redact: false,
   redactPatterns: [],
+  failOnAuthWall: false,
 });
 
 /** Merge a partial (from a policy file and/or CLI flags) over the safe default. */
@@ -77,6 +82,7 @@ export function resolvePolicy(partial?: Partial<Policy>): Policy {
     allowObservers: partial?.allowObservers ?? DEFAULT_POLICY.allowObservers,
     redact: partial?.redact ?? DEFAULT_POLICY.redact,
     redactPatterns: partial?.redactPatterns ?? [...(DEFAULT_POLICY.redactPatterns ?? [])],
+    failOnAuthWall: partial?.failOnAuthWall ?? DEFAULT_POLICY.failOnAuthWall,
   };
 }
 

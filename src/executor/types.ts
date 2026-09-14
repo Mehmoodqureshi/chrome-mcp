@@ -369,7 +369,9 @@ export type ExecutorErrorCodeLocal =
   | 'FRAME_NOT_FOUND'
   | 'OBSERVERS_DISABLED'
   | 'UNSUPPORTED'
-  | 'BACKPRESSURE';
+  | 'BACKPRESSURE'
+  /** The page is a sign-in wall (session expired mid-run). Raised only when the caller opts in via `failOnAuthWall`. */
+  | 'AUTH_REQUIRED';
 
 export class ExecutorError extends Error {
   constructor(

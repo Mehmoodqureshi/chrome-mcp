@@ -333,6 +333,46 @@ type  { "role": "textbox", "name": "Email", "text": "a@b.com" }
 Resolution is server-side and refuses to guess: an ambiguous locator fails with
 the candidates listed rather than acting on the first one (pass `nth` to pick).
 
+### Did the session expire? — `auth_check` and `failOnAuthWall`
+
+Reusing a signed-in Chrome removes the login step, but a session cookie can
+still expire mid-run. Without a distinct signal the next step fails as
+`SELECTOR_NOT_FOUND` or `TIMEOUT`, and an eval harness scores the run as an
+agent failure when it was an auth failure. Every `snapshot` now carries an
+`authWall` verdict when the page looks like a sign-in wall, and there is a
+dedicated probe:
+
+```jsonc
+auth_check {}                                   // { authRequired, confidence, signals }
+auth_check { "failOnAuthWall": true }           // [AUTH_REQUIRED] error instead
+navigate  { "url": "https://app.example.com/dashboard", "failOnAuthWall": true }
+snapshot  { "failOnAuthWall": true }
+```
+
+For a harness, set it once instead of per call:
+
+```
+npx -y @mehmoodqureshi/chrome-mcp --allow-domain app.example.com --enable-mutations --fail-on-auth-wall
+```
+
+With the flag on, every step that can move the tab (`navigate`, `click`, `type`,
+`select_option`, `press`, `fill_form`, `back`, `forward`, `reload`) checks the
+page it landed on and fails with `[AUTH_REQUIRED]` if that page is a sign-in
+wall, and a `wait_for` that times out on such a page reports `[AUTH_REQUIRED]`
+instead of `[TIMEOUT]`. Each guarded step costs one extra snapshot round-trip;
+with the flag off the cost is zero. `[AUTH_REQUIRED]` is where a harness pauses
+for a human to sign in again in the same Chrome, then retries the step. chrome-mcp
+never re-authenticates on its own: it holds no credentials, by design.
+
+Detection reads only what the snapshot already has: the URL (sign-in routes,
+identity-provider hosts such as `accounts.google.com`, `login.microsoftonline.com`,
+Okta, Auth0), the title, password fields, and sign-in controls. `high`
+confidence needs two independent cues (a password field plus a sign-in button,
+say); a lone password field or a bare `/auth/...` URL is `medium`. A header
+"Sign in" link on an ordinary page never counts. `failOnAuthWall` fires only on
+`high`, so a harness can bucket `[AUTH_REQUIRED]` separately from every other
+failure while a settings page with a "current password" field carries on.
+
 ### Printing — `print_pdf`
 
 ```jsonc

@@ -36,6 +36,7 @@ import { extractLinks, fillForm, readAsMarkdown } from './helpers';
 import { compileRedactionPattern, NO_REDACTION, redactHtml, redactText, type RedactionConfig } from './redact';
 import { resolveLocator, hasLocator, type Locator } from './locate';
 import { diffSnapshots, lastSnapshot, rememberSnapshot, resetSnapshots, scopeOf } from './snapdiff';
+import { describeAuthWall, detectAuthWall, type AuthWall } from '../../shared/auth-wall';
 import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
 import { logDebug } from './log';
 import { listTasks } from '../bridge/tasks';
@@ -80,6 +81,7 @@ const TARGET_PROPS = {
 } as const;
 
 const tabIdField = z.string().describe('Target tab id (defaults to the active tab)').optional();
+const authWallField = z.boolean().describe('Fail with [AUTH_REQUIRED] when the page this call lands on is a high-confidence sign-in wall (session expired). Off by default unless the server runs with --fail-on-auth-wall; snapshot still reports the verdict as `authWall` either way.').optional();
 
 /**
  * Frame targeting. Omitted = the top frame, which is what every call did before
@@ -124,30 +126,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'tab_new', description: 'Open a NEW tab (optionally at a URL) and focus it. Prefer this over `navigate` when the user says "open"/"go to" a site — `navigate` REPLACES the current tab. Pass active:false to open in the background (used by parallel batches).', inputSchema: { url: z.string().optional(), active: z.boolean().optional() } },
   { name: 'tab_close', description: 'Close a tab by tabId.', inputSchema: { tabId: z.string() } },
 
-  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: { url: z.string(), tabId: tabIdField, waitUntil: waitUntilField } },
-  { name: 'back', description: 'Go back in history.', inputSchema: { tabId: tabIdField } },
-  { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField } },
-  { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField } },
+  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: { url: z.string(), tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
+  { name: 'back', description: 'Go back in history.', inputSchema: { tabId: tabIdField, failOnAuthWall: authWallField } },
+  { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField, failOnAuthWall: authWallField } },
+  { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
 
-  { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField } },
-  { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField } },
-  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField } },
-  { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField } },
+  { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField, failOnAuthWall: authWallField } },
   { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, snapshotAfter: snapshotAfterField } },
   { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
   { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
   { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
   { name: 'get_html', description: 'Get HTML of the page or an element. Output is capped (see maxBytes) and cut at a tag boundary; narrow it with `selector` rather than raising the cap when you can. Password field values are always blanked.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, outer: z.boolean().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
-  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with refs to target by `ref` (more reliable than guessing CSS selectors). Pass diff:true to get only what changed since the last snapshot of this tab - far cheaper in a click/read loop. Password fields appear as secret:true with no value.', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), diff: z.boolean().describe('Return added/removed/changed elements since the previous snapshot of this tab instead of the whole tree').optional(), ...FRAME_PROPS, tabId: tabIdField } },
+  { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with refs to target by `ref` (more reliable than guessing CSS selectors). Pass diff:true to get only what changed since the last snapshot of this tab - far cheaper in a click/read loop. Password fields appear as secret:true with no value.', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), diff: z.boolean().describe('Return added/removed/changed elements since the previous snapshot of this tab instead of the whole tree').optional(), failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
   { name: 'get_cookies', description: "Read cookies visible to the tab's URL (or a given url).", inputSchema: { url: z.string().optional(), tabId: tabIdField } },
   { name: 'storage', description: 'Read/write localStorage (or sessionStorage). op: get|set|remove|clear.', inputSchema: { op: z.enum(['get', 'set', 'remove', 'clear']), key: z.string().optional(), value: z.string().optional(), session: z.boolean().optional(), tabId: tabIdField } },
   { name: 'eval', description: 'Evaluate JavaScript in the page (disabled in safe-mode).', inputSchema: { expression: z.string(), awaitPromise: z.boolean().optional(), ...FRAME_PROPS, tabId: tabIdField } },
-  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), ...FRAME_PROPS, tabId: tabIdField } },
+  { name: 'wait_for', description: 'Wait for a selector or text to appear/disappear.', inputSchema: { selector: z.string().optional(), textContains: z.string().optional(), gone: z.boolean().optional(), timeoutMs: z.number().optional(), ...FRAME_PROPS, tabId: tabIdField, failOnAuthWall: authWallField } },
 
   { name: 'extract_links', description: 'Extract anchors from the page or a subtree. dedupe=true collapses links sharing an href (nav/footer noise); limit caps the count.', inputSchema: { selector: z.string().optional(), sameOriginOnly: z.boolean().optional(), dedupe: z.boolean().optional(), limit: z.number().optional(), ...FRAME_PROPS, tabId: tabIdField } },
   { name: 'read_as_markdown', description: 'Read the page (or subtree) as readable markdown.', inputSchema: { selector: z.string().optional(), ...FRAME_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
-  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), ...FRAME_PROPS, tabId: tabIdField } },
+  { name: 'fill_form', description: 'Fill multiple fields (keyed by selector) and optionally submit.', inputSchema: { fields: z.record(z.string(), z.union([z.string(), z.boolean()])), submitSelector: z.string().optional(), ...FRAME_PROPS, tabId: tabIdField, failOnAuthWall: authWallField } },
   { name: 'download_file', description: 'Download a file by URL or from a link element.', inputSchema: { url: z.string().optional(), ...TARGET_PROPS, suggestedName: z.string().optional(), tabId: tabIdField } },
   { name: 'upload_file', description: 'Set local file(s) on a file <input> (target by selector or ref) — uploads without the OS dialog. Requires --enable-uploads. `files` are absolute local paths.', inputSchema: { ...TARGET_PROPS, files: z.array(z.string()), tabId: tabIdField } },
 
@@ -216,6 +218,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 
   { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: {} },
+  { name: 'auth_check', description: 'Is the tab sitting on a sign-in wall? Reads the page (URL, title, password fields, sign-in controls) and returns { authRequired, confidence, signals }. Use it after a navigate, or whenever a step fails unexpectedly, to tell "the session expired" apart from "the agent got lost". Pass failOnAuthWall:true to get an [AUTH_REQUIRED] error instead of a verdict, so a harness can bucket the run as an auth failure.', inputSchema: { failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
 
   { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: { name: z.string().describe('Profile name (becomes a folder; sanitized to a safe path segment).') } },
   { name: 'task_new', description: 'Start a new task (run) under the active profile. Creates profiles/<profile>/tasks/<name>/ with downloads/, results/, screenshots/ and makes it the active task so all captured artifacts land there.', inputSchema: { name: z.string().describe('Task name (becomes a folder; sanitized to a safe path segment).') } },
@@ -397,6 +400,57 @@ function redaction(policy: Policy): RedactionConfig {
 }
 
 /** The scope a tab's remembered snapshot lives under. */
+/**
+ * Throw `[AUTH_REQUIRED]` when the caller asked for it and the page is a
+ * high-confidence sign-in wall. Medium-confidence verdicts never fail a call: a
+ * lone password field on an otherwise ordinary page is not worth aborting over.
+ */
+function failIfAuthWall(wall: AuthWall | null, url: string, a: Record<string, unknown>, policy: Policy): void {
+  if (!wall || wall.confidence !== 'high') return;
+  if (!authGuardOn(a, policy)) return;
+  throw new ExecutorError('AUTH_REQUIRED', describeAuthWall(wall, url));
+}
+
+/** The guard is on for this call when the caller asked, or the server runs with `--fail-on-auth-wall`. */
+function authGuardOn(a: Record<string, unknown>, policy: Policy): boolean {
+  return optionalBoolean(a, 'failOnAuthWall') === true || policy.failOnAuthWall === true;
+}
+
+/**
+ * After an action or history move: when the guard is on, look at the page the
+ * tab landed on and fail with `AUTH_REQUIRED` if it is a sign-in wall. Costs
+ * one snapshot round-trip, and only when the guard is on. The snapshot is
+ * remembered for this tab so a later `snapshot { diff: true }` stays coherent.
+ */
+async function guardAuthWall(ctx: ToolCtx, a: Record<string, unknown>): Promise<void> {
+  if (!authGuardOn(a, ctx.policy)) return;
+  const snap = await ctx.ex.snapshot({ tabId: tabId(a), interactiveOnly: true, max: 200 });
+  rememberSnapshot(snapScope(a), snap);
+  failIfAuthWall(detectAuthWall(snap), snap.url, a, ctx.policy);
+}
+
+/**
+ * A wait that timed out on a page that has become a sign-in wall is an auth
+ * failure, not a slow page. With the guard on, reclassify it.
+ */
+async function reclassifyTimeout(ctx: ToolCtx, a: Record<string, unknown>, err: unknown): Promise<never> {
+  if (err instanceof ExecutorError && err.code === 'TIMEOUT' && authGuardOn(a, ctx.policy)) {
+    await guardAuthWall(ctx, a);
+  }
+  throw err;
+}
+
+/** The `authWall` field to spread onto a page-read result: present only when detected. */
+function authWallOf(
+  ctx: ToolCtx,
+  snap: { url: string; title: string; nodes: Array<{ role: string; name: string; tag: string; secret?: boolean }> },
+  a: Record<string, unknown>,
+): { authWall?: AuthWall } {
+  const wall = detectAuthWall(snap);
+  failIfAuthWall(wall, snap.url, a, ctx.policy);
+  return wall ? { authWall: wall } : {};
+}
+
 const snapScope = (a: Record<string, unknown>): string =>
   scopeOf(peekActiveWorkspace()?.profile ?? 'default', tabId(a));
 
@@ -410,12 +464,18 @@ async function actionResult(
   a: Record<string, unknown>,
   payload: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  if (optionalBoolean(a, 'snapshotAfter') !== true) return jsonResult(payload);
+  const wantDiff = optionalBoolean(a, 'snapshotAfter') === true;
+  const guard = authGuardOn(a, ctx.policy);
+  if (!wantDiff && !guard) return jsonResult(payload);
   const scope = snapScope(a);
   const previous = lastSnapshot(scope);
   const snap = await ctx.ex.snapshot({ tabId: tabId(a), max: 200, ...frameOpts(a) });
-  const diff = diffSnapshots(previous, snap);
+  // One snapshot serves both: the auth guard reads it first (and aborts the
+  // call if the action landed on a sign-in wall), then the diff is built.
+  failIfAuthWall(detectAuthWall(snap), snap.url, a, ctx.policy);
   const stored = rememberSnapshot(scope, snap);
+  if (!wantDiff) return jsonResult(payload);
+  const diff = diffSnapshots(previous, snap);
   return jsonResult({ ...payload, changed: { ...diff, snapshotId: stored.id, url: snap.url } });
 }
 
@@ -505,19 +565,30 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   navigate: async (a, ctx) => {
     const url = requireString(a, 'url');
     await gate(ctx, 'navigate', { url });
-    return jsonResult(await ctx.ex.navigate({ url, tabId: tabId(a), waitUntil: waitUntil(a) }));
+    const nav = await ctx.ex.navigate({ url, tabId: tabId(a), waitUntil: waitUntil(a) });
+    if (!authGuardOn(a, ctx.policy)) return jsonResult(nav);
+    // Guard on: the check costs one snapshot round-trip after the navigation.
+    const snap = await ctx.ex.snapshot({ tabId: tabId(a), interactiveOnly: true, max: 200 });
+    rememberSnapshot(snapScope(a), snap);
+    return jsonResult({ ...nav, ...authWallOf(ctx, snap, a) });
   },
   back: async (a, ctx) => {
     await gate(ctx, 'back', { tabId: tabId(a) });
-    return jsonResult(await ctx.ex.back(tabId(a)));
+    const res = await ctx.ex.back(tabId(a));
+    await guardAuthWall(ctx, a);
+    return jsonResult(res);
   },
   forward: async (a, ctx) => {
     await gate(ctx, 'forward', { tabId: tabId(a) });
-    return jsonResult(await ctx.ex.forward(tabId(a)));
+    const res = await ctx.ex.forward(tabId(a));
+    await guardAuthWall(ctx, a);
+    return jsonResult(res);
   },
   reload: async (a, ctx) => {
     await gate(ctx, 'reload', { tabId: tabId(a) });
-    return jsonResult(await ctx.ex.reload({ tabId: tabId(a), waitUntil: waitUntil(a) }));
+    const res = await ctx.ex.reload({ tabId: tabId(a), waitUntil: waitUntil(a) });
+    await guardAuthWall(ctx, a);
+    return jsonResult(res);
   },
 
   click: async (a, ctx) => {
@@ -555,12 +626,12 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   press: async (a, ctx) => {
     await gate(ctx, 'press', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.press(requireString(a, 'key'), {
-        tabId: tabId(a),
-        modifiers: optionalStringArray(a, 'modifiers') as never,
-      }),
-    );
+    const res = await ctx.ex.press(requireString(a, 'key'), {
+      tabId: tabId(a),
+      modifiers: optionalStringArray(a, 'modifiers') as never,
+    });
+    await guardAuthWall(ctx, a); // Enter on a form is the classic way to land on a wall
+    return jsonResult(res);
   },
   hover: async (a, ctx) => {
     await gate(ctx, 'hover', { tabId: tabId(a) });
@@ -643,14 +714,16 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     const scope = snapScope(a);
     const previous = lastSnapshot(scope);
     const stored = rememberSnapshot(scope, snap);
+    const authWall = authWallOf(ctx, snap, a);
     if (optionalBoolean(a, 'diff') !== true) {
-      return jsonResult({ ...snap, snapshotId: stored.id });
+      return jsonResult({ ...snap, snapshotId: stored.id, ...authWall });
     }
     const diff = diffSnapshots(previous, snap);
     return jsonResult({
       url: snap.url,
       title: snap.title,
       snapshotId: stored.id,
+      ...authWall,
       ...diff,
       ...(diff.since === null
         ? { note: 'no previous snapshot for this tab, so everything is reported as added' }
@@ -699,16 +772,20 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
   wait_for: async (a, ctx) => {
     await gate(ctx, 'wait_for', { tabId: tabId(a) });
-    return jsonResult(
-      await ctx.ex.waitFor({
-        tabId: tabId(a),
-        ...frameOpts(a),
-        selector: optionalString(a, 'selector'),
-        textContains: optionalString(a, 'textContains'),
-        gone: optionalBoolean(a, 'gone'),
-        timeoutMs: optionalNumber(a, 'timeoutMs', { min: 0, max: 120_000 }),
-      }),
-    );
+    try {
+      return jsonResult(
+        await ctx.ex.waitFor({
+          tabId: tabId(a),
+          ...frameOpts(a),
+          selector: optionalString(a, 'selector'),
+          textContains: optionalString(a, 'textContains'),
+          gone: optionalBoolean(a, 'gone'),
+          timeoutMs: optionalNumber(a, 'timeoutMs', { min: 0, max: 120_000 }),
+        }),
+      );
+    } catch (err) {
+      return reclassifyTimeout(ctx, a, err);
+    }
   },
 
   extract_links: async (a, ctx) => {
@@ -753,14 +830,14 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     for (const [sel, val] of Object.entries(fields as Record<string, unknown>)) {
       if (typeof val === 'string') requireWithinLength(val, `fields["${sel}"]`, MAX_TEXT_LEN);
     }
-    return jsonResult(
-      await fillForm(ctx.ex, {
-        ...frameOpts(a),
-        fields: fields as Record<string, string | boolean>,
-        submitSelector: optionalString(a, 'submitSelector'),
-        tabId: tabId(a),
-      }),
-    );
+    const res = await fillForm(ctx.ex, {
+      ...frameOpts(a),
+      fields: fields as Record<string, string | boolean>,
+      submitSelector: optionalString(a, 'submitSelector'),
+      tabId: tabId(a),
+    });
+    await guardAuthWall(ctx, a);
+    return jsonResult(res);
   },
   download_file: async (a, ctx) => {
     await gate(ctx, 'download_file');
@@ -882,6 +959,18 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   },
 
   chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
+  auth_check: async (a, ctx) => {
+    await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page structure
+    const snap = await ctx.ex.snapshot({ tabId: tabId(a), ...frameOpts(a), interactiveOnly: true, max: 200 });
+    const wall = detectAuthWall(snap);
+    failIfAuthWall(wall, snap.url, a, ctx.policy);
+    return jsonResult({
+      url: snap.url,
+      title: snap.title,
+      authRequired: wall !== null,
+      ...(wall ? { confidence: wall.confidence, signals: wall.signals } : {}),
+    });
+  },
 
   // --- task workspace management (server-side; no browser needed) ---
   profile_use: async (a) => {
@@ -1002,7 +1091,7 @@ function recordHistory(
  */
 const RETRY_SAFE_TOOLS = new Set([
   'tabs_list', 'chrome_status',
-  'get_text', 'get_html', 'snapshot', 'get_cookies',
+  'get_text', 'get_html', 'snapshot', 'get_cookies', 'auth_check',
   'extract_links', 'read_as_markdown', 'screenshot',
   'wait_for', 'navigate', 'reload',
   'frames_list', 'print_pdf',

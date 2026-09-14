@@ -1,3 +1,26 @@
+## 0.9.2 - 2026-09-14
+
+- feat: auth-wall detection. A session cookie that expires mid-run used to
+  surface as `SELECTOR_NOT_FOUND` or `TIMEOUT` on the next step, so an eval
+  harness scored the run as an agent failure. `snapshot` now attaches an
+  `authWall` verdict (`confidence`, `signals`) whenever the page looks like a
+  sign-in wall, a new `auth_check` tool returns `{ authRequired, confidence,
+  signals }` for the current tab, and `auth_check`, `snapshot` and `navigate`
+  accept `failOnAuthWall: true` to fail with a distinct `[AUTH_REQUIRED]`
+  error instead. Detection is pure and server-side (`shared/auth-wall.ts`):
+  sign-in URL routes, identity-provider hosts, title, password fields and
+  sign-in controls. `high` needs two independent cues; `failOnAuthWall` fires
+  only on `high`, so a settings page with a password field never aborts a run.
+- feat: `--fail-on-auth-wall` turns the guard on for the whole session. Every
+  step that can move the tab (`navigate`, `click`, `type`, `select_option`,
+  `press`, `fill_form`, `back`, `forward`, `reload`) checks the page it landed
+  on and fails with `[AUTH_REQUIRED]` when it is a sign-in wall; a `wait_for`
+  that times out on such a page reports `[AUTH_REQUIRED]` instead of
+  `[TIMEOUT]`. The same tools accept `failOnAuthWall: true` per call. Cost is
+  one snapshot per guarded step, zero when off. The tool never re-authenticates:
+  `[AUTH_REQUIRED]` is where a harness pauses for a human.
+  Off by default; no wire change, no extension change. 29 new tests.
+
 ## 0.9.1 - 2026-09-13
 
 - feat: the extension reloads itself after an upgrade. An unpacked extension

@@ -186,6 +186,9 @@ export function parseArgs(argv: string[]): CliConfig {
         policyFlags.redact = true;
         (policyFlags.redactPatterns ??= []).push(requireValue(argv[++i], '--redact-pattern'));
         break;
+      case '--fail-on-auth-wall':
+        policyFlags.failOnAuthWall = true;
+        break;
       case '--cdp-fallback':
         cdpFallback = true;
         break;
@@ -351,6 +354,10 @@ Security (default: deny-all safe mode):
                          tokens, private keys) out of page reads. Password field
                          values are always suppressed, with or without this.
   --redact-pattern <re>  Add a redaction regex (repeatable; implies --redact)
+  --fail-on-auth-wall    Fail any navigate/click/type/press/back/reload/wait_for
+                         with [AUTH_REQUIRED] when the page it lands on is a
+                         high-confidence sign-in wall (expired session), so an
+                         eval harness never scores it as some other failure.
 
 Misc:
   --log-level <lvl>      silent | info | debug (default info)
