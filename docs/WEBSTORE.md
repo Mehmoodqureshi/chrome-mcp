@@ -68,6 +68,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 - `storage`: keep the pairing token, connection state and profile name.
 - `alarms`: a 30-second keepalive so the service worker stays connected.
 - `cookies`: read cookies of allowlisted sites when the server asks, so the agent can use existing sessions.
+- `webNavigation`: know when a navigation the server triggered has committed or finished loading, so `navigate` / `reload` / `back` / `forward` return as soon as the page is ready instead of polling. Never used to observe browsing the server did not request.
 - `debugger`: trusted OS-level input on framework-controlled inputs and screenshots of a specific tab without focusing it. Attached only for those commands and detached afterwards.
 - `host_permissions <all_urls>`: the server's domain allowlist decides which sites may be touched; the extension needs the broad grant so that allowlist can name any site. No command runs on a page that is not allowlisted.
 

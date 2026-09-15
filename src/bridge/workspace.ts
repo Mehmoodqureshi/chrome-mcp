@@ -120,11 +120,11 @@ export function saveBinary(tool: string, ext: string, bytes: Buffer): string | n
 }
 
 /** Save a screenshot PNG (base64) into the active task's `screenshots/`. */
-export function saveScreenshot(dataBase64: string): string | null {
+export function saveScreenshot(dataBase64: string, ext: 'png' | 'jpg' = 'png'): string | null {
   const w = peekActiveWorkspace();
   if (!w) return null;
   try {
-    const path = join(w.screenshotsDir, `${stem('screenshot')}.png`);
+    const path = join(w.screenshotsDir, `${stem('screenshot')}.${ext}`);
     writeFileSync(path, Buffer.from(dataBase64, 'base64'), { mode: 0o600 });
     return path;
   } catch (err) {

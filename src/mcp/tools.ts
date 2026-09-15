@@ -138,7 +138,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, snapshotAfter: snapshotAfterField } },
   { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
-  { name: 'screenshot', description: 'Capture a PNG screenshot (page or element).', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, fullPage: z.boolean().optional(), tabId: tabIdField } },
+  { name: 'screenshot', description: 'Capture a screenshot (page or element). Default is JPEG (quality 70) at CSS-pixel size, which is several times smaller than PNG and reads fine. Pass format:"png" for lossless, quality 1-100 for JPEG, scale 2 for device pixels on a Retina display or 0.5 to shrink.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, fullPage: z.boolean().optional(), format: z.enum(['jpeg', 'png']).optional(), quality: z.number().optional(), scale: z.number().optional(), tabId: tabIdField } },
   { name: 'get_text', description: 'Get visible text of the page or an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, tabId: tabIdField, maxBytes: maxBytesField } },
   { name: 'get_html', description: 'Get HTML of the page or an element. Output is capped (see maxBytes) and cut at a tag boundary; narrow it with `selector` rather than raising the cap when you can. Password field values are always blanked.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, outer: z.boolean().optional(), tabId: tabIdField, maxBytes: maxBytesField } },
   { name: 'snapshot', description: 'Accessibility snapshot: interactive elements with refs to target by `ref` (more reliable than guessing CSS selectors). Pass diff:true to get only what changed since the last snapshot of this tab - far cheaper in a click/read loop. Password fields appear as secret:true with no value.', inputSchema: { interactiveOnly: z.boolean().optional(), max: z.number().optional(), diff: z.boolean().describe('Return added/removed/changed elements since the previous snapshot of this tab instead of the whole tree').optional(), failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
@@ -272,14 +272,14 @@ const GATE_CONTEXT = 'cannot resolve the target tab URL for the policy gate';
  *
  * Prefers a URL the backend already reported over asking again: the extension
  * rides the tab's landing URL home on every result frame, which is what keeps a
- * gated call to ONE round-trip instead of two. That cache only ever describes
- * the active tab, so it is bypassed whenever an explicit `tabId` is in play.
+ * gated call to ONE round-trip instead of two. The active-tab cache serves calls
+ * without a `tabId`; the per-tab cache (fed by results for that tab and by any
+ * `tabs_list`) serves explicitly-targeted ones, so a parallel batch over N tabs
+ * gates on the one listing that opened it rather than N more.
  */
 async function gatedUrl(ex: Executor, tabId?: string): Promise<string> {
-  if (!tabId) {
-    const known = ex.cachedActiveUrl?.();
-    if (known) return known;
-  }
+  const known = tabId ? ex.cachedTabUrl?.(tabId) : ex.cachedActiveUrl?.();
+  if (known) return known;
 
   let tabs: TabInfo[];
   try {
@@ -656,13 +656,20 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   screenshot: async (a, ctx) => {
     await gate(ctx, 'screenshot', { tabId: tabId(a) });
+    const format = optionalString(a, 'format');
+    if (format !== undefined && format !== 'jpeg' && format !== 'png') {
+      throw new McpToolError('"format" must be "jpeg" or "png"');
+    }
     const shot = await ctx.ex.screenshot({
       tabId: tabId(a),
       ...frameOpts(a),
       fullPage: optionalBoolean(a, 'fullPage'),
       target: optionalTarget(a),
+      format,
+      quality: optionalNumber(a, 'quality', { min: 1, max: 100 }),
+      scale: optionalNumber(a, 'scale', { min: 0.1, max: 4 }),
     });
-    saveScreenshot(shot.dataBase64);
+    saveScreenshot(shot.dataBase64, shot.mimeType === 'image/jpeg' ? 'jpg' : 'png');
     const caption = shot.truncated ? `(truncated; full height ${shot.fullHeight}px)` : undefined;
     return imageResult(shot.dataBase64, shot.mimeType, caption);
   },

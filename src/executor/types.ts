@@ -135,9 +135,20 @@ export interface ActionOk {
   ok: true;
 }
 
+export type ScreenshotFormat = 'png' | 'jpeg';
+
+/** Encoding knobs every backend accepts. All optional; see shared/screenshot.ts for defaults. */
+export interface ScreenshotEncoding {
+  format?: ScreenshotFormat;
+  /** JPEG only, 1-100. */
+  quality?: number;
+  /** Output pixels per CSS pixel (1 = CSS size, 2 = device pixels on a Retina display). */
+  scale?: number;
+}
+
 export interface ScreenshotResult {
   dataBase64: string;
-  mimeType: 'image/png';
+  mimeType: 'image/png' | 'image/jpeg';
   width: number;
   height: number;
   /** fullPage capture exceeded the height cap; `fullHeight` reports the real size. */
@@ -180,6 +191,14 @@ export interface SnapshotResult {
   title: string;
   nodes: SnapshotNode[];
   truncated: boolean;
+  /** Locator mode, no match: what the page had of that role (for the error message). */
+  nearby?: string[];
+}
+
+/** A role/name query the page resolves itself (see shared/snapshot.ts). */
+export interface SnapshotLocator {
+  role?: string;
+  name?: string;
 }
 
 export interface CookieItem {
@@ -246,6 +265,13 @@ export interface Executor {
    */
   cachedActiveUrl?(): string | null;
 
+  /**
+   * Same idea for an explicitly-targeted tab: its URL if the backend already
+   * knows it recently enough (the extension reports it on every result for that
+   * tab, and a `tabsList` reports it for every tab). Null → resolve properly.
+   */
+  cachedTabUrl?(tabId: TabId): string | null;
+
   // --- tabs ---
   tabsList(): Promise<TabInfo[]>;
   tabSelect(tabId: TabId): Promise<TabInfo>;
@@ -288,12 +314,12 @@ export interface Executor {
   getText(t?: Target, opts?: { tabId?: TabId } & FrameOpts): Promise<{ text: string; ref?: string }>;
   getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean } & FrameOpts): Promise<{ html: string }>;
   /** Accessibility snapshot: interactive/landmark elements with stable refs the model can target. */
-  snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number } & FrameOpts): Promise<SnapshotResult>;
+  snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number; locator?: SnapshotLocator } & FrameOpts): Promise<SnapshotResult>;
   /** Read cookies visible to the active tab's URL (or a given url). */
   getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }>;
   /** localStorage/sessionStorage get/set/remove/clear for the active tab. */
   storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult>;
-  screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & FrameOpts): Promise<ScreenshotResult>;
+  screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & ScreenshotEncoding & FrameOpts): Promise<ScreenshotResult>;
   eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean } & FrameOpts): Promise<EvalResult>;
   waitFor(opts: {
     tabId?: TabId;

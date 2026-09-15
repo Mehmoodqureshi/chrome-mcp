@@ -15,7 +15,7 @@ import {
   type WirePolicy,
 } from '../../../shared/protocol';
 import { evaluatePolicy, isUrlGated } from '../../../shared/policy';
-import { ChromeExecutor, CmdError, HANDLED, observedTabUrl, urlForCommand } from './executor';
+import { ChromeExecutor, CmdError, HANDLED, observedTabUrl, resolveTab, urlForCommand } from './executor';
 
 export interface RouterDeps {
   exec: ChromeExecutor;
@@ -53,16 +53,18 @@ export class CommandRouter {
           'no policy has arrived from the chrome-mcp server yet, so this extension is refusing every command',
         );
       }
+      // One tab lookup serves the gate, the executor and the result frame.
+      const tab = await resolveTab(cmd);
       if (policy) {
-        const url = isUrlGated(cmd.method) ? await urlForCommand(cmd) : '';
+        const url = isUrlGated(cmd.method) ? await urlForCommand(cmd, tab) : '';
         const verdict = evaluatePolicy(url, cmd.method, policy);
         if (!verdict.ok) throw new CmdError('POLICY_DENIED', verdict.reason);
       }
-      const data = await this.deps.exec.run(cmd);
+      const data = await this.deps.exec.run(cmd, tab);
       const frame: ResultFrame = { type: 'result', v: PROTOCOL_VERSION, id: cmd.id, ok: true, data };
       // Ride the tab's landing URL home so the server's next gate needs no
       // round-trip. Best-effort: a closed/unreadable tab just omits it.
-      const tabUrl = await observedTabUrl(cmd);
+      const tabUrl = await observedTabUrl(cmd, tab);
       if (tabUrl) frame.tabUrl = tabUrl;
       this.deps.send(frame);
     } catch (err) {

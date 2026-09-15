@@ -9,10 +9,13 @@
  * redeploy.
  *
  * A locator closes that: `{ role: 'button', name: 'Sign in' }` resolves through
- * one snapshot, server-side, and the caller never sees the tree. Matching runs
- * strongest-first (exact, then case-insensitive, then contains) so an
- * unambiguous name wins outright, and an ambiguous one fails loudly with the
- * candidates rather than silently clicking the first row.
+ * one snapshot and the caller never sees the tree. The page does the matching
+ * itself (`collectSnapshot` with a locator returns only the strongest-tier
+ * hits, and stamps refs on those alone), so what crosses the bridge is a
+ * handful of nodes rather than 400; this module re-scores them — same tiers:
+ * exact, then case-insensitive, then prefix, then contains — so an unambiguous
+ * name wins outright and an ambiguous one fails loudly with the candidates
+ * rather than silently clicking the first row.
  */
 
 import type { Executor, SnapshotNode, Target } from '../executor/types';
@@ -75,6 +78,7 @@ export async function resolveLocator(
     tabId: opts.tabId,
     interactiveOnly: false,
     max: 400,
+    locator: want,
     frameId: opts.frameId,
     allFrames: opts.allFrames,
   });
@@ -94,10 +98,14 @@ export async function resolveLocator(
 
   const describe = (n: SnapshotNode): string => `${n.role} "${n.name}"`;
   if (winners.length === 0) {
-    const sample = snap.nodes
-      .filter((n) => !want.role || norm(n.role) === norm(want.role))
-      .slice(0, 8)
-      .map(describe);
+    // A page that scored in place reports what it had of that role as `nearby`;
+    // a backend that returned the full tree leaves it to us.
+    const sample =
+      snap.nearby ??
+      snap.nodes
+        .filter((n) => !want.role || norm(n.role) === norm(want.role))
+        .slice(0, 8)
+        .map(describe);
     throw new McpToolError(
       `no element matches ${JSON.stringify(want)}. ` +
         (sample.length

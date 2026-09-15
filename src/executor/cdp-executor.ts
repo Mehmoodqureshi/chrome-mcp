@@ -27,6 +27,7 @@ import {
 
 import { MAX_DOWNLOAD_BYTES, isWithinSizeCap, sanitizeDownloadName } from '../../shared/download';
 import { collectSnapshot } from '../../shared/snapshot';
+import { DEFAULT_JPEG_QUALITY, DEFAULT_SCREENSHOT_FORMAT, DEFAULT_SCREENSHOT_SCALE } from '../../shared/screenshot';
 import {
   type ActionOk,
   type BackendKind,
@@ -38,7 +39,9 @@ import {
   type ExecutorStatus,
   type KeyModifier,
   type NavResult,
+  type ScreenshotEncoding,
   type ScreenshotResult,
+  type SnapshotLocator,
   type SnapshotResult,
   type StorageOp,
   type StorageResult,
@@ -461,17 +464,17 @@ export class CdpExecutor implements Executor {
       return { html };
     });
   }
-  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number }): Promise<SnapshotResult> {
+  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number; locator?: SnapshotLocator }): Promise<SnapshotResult> {
     return this.guard(async () => {
       const p = await this.resolveTab(opts?.tabId);
       // Inject collectSnapshot's source and run it in the page (it can't close over module scope).
       const raw = await p.evaluate(
-        ([fnSrc, interactiveOnly, max]) => {
+        ([fnSrc, interactiveOnly, max, locator]) => {
           // eslint-disable-next-line no-eval
-          const fn = (0, eval)(`(${fnSrc})`) as (i: boolean, m: number) => unknown;
-          return fn(interactiveOnly as boolean, max as number);
+          const fn = (0, eval)(`(${fnSrc})`) as (i: boolean, m: number, l: unknown) => unknown;
+          return fn(interactiveOnly as boolean, max as number, locator ?? null);
         },
-        [collectSnapshot.toString(), opts?.interactiveOnly ?? true, opts?.max ?? 200] as const,
+        [collectSnapshot.toString(), opts?.interactiveOnly ?? true, opts?.max ?? 200, opts?.locator ?? null] as const,
       );
       return raw as SnapshotResult;
     });
@@ -503,14 +506,28 @@ export class CdpExecutor implements Executor {
       }, args) as Promise<StorageResult>;
     });
   }
-  async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target }): Promise<ScreenshotResult> {
+  async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & ScreenshotEncoding): Promise<ScreenshotResult> {
     return this.guard(async () => {
       const p = await this.resolveTab(opts?.tabId);
+      const type = opts?.format ?? DEFAULT_SCREENSHOT_FORMAT;
+      // Playwright's `scale: 'css'` = one output pixel per CSS pixel (the same
+      // default the extension path uses); 'device' = the display's native DPR.
+      const enc = {
+        type,
+        ...(type === 'jpeg' ? { quality: opts?.quality ?? DEFAULT_JPEG_QUALITY } : {}),
+        scale: (opts?.scale ?? DEFAULT_SCREENSHOT_SCALE) >= 2 ? ('device' as const) : ('css' as const),
+      };
       const buf = opts?.target
-        ? await this.locator(p, opts.target).screenshot()
-        : await p.screenshot({ fullPage: opts?.fullPage });
+        ? await this.locator(p, opts.target).screenshot(enc)
+        : await p.screenshot({ fullPage: opts?.fullPage, ...enc });
       const size = p.viewportSize() ?? { width: 0, height: 0 };
-      return { dataBase64: buf.toString('base64'), mimeType: 'image/png', width: size.width, height: size.height, truncated: false };
+      return {
+        dataBase64: buf.toString('base64'),
+        mimeType: type === 'jpeg' ? 'image/jpeg' : 'image/png',
+        width: size.width,
+        height: size.height,
+        truncated: false,
+      };
     });
   }
   async eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean }): Promise<EvalResult> {

@@ -6,8 +6,11 @@
  *   - ALL listeners are registered synchronously at top level (so a wake always
  *     re-arms them),
  *   - config + connection intent live in chrome.storage (not SW memory),
- *   - while connected, a 25s alarm + an awaited storage.get keep the worker warm,
- *     and the alarm is also the reconnect driver,
+ *   - while connected, a 30s alarm + an awaited storage.get keep the worker warm
+ *     (the server's 15s ping/pong also resets the idle timer on Chrome >= 116),
+ *   - a dropped socket is redialled on a short backoff (1s, 2s, 4s, 8s, 10s...)
+ *     while the worker is alive, so a server restart costs seconds, not the
+ *     next alarm tick; the alarm remains the fallback if the worker is evicted,
  *   - on any wake we call ensureConnected().
  */
 
@@ -33,10 +36,37 @@ let currentPolicy: WirePolicy | null = null;
 // The executor reads the live policy so a frame-scoped command can be gated
 // against the FRAME's origin, not just the tab's.
 const executor = new ChromeExecutor(() => currentPolicy);
+// --- reconnect backoff --------------------------------------------------------
+// Waiting for the 30s keepalive alarm after a drop (server restart, laptop
+// wake) made the first tool call after it stall for up to half a minute. Redial
+// promptly instead, backing off so a server that is genuinely down is not hammered.
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 10_000];
+let reconnectAttempt = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+  const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
+  reconnectAttempt++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void ensureConnected();
+  }, delay);
+}
+
+function clearReconnect(): void {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectAttempt = 0;
+}
+
 const ws = new WsClient({
   onCommand: (cmd) => void router.dispatch(cmd),
   onState: (state) => {
     void persistState(state);
+    if (state === 'connected') clearReconnect();
+    // 'idle' after a dial = the socket closed or the dial failed: redial soon.
+    else if (state === 'idle') scheduleReconnect();
     // A reject with an auto-adopted token usually means the server rotated it
     // (no --persist-token) and rewrote pairing.json — re-read and retry once.
     if (state === 'unauthorized') void adoptBundledPairing();
@@ -190,6 +220,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     // reconnect so a changed profile re-pairs under the new routing label.
     if (ws.state === 'unauthorized') ws.state = 'idle';
     if (changes.profile) ws.close(); // force a fresh hello with the new profile
+    clearReconnect();
     void ensureConnected();
   }
 });
@@ -197,6 +228,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // Lets the options page trigger an immediate (re)connect after saving config.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'reconnect') {
+    clearReconnect();
     ws.close();
     ws.state = 'idle';
     void ensureConnected();

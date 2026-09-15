@@ -1,3 +1,67 @@
+## Unreleased
+
+Latency pass. Nothing changes what the tools do; each item removes a round-trip,
+a polling loop, or bytes from the hot path.
+
+- perf: `navigate` / `reload` / `back` / `forward` / `tab_new` are event-driven.
+  The extension used to poll `chrome.tabs.get` every 100ms until the tab said
+  `complete`, and ignored `waitUntil`. It now arms `chrome.webNavigation` (and
+  `tabs.onUpdated` as belt-and-braces) BEFORE triggering the navigation and
+  returns on the event, so a 40ms page costs 40ms; `domcontentloaded` really
+  returns before the load event, `networkidle` waits a further 500ms of quiet,
+  and same-document navigations (`pushState`, hash) settle immediately. Needs
+  the new `webNavigation` permission (same warning text as `tabs`, so no new
+  Web Store prompt); reload the unpacked extension to pick it up.
+- perf: screenshots default to **JPEG (quality 70) at CSS-pixel size** instead
+  of PNG at device pixels — on a Retina display that is 5-10x fewer bytes
+  through the bridge and into the model's context, with no legible difference.
+  New `screenshot` args: `format: "png"` for lossless, `quality` 1-100, `scale`
+  (1 = CSS px, 2 = device px on a 2x display, 0.5 to shrink). CDP capture also
+  passes `optimizeForSpeed`. Saved artifacts get a `.jpg` / `.png` extension
+  to match. The CDP backend honours the same options via Playwright.
+- perf: the `chrome.debugger` session lingers **1.5s** after its last op
+  instead of detaching immediately, so a screenshot → trusted click →
+  screenshot loop attaches once, not three times (each attach/detach cost a few
+  hundred ms and flashed the "is being debugged" bar). A session Chrome drops
+  mid-window is re-attached transparently. Trusted `type` with `pressEnter`
+  sends the text and the Enter over one attach.
+- perf: element ops wait **and** act in ONE page injection. `click`, `type`,
+  `hover`, `select_option` and the trusted `focus`/`point` probes used to
+  inject a `waitSelector` poll and then inject the op; `pageOp` now polls for
+  its own target (up to 5s) and runs the op the tick it appears.
+- perf: the target tab is resolved **once** per command. The router resolves
+  it up front and shares it with the policy gate, the executor and the
+  result frame's `tabUrl`, instead of three `chrome.tabs.query` calls. A stale
+  tab handle now surfaces as `TARGET_GONE` rather than a policy denial against
+  an empty URL.
+- perf: **per-tab URL cache** on the server. The gate's cache only ever covered
+  the active tab, so every op of a parallel `batch` (which must pass `tabId`)
+  paid a `tabs_list` round-trip. A result for an explicitly-targeted tab now
+  caches that tab's landing URL, and a `tabs_list` result primes the cache for
+  EVERY tab it lists — the listing that opens a batch is the one round-trip
+  the whole batch gates on. Entries live 2s (was 1s); the extension re-gates
+  every command against the live URL regardless, fail-closed.
+- perf: role+name locators are matched **in the page**. `resolveLocator` used
+  to pull up to 400 nodes over the bridge and stamp `data-mcp-ref` on all of
+  them to pick one. `collectSnapshot` now takes the locator, scores in place
+  with the same tiers, returns only the strongest-tier hits and tags only
+  those (under a distinct `l…-N` ref prefix so they cannot collide with a
+  prior snapshot's `eN`), and reports `nearby` same-role names for the
+  not-found message. The server re-scores what it receives, so both ends agree.
+- perf: `snapshot` does less layout work. Visibility uses the native
+  `checkVisibility` (one call covers display/visibility/content-visibility on
+  the element and its ancestors) plus a single rect check, dropping two
+  `getComputedStyle` calls per candidate; the manual ancestor walk remains as
+  the fallback. All reads (names, values, visibility) now happen BEFORE any
+  `data-mcp-ref` is written — the old read/write interleave forced a style
+  recalc per element. The shadow-host scan iterates the live NodeList instead
+  of copying every element into an array.
+- perf: the extension **redials on a short backoff** (1s, 2s, 4s, 8s, 10s)
+  when the socket drops, instead of waiting for the 30s keepalive alarm, so a
+  server restart or laptop wake costs seconds; the alarm stays as the fallback
+  if the worker was evicted. (The server's 15s ping already resets the MV3
+  idle timer on Chrome >= 116, so a connected worker is not evicted.)
+
 ## 0.9.2 - 2026-09-14
 
 - feat: auth-wall detection. A session cookie that expires mid-run used to

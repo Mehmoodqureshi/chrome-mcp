@@ -173,7 +173,7 @@ export interface EvalResult { ok: boolean; value?: unknown; type?: string; error
 export interface WaitResult { matched: boolean; ref?: string; waitedMs: number; }
 export interface ActionOk   { ok: true; }
 export interface ScreenshotResult {
-  dataBase64: string; mimeType: 'image/png';
+  dataBase64: string; mimeType: 'image/png' | 'image/jpeg';  // jpeg q70 @ CSS px by default; format/quality/scale opt-in
   width: number; height: number; truncated: boolean; fullHeight?: number;  // fullPage cap metadata
 }
 export interface DownloadResult { path: string; backend: BackendKind; bytes: number; mimeType?: string; suggestedName?: string; }

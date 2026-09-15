@@ -232,6 +232,12 @@ export class BridgeServer {
     return conn?.isOpen() ? conn.lastActiveUrl(maxAgeMs) : null;
   }
 
+  /** Same, for an explicitly-targeted tab (wire id) — see ExtensionConnection.lastTabUrl. */
+  lastTabUrl(profile: string | undefined, tabId: string, maxAgeMs: number): string | null {
+    const conn = this.conns.get(routeKey(profile));
+    return conn?.isOpen() ? conn.lastTabUrl(tabId, maxAgeMs) : null;
+  }
+
   private noPairMessage(profile: string): string {
     return (
       `No browser is paired for profile "${profile}". In that Chrome's chrome-mcp ` +

@@ -53,3 +53,18 @@ test('element wins over fullPage when both are set', () => {
   assert.equal(p.width, 50);
   assert.equal(p.height, 60);
 });
+
+test('viewport capture on a 2x display: clip at the scroll offset with scale 1/dpr', () => {
+  const p = planScreenshot({ ...DIMS, dpr: 2, scrollX: 0, scrollY: 300 }, {});
+  assert.deepEqual(p.clip, { x: 0, y: 300, width: 1280, height: 720, scale: 0.5 });
+  assert.equal(p.captureBeyondViewport, false);
+  assert.equal(p.width, 1280);
+  assert.equal(p.height, 720);
+});
+
+test('explicit scale multiplies on top of the dpr correction', () => {
+  const p = planScreenshot({ ...DIMS, dpr: 2 }, { fullPage: true, scale: 2 });
+  assert.equal(p.clip?.scale, 1); // 2 / dpr 2 → native device pixels
+  const half = planScreenshot(DIMS, { fullPage: true, scale: 0.5 });
+  assert.equal(half.clip?.scale, 0.5);
+});

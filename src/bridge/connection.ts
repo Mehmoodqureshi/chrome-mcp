@@ -62,7 +62,13 @@ interface Pending {
    *  tab's. A URL from an explicitly-targeted tab says nothing about the active
    *  one and must never be cached as if it did. */
   activeTab: boolean;
+  /** The explicit wire tab id the command targeted, if any — the key a reported
+   *  URL is cached under. */
+  tabId?: string;
 }
+
+/** Bound on the per-tab URL cache; entries beyond it are evicted oldest-first. */
+const MAX_TAB_URL_ENTRIES = 256;
 
 export interface ConnectionDeps {
   ws: WebSocket;
@@ -89,6 +95,10 @@ export class ExtensionConnection {
   private readonly reportsTabUrl: boolean;
   /** Last URL the ACTIVE tab reported, with the wall-clock it arrived. */
   private activeUrl: { url: string; at: number } | null = null;
+  /** Last URL each explicitly-targeted tab reported, keyed by wire tab id. A
+   *  `tabs_list` result fills this for EVERY tab at once, which is what lets a
+   *  parallel batch over N tabs gate on one round-trip instead of N. */
+  private readonly tabUrls = new Map<string, { url: string; at: number }>();
   private readonly onEvent?: ConnectionDeps['onEvent'];
   private readonly onClose?: ConnectionDeps['onClose'];
   private readonly onLog?: ConnectionDeps['onLog'];
@@ -144,7 +154,7 @@ export class ExtensionConnection {
         reject(new ExecutorError('TIMEOUT', `"${method}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer, method, activeTab: opts?.tabId === undefined });
+      this.pending.set(id, { resolve, reject, timer, method, activeTab: opts?.tabId === undefined, tabId: opts?.tabId });
 
       try {
         this.ws.send(JSON.stringify(frame));
@@ -209,12 +219,52 @@ export class ExtensionConnection {
     this.pending.delete(id);
     if (frame.type === 'result') {
       this.rememberActiveUrl(p, frame);
+      this.rememberTabUrls(p, frame);
       p.resolve(frame.data);
     } else {
       // A failed command tells us nothing reliable about where the tab ended up.
       if (p.activeTab) this.activeUrl = null;
+      if (p.tabId) this.tabUrls.delete(p.tabId);
       p.reject(new ExecutorError(mapWireErrorCode(frame.error.code), frame.error.message));
     }
+  }
+
+  /**
+   * Per-tab cache. Two feeds: a result for an explicitly-targeted tab carries
+   * that tab's landing URL; a `tabs_list` result carries every tab's URL, so one
+   * listing primes the gate for every op of a batch that follows it. A closed
+   * tab is forgotten; a blank URL (Chrome hiding it) is forgotten too, never kept.
+   */
+  private rememberTabUrls(p: Pending, frame: ResultFrame): void {
+    if (!this.reportsTabUrl) return;
+    const now = Date.now();
+    if (p.method === 'tab_close' && p.tabId) {
+      this.tabUrls.delete(p.tabId);
+      return;
+    }
+    if (p.method === 'tabs_list' && Array.isArray(frame.data)) {
+      for (const t of frame.data as Array<{ tabId?: unknown; url?: unknown }>) {
+        if (typeof t.tabId !== 'string') continue;
+        if (typeof t.url === 'string' && t.url) this.tabUrls.set(t.tabId, { url: t.url, at: now });
+        else this.tabUrls.delete(t.tabId);
+      }
+    } else if (p.tabId) {
+      if (frame.tabUrl) this.tabUrls.set(p.tabId, { url: frame.tabUrl, at: now });
+      else this.tabUrls.delete(p.tabId);
+    }
+    // Map iteration is insertion-ordered; drop the oldest until bounded.
+    while (this.tabUrls.size > MAX_TAB_URL_ENTRIES) {
+      const oldest = this.tabUrls.keys().next().value;
+      if (oldest === undefined) break;
+      this.tabUrls.delete(oldest);
+    }
+  }
+
+  /** A specific tab's last reported URL if younger than `maxAgeMs`, else null. */
+  lastTabUrl(tabId: string, maxAgeMs: number): string | null {
+    const hit = this.tabUrls.get(tabId);
+    if (!hit) return null;
+    return Date.now() - hit.at <= maxAgeMs ? hit.url : null;
   }
 
   /**

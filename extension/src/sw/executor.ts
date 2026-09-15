@@ -18,7 +18,14 @@ import { sanitizeDownloadName } from '../../../shared/download';
 import { collectSnapshot } from '../../../shared/snapshot';
 import { pageOp, type PageOpArgs } from '../../../shared/page-fns';
 import { OBSERVER_GLOBAL, readObservers } from '../../../shared/observers';
-import { planScreenshot, type ElementRect, type PageDims } from '../../../shared/screenshot';
+import {
+  DEFAULT_JPEG_QUALITY,
+  DEFAULT_SCREENSHOT_FORMAT,
+  planScreenshot,
+  type ElementRect,
+  type PageDims,
+  type ScreenshotFormat,
+} from '../../../shared/screenshot';
 import { KeyedMutex } from '../../../shared/mutex';
 
 /** A command failure carrying a wire error code. */
@@ -110,17 +117,33 @@ async function targetTab(cmd: CommandFrame): Promise<number> {
   return cmd.tabId ? parseTabId(cmd.tabId) : currentTabId();
 }
 
+/** Methods that act on no particular tab (or create one), so there is nothing
+ *  to resolve up front. */
+const TABLESS: ReadonlySet<WireMethod> = new Set<WireMethod>(['tabs_list', 'tab_new', 'ping_probe', 'download_file']);
+
+/**
+ * Resolve the Chrome tab a command operates on ONCE, up front. The router
+ * gates on it, the executor acts on it, and the result frame reports its URL
+ * — three consumers, one `chrome.tabs.query`. `null` for tabless methods.
+ * Throws TARGET_GONE for a stale/malformed handle so the caller gets that, not
+ * a baffling policy denial against an empty URL.
+ */
+export async function resolveTab(cmd: CommandFrame): Promise<number | null> {
+  if (TABLESS.has(cmd.method)) return null;
+  return targetTab(cmd);
+}
+
 /**
  * The URL the policy gate should evaluate for `cmd`: the DESTINATION for
  * `navigate`, otherwise the target/active tab's current URL. Returns '' if it
  * can't be resolved — the gate treats that as not-allowlisted (fail-closed).
  */
-export async function urlForCommand(cmd: CommandFrame): Promise<string> {
+export async function urlForCommand(cmd: CommandFrame, tab: number | null): Promise<string> {
   if (cmd.method === 'navigate') {
     const u = cmd.params.url;
     return typeof u === 'string' ? u : '';
   }
-  return observedTabUrl(cmd);
+  return observedTabUrl(cmd, tab);
 }
 
 /**
@@ -129,10 +152,12 @@ export async function urlForCommand(cmd: CommandFrame): Promise<string> {
  * a navigate DESTINATION, so it reports the post-redirect landing URL; the server
  * caches it to gate the NEXT call without asking for the tab list again.
  * '' when the tab is gone (tab_close) or Chrome won't reveal its URL.
+ * `tab` is the id `resolveTab` produced; null means "resolve now" (tab_new's
+ * result is the tab it just created/activated).
  */
-export async function observedTabUrl(cmd: CommandFrame): Promise<string> {
+export async function observedTabUrl(cmd: CommandFrame, tab: number | null): Promise<string> {
   try {
-    const tabId = await targetTab(cmd);
+    const tabId = tab ?? (await targetTab(cmd));
     const t = await chrome.tabs.get(tabId);
     return t.url ?? '';
   } catch {
@@ -205,14 +230,94 @@ async function execOp(
   return outcomes.find((o) => o.found === true) ?? outcomes[0];
 }
 
-async function waitComplete(tabId: number, timeoutMs = 30_000): Promise<void> {
+type WaitUntil = 'load' | 'domcontentloaded' | 'networkidle';
+
+function waitUntilOf(cmd: CommandFrame): WaitUntil {
+  const w = cmd.params.waitUntil;
+  return w === 'domcontentloaded' || w === 'networkidle' ? w : 'load';
+}
+
+/**
+ * Arm the listeners for a navigation of `tabId`'s top frame BEFORE the caller
+ * triggers it, and return a promise that settles when the navigation reaches
+ * the requested stage. Event-driven (chrome.webNavigation + chrome.tabs.onUpdated)
+ * rather than polling `chrome.tabs.get` every 100ms, so a page that finishes
+ * in 40ms costs 40ms, and `domcontentloaded` really does return before the
+ * load event (ads, analytics, late images) fires.
+ *
+ * Terminal signals, in the order they tend to arrive:
+ *   - onDOMContentLoaded (frame 0)              -> done for 'domcontentloaded'
+ *   - onCompleted (frame 0)                     -> done for 'load'; +quiet for 'networkidle'
+ *   - onHistoryStateUpdated / onReferenceFragmentUpdated -> same-document nav: done
+ *   - onErrorOccurred (frame 0)                 -> navigation failed/aborted: done
+ *   - tabs.onUpdated status 'complete'          -> belt-and-braces (chrome:// error pages)
+ * Events stamped before `start` belong to the PREVIOUS page and are ignored.
+ * On timeout it resolves anyway (the caller reports whatever the tab shows).
+ */
+interface NavigationWait {
+  /** Resolve once the navigation reaches the requested stage (or the timeout). */
+  wait(): Promise<void>;
+  /** Drop the listeners without waiting — for a trigger that did not navigate. */
+  cancel(): void;
+}
+
+function armNavigationWait(tabId: number, waitUntil: WaitUntil, timeoutMs = 30_000): NavigationWait {
   const start = Date.now();
-  for (;;) {
-    const t = await chrome.tabs.get(tabId);
-    if (t.status === 'complete') return;
-    if (Date.now() - start > timeoutMs) return;
-    await delay(100);
-  }
+  const NETWORK_QUIET_MS = 500;
+  let done: () => void = () => undefined;
+  const finished = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+
+  const isTop = (d: { tabId: number; frameId: number; timeStamp: number }): boolean =>
+    d.tabId === tabId && d.frameId === 0 && d.timeStamp >= start - 1;
+
+  const onDom = (d: chrome.webNavigation.WebNavigationFramedCallbackDetails): void => {
+    if (isTop(d) && waitUntil === 'domcontentloaded') done();
+  };
+  const onCompleted = (d: chrome.webNavigation.WebNavigationFramedCallbackDetails): void => {
+    if (!isTop(d)) return;
+    if (waitUntil === 'networkidle') setTimeout(done, NETWORK_QUIET_MS);
+    else done();
+  };
+  const onSameDoc = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails): void => {
+    if (isTop(d)) done();
+  };
+  const onError = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails): void => {
+    if (isTop(d)) done();
+  };
+  const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo): void => {
+    if (id === tabId && info.status === 'complete') done();
+  };
+
+  chrome.webNavigation.onDOMContentLoaded.addListener(onDom);
+  chrome.webNavigation.onCompleted.addListener(onCompleted);
+  chrome.webNavigation.onHistoryStateUpdated.addListener(onSameDoc);
+  chrome.webNavigation.onReferenceFragmentUpdated.addListener(onSameDoc);
+  chrome.webNavigation.onErrorOccurred.addListener(onError);
+  chrome.tabs.onUpdated.addListener(onUpdated);
+
+  const cleanup = (): void => {
+    chrome.webNavigation.onDOMContentLoaded.removeListener(onDom);
+    chrome.webNavigation.onCompleted.removeListener(onCompleted);
+    chrome.webNavigation.onHistoryStateUpdated.removeListener(onSameDoc);
+    chrome.webNavigation.onReferenceFragmentUpdated.removeListener(onSameDoc);
+    chrome.webNavigation.onErrorOccurred.removeListener(onError);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+  };
+
+  return {
+    async wait(): Promise<void> {
+      const timer = setTimeout(done, timeoutMs);
+      try {
+        await finished;
+      } finally {
+        clearTimeout(timer);
+        cleanup();
+      }
+    },
+    cancel: cleanup,
+  };
 }
 
 /** Resolve a CSS selector from `selector`, or a `ref` (minted by snapshot) to its data attribute. */
@@ -228,41 +333,114 @@ function selectorOf(cmd: CommandFrame): string | undefined {
   return resolveSelector(cmd);
 }
 
-/** Poll the page for a selector so click/type/hover don't fail on not-yet-rendered
- *  elements. The poll runs INSIDE the page (one executeScript that resolves when the
- *  element appears or the deadline passes) instead of one round-trip per tick. */
-async function waitForSelector(tabId: number, selector: string, frameIds: FrameIds, timeoutMs = 5_000): Promise<boolean> {
+/** How long an element op waits in-page for a not-yet-rendered target. */
+const ACTION_WAIT_MS = 5_000;
+
+/** Wait-and-act in ONE injection: `pageOp` polls for the selector itself when
+ *  `timeoutMs` is set, then runs the op the moment the element appears. */
+const withWait = (a: PageOpArgs): PageOpArgs => ({ ...a, timeoutMs: ACTION_WAIT_MS, interval: 120 });
+
+/** Poll the page for a selector (used where the follow-up is not a page op,
+ *  e.g. a CDP DOM.setFileInputFiles). Runs INSIDE the page: one executeScript
+ *  that resolves when the element appears or the deadline passes. */
+async function waitForSelector(tabId: number, selector: string, frameIds: FrameIds, timeoutMs = ACTION_WAIT_MS): Promise<boolean> {
   const out = await execOp(tabId, { op: 'waitSelector', selector, timeoutMs, interval: 120 }, frameIds);
   return out.found === true;
 }
 
-/** Attach the debugger for one op, always detaching (clears the banner).
- *  Serialized per tab: a second attach on the same tab throws, and one op's
- *  detach in `finally` would yank the debugger from a concurrent op. Different
- *  tabs still run in parallel. */
+/**
+ * How long an attached debugger session lingers after its last op. Attach +
+ * detach cost a few hundred ms and flash the "is being debugged" bar, and a
+ * screenshot → click → screenshot loop would pay that three times. Within the
+ * grace window the next op reuses the session; after it the bar clears.
+ */
+const DEBUGGER_GRACE_MS = 1_500;
+
+/** Live debugger sessions keyed by tab, each with its pending detach timer. */
+const dbgSessions = new Map<number, { detachTimer: ReturnType<typeof setTimeout> | null }>();
+
+function forgetDebugger(tabId: number): void {
+  const s = dbgSessions.get(tabId);
+  if (s?.detachTimer) clearTimeout(s.detachTimer);
+  dbgSessions.delete(tabId);
+}
+
+// Chrome (or the user closing DevTools / the tab) can end a session under us.
+chrome.debugger.onDetach.addListener((source) => {
+  if (source.tabId !== undefined) forgetDebugger(source.tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => forgetDebugger(tabId));
+
+function scheduleDetach(tabId: number): void {
+  const s = dbgSessions.get(tabId);
+  if (!s) return;
+  if (s.detachTimer) clearTimeout(s.detachTimer);
+  s.detachTimer = setTimeout(() => {
+    dbgSessions.delete(tabId);
+    chrome.debugger.detach({ tabId }).catch(() => undefined);
+  }, DEBUGGER_GRACE_MS);
+}
+
+async function ensureAttached(tabId: number): Promise<void> {
+  const s = dbgSessions.get(tabId);
+  if (s) {
+    if (s.detachTimer) clearTimeout(s.detachTimer);
+    s.detachTimer = null;
+    return;
+  }
+  await chrome.debugger.attach({ tabId }, '1.3');
+  dbgSessions.set(tabId, { detachTimer: null });
+}
+
+const DETACHED_RE = /not attached|no target with given id|detached/i;
+
+/** Run one op against an attached debugger, reusing a session that is still
+ *  inside its grace window. Serialized per tab: a second attach on the same tab
+ *  throws, and one op's detach would yank the debugger from a concurrent op.
+ *  Different tabs still run in parallel. A session that Chrome dropped between
+ *  ops is re-attached once, transparently. */
 async function withDebugger<T>(tabId: number, fn: (target: chrome.debugger.Debuggee) => Promise<T>): Promise<T> {
   return locks.run(`dbg:${tabId}`, async () => {
     const target: chrome.debugger.Debuggee = { tabId };
-    await chrome.debugger.attach(target, '1.3');
+    await ensureAttached(tabId);
     try {
       return await fn(target);
+    } catch (err) {
+      if (!DETACHED_RE.test(String((err as Error)?.message ?? err))) throw err;
+      forgetDebugger(tabId);
+      await ensureAttached(tabId);
+      return await fn(target);
     } finally {
-      await chrome.debugger.detach(target).catch(() => undefined);
+      scheduleDetach(tabId);
     }
   });
 }
 
 /** Real keystrokes via CDP Input.insertText — works on React/Vue controlled inputs. */
-async function trustedType(tabId: number, selector: string, text: string, clear: boolean, frameIds: FrameIds): Promise<boolean> {
-  const focused = await execOp(tabId, { op: 'focus', selector, clear }, frameIds);
+async function trustedType(
+  tabId: number,
+  selector: string,
+  text: string,
+  clear: boolean,
+  frameIds: FrameIds,
+  pressEnter = false,
+): Promise<boolean> {
+  const focused = await execOp(tabId, withWait({ op: 'focus', selector, clear }), frameIds);
   if (!focused.found) return false;
-  await withDebugger(tabId, (t) => chrome.debugger.sendCommand(t, 'Input.insertText', { text }));
+  // One attach serves both the text and the Enter that follows it.
+  await withDebugger(tabId, async (t) => {
+    await chrome.debugger.sendCommand(t, 'Input.insertText', { text });
+    if (!pressEnter) return;
+    for (const type of ['keyDown', 'keyUp'] as const) {
+      await chrome.debugger.sendCommand(t, 'Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    }
+  });
   return true;
 }
 
 /** A real mouse click via CDP Input.dispatchMouseEvent at the element's center. */
 async function trustedClick(tabId: number, selector: string, frameIds: FrameIds): Promise<'ok' | 'missing' | 'inexact'> {
-  const pt = await execOp(tabId, { op: 'point', selector }, frameIds);
+  const pt = await execOp(tabId, withWait({ op: 'point', selector }), frameIds);
   if (!pt.found) return 'missing';
   // A CDP mouse event is dispatched in TOP-viewport coordinates. An element in a
   // cross-origin iframe cannot report where that frame sits, so clicking the
@@ -300,10 +478,28 @@ async function measurePage(
   };
 }
 
+interface ShotEncoding {
+  format: ScreenshotFormat;
+  quality: number;
+  scale?: number;
+}
+
+function encodingOf(cmd: CommandFrame): ShotEncoding {
+  const f = cmd.params.format;
+  const q = cmd.params.quality;
+  const sc = cmd.params.scale;
+  return {
+    format: f === 'png' || f === 'jpeg' ? f : DEFAULT_SCREENSHOT_FORMAT,
+    quality: typeof q === 'number' && q >= 1 && q <= 100 ? Math.round(q) : DEFAULT_JPEG_QUALITY,
+    scale: typeof sc === 'number' && sc > 0 ? sc : undefined,
+  };
+}
+
 /** Capture via CDP (no tab activation). Reports CSS-px logical dimensions. */
 async function screenshotViaDebugger(
   tabId: number,
   fullPage: boolean,
+  enc: ShotEncoding,
   selector?: string,
   frameIds?: FrameIds,
 ): Promise<Record<string, unknown>> {
@@ -311,8 +507,14 @@ async function screenshotViaDebugger(
   if (!measured) throw new CmdError('CDP_ERROR', 'could not read page dimensions');
   if (selector && measured.missing) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selector}`);
 
-  const plan = planScreenshot(measured.dims, { fullPage, element: measured.element });
-  const params: Record<string, unknown> = { format: 'png', captureBeyondViewport: plan.captureBeyondViewport };
+  const plan = planScreenshot(measured.dims, { fullPage, element: measured.element, scale: enc.scale });
+  const params: Record<string, unknown> = {
+    format: enc.format,
+    captureBeyondViewport: plan.captureBeyondViewport,
+    // Skip the slow PNG compression pass; bytes-on-the-wire matter less than latency here.
+    optimizeForSpeed: true,
+  };
+  if (enc.format === 'jpeg') params.quality = enc.quality;
   if (plan.clip) params.clip = plan.clip;
 
   const data = await withDebugger(tabId, async (target) => {
@@ -322,7 +524,7 @@ async function screenshotViaDebugger(
 
   return {
     dataBase64: data,
-    mimeType: 'image/png',
+    mimeType: enc.format === 'jpeg' ? 'image/jpeg' : 'image/png',
     width: plan.width,
     height: plan.height,
     truncated: plan.truncated,
@@ -333,7 +535,7 @@ async function screenshotViaDebugger(
 /** Fallback: captureVisibleTab grabs the ACTIVE visible tab, so activate the
  *  target first. Used only when the debugger can't attach (reintroduces the
  *  focus change, but only on the rare fallback path). */
-async function screenshotViaVisibleTab(tabId: number, fullPage: boolean): Promise<Record<string, unknown>> {
+async function screenshotViaVisibleTab(tabId: number, fullPage: boolean, enc: ShotEncoding): Promise<Record<string, unknown>> {
   let t = await chrome.tabs.get(tabId);
   if (!t.active) {
     await chrome.tabs.update(tabId, { active: true });
@@ -346,12 +548,15 @@ async function screenshotViaVisibleTab(tabId: number, fullPage: boolean): Promis
     () => ({ w: window.innerWidth, h: window.innerHeight, full: document.documentElement.scrollHeight }),
     [],
   )) as { w: number; h: number; full: number } | undefined;
-  const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' });
+  const dataUrl = await chrome.tabs.captureVisibleTab(
+    t.windowId,
+    enc.format === 'jpeg' ? { format: 'jpeg', quality: enc.quality } : { format: 'png' },
+  );
   const viewportH = dims?.h ?? 0;
   const fullH = dims?.full ?? viewportH;
   return {
     dataBase64: dataUrl.split(',')[1] ?? '',
-    mimeType: 'image/png',
+    mimeType: enc.format === 'jpeg' ? 'image/jpeg' : 'image/png',
     width: dims?.w ?? 0,
     height: viewportH,
     truncated: fullPage && fullH > viewportH,
@@ -443,7 +648,12 @@ export class ChromeExecutor {
     return allowed;
   }
 
-  async run(cmd: CommandFrame): Promise<unknown> {
+  /**
+   * Execute one command. `tab` is the id `resolveTab` already produced for it
+   * (the router resolves once and shares it); omitted → resolve here.
+   */
+  async run(cmd: CommandFrame, tab: number | null = null): Promise<unknown> {
+    const targetTab = async (c: CommandFrame): Promise<number> => tab ?? (c.tabId ? parseTabId(c.tabId) : currentTabId());
     switch (cmd.method) {
       case 'ping_probe':
         return {};
@@ -495,8 +705,12 @@ export class ChromeExecutor {
         });
 
         if (claim.needsNav) {
-          await chrome.tabs.update(claim.id, { url });
-          await waitComplete(claim.id);
+          const nav = armNavigationWait(claim.id, 'load');
+          await chrome.tabs.update(claim.id, { url }).catch((err: unknown) => {
+            nav.cancel();
+            throw err;
+          });
+          await nav.wait();
         }
         if (active) {
           const t = await chrome.tabs.get(claim.id);
@@ -515,27 +729,43 @@ export class ChromeExecutor {
       case 'navigate': {
         const id = await targetTab(cmd);
         const url = String(cmd.params.url);
-        await chrome.tabs.update(id, { url });
-        await waitComplete(id);
+        // Arm BEFORE triggering so a fast page cannot finish before we listen.
+        const nav = armNavigationWait(id, waitUntilOf(cmd));
+        await chrome.tabs.update(id, { url }).catch((err: unknown) => {
+          nav.cancel();
+          throw err;
+        });
+        await nav.wait();
         const t = await chrome.tabs.get(id);
         return { url: t.url ?? url, title: t.title ?? '' };
       }
       case 'back': {
         const id = await targetTab(cmd);
-        await chrome.tabs.goBack(id).catch(() => undefined);
+        const nav = armNavigationWait(id, 'load', 15_000);
+        // goBack rejects when there is no history entry; then there is nothing to wait for.
+        const moved = await chrome.tabs.goBack(id).then(() => true, () => false);
+        if (moved) await nav.wait();
+        else nav.cancel();
         const t = await chrome.tabs.get(id);
         return { url: t.url ?? '', title: t.title ?? '' };
       }
       case 'forward': {
         const id = await targetTab(cmd);
-        await chrome.tabs.goForward(id).catch(() => undefined);
+        const nav = armNavigationWait(id, 'load', 15_000);
+        const moved = await chrome.tabs.goForward(id).then(() => true, () => false);
+        if (moved) await nav.wait();
+        else nav.cancel();
         const t = await chrome.tabs.get(id);
         return { url: t.url ?? '', title: t.title ?? '' };
       }
       case 'reload': {
         const id = await targetTab(cmd);
-        await chrome.tabs.reload(id);
-        await waitComplete(id);
+        const nav = armNavigationWait(id, waitUntilOf(cmd));
+        await chrome.tabs.reload(id).catch((err: unknown) => {
+          nav.cancel();
+          throw err;
+        });
+        await nav.wait();
         const t = await chrome.tabs.get(id);
         return { url: t.url ?? '', title: t.title ?? '' };
       }
@@ -565,11 +795,19 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const interactiveOnly = cmd.params.interactiveOnly !== false;
         const max = typeof cmd.params.max === 'number' ? cmd.params.max : 200;
+        const loc = cmd.params.locator;
+        const locator =
+          loc && typeof loc === 'object'
+            ? {
+                role: typeof (loc as { role?: unknown }).role === 'string' ? (loc as { role: string }).role : undefined,
+                name: typeof (loc as { name?: unknown }).name === 'string' ? (loc as { name: string }).name : undefined,
+              }
+            : null;
         const frameIds = await this.frames(cmd, id);
         const raw = await execInTab(
           id,
           collectSnapshot as unknown as (...a: unknown[]) => unknown,
-          [interactiveOnly, max],
+          [interactiveOnly, max, locator],
           undefined,
           frameIds,
         );
@@ -582,8 +820,7 @@ export class ChromeExecutor {
         const sel = requireSelector(cmd);
         const frameIds = await this.frames(cmd, id);
         const values = Array.isArray(cmd.params.values) ? cmd.params.values.map(String) : [];
-        await waitForSelector(id, sel, frameIds);
-        const out = await execOp(id, { op: 'select', selector: sel, values }, frameIds);
+        const out = await execOp(id, withWait({ op: 'select', selector: sel, values }), frameIds);
         if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         if (out.matched !== true) throw new CmdError('SELECTOR_NOT_FOUND', `no <select> option matched for ${sel}`);
         return { ok: true, frameId: out.frameId };
@@ -622,9 +859,6 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
         const frameIds = await this.frames(cmd, id);
-        if (!(await waitForSelector(id, sel, frameIds))) {
-          throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-        }
         if (cmd.params.trusted === true) {
           const verdict = await trustedClick(id, sel, frameIds);
           if (verdict === 'missing') throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
@@ -633,7 +867,7 @@ export class ChromeExecutor {
           // dispatching a real mouse event at the wrong pixel.
           if (verdict === 'ok') return { ok: true };
         }
-        const out = await execOp(id, { op: 'click', selector: sel }, frameIds);
+        const out = await execOp(id, withWait({ op: 'click', selector: sel }), frameIds);
         if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         return { ok: true, frameId: out.frameId, ...(cmd.params.trusted === true ? { trusted: false } : {}) };
       }
@@ -643,24 +877,14 @@ export class ChromeExecutor {
         const frameIds = await this.frames(cmd, id);
         const text = String(cmd.params.text ?? '');
         const clear = cmd.params.clear === true;
-        if (!(await waitForSelector(id, sel, frameIds))) {
-          throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-        }
         if (cmd.params.trusted === true) {
           // Trusted keystrokes: works on React/Vue controlled inputs that ignore direct value-sets.
-          if (!(await trustedType(id, sel, text, clear, frameIds))) {
+          if (!(await trustedType(id, sel, text, clear, frameIds, cmd.params.pressEnter === true))) {
             throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
-          }
-          if (cmd.params.pressEnter === true) {
-            await withDebugger(id, async (t) => {
-              for (const type of ['keyDown', 'keyUp'] as const) {
-                await chrome.debugger.sendCommand(t, 'Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-              }
-            });
           }
           return { ok: true };
         }
-        const out = await execOp(id, { op: 'type', selector: sel, text, clear }, frameIds);
+        const out = await execOp(id, withWait({ op: 'type', selector: sel, text, clear }), frameIds);
         if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         return { ok: true, frameId: out.frameId };
       }
@@ -683,8 +907,7 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const sel = requireSelector(cmd);
         const frameIds = await this.frames(cmd, id);
-        await waitForSelector(id, sel, frameIds);
-        const out = await execOp(id, { op: 'hover', selector: sel }, frameIds);
+        const out = await execOp(id, withWait({ op: 'hover', selector: sel }), frameIds);
         if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         return { ok: true, frameId: out.frameId };
       }
@@ -715,13 +938,14 @@ export class ChromeExecutor {
         const id = await targetTab(cmd);
         const fullPage = cmd.params.fullPage === true;
         const selector = selectorOf(cmd);
+        const enc = encodingOf(cmd);
         const frameIds = await this.frames(cmd, id);
         try {
-          return await screenshotViaDebugger(id, fullPage, selector, frameIds);
+          return await screenshotViaDebugger(id, fullPage, enc, selector, frameIds);
         } catch (err) {
           // A genuinely missing element is a real failure — don't mask it with a fallback.
           if (err instanceof CmdError && err.code === 'SELECTOR_NOT_FOUND') throw err;
-          return await screenshotViaVisibleTab(id, fullPage);
+          return await screenshotViaVisibleTab(id, fullPage, enc);
         }
       }
 

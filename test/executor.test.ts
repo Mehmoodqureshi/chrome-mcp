@@ -204,8 +204,11 @@ test('CdpExecutor launches Chromium and drives a page', { skip: !hasChromium }, 
     const { text } = await ex.getText();
     assert.match(text, /Hi There/);
     const shot = await ex.screenshot();
-    assert.equal(shot.mimeType, 'image/png');
+    assert.equal(shot.mimeType, 'image/jpeg'); // the default encoding
     assert.ok(shot.dataBase64.length > 0);
+    const png = await ex.screenshot({ format: 'png' });
+    assert.equal(png.mimeType, 'image/png');
+    assert.ok(png.dataBase64.length > 0);
   } finally {
     await ex.dispose();
   }

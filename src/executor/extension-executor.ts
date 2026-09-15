@@ -24,7 +24,9 @@ import {
   type KeyModifier,
   type MouseButton,
   type NavResult,
+  type ScreenshotEncoding,
   type ScreenshotResult,
+  type SnapshotLocator,
   type SnapshotResult,
   type StorageOp,
   type StorageResult,
@@ -44,10 +46,11 @@ import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
  * Deliberately short. It exists to cover back-to-back calls (a `batch`, or an
  * agent's read → click → read), where the tab demonstrably has not changed
  * between them. Past that, pay the round-trip. Note the extension re-gates every
- * command against the tab's live URL regardless, so this window trades a little
- * pre-check precision for half the traffic — never enforcement itself.
+ * command against the tab's live URL regardless (fail-closed, authoritative), so
+ * this window trades a little pre-check precision for half the traffic — never
+ * enforcement itself.
  */
-const ACTIVE_URL_TTL_MS = 1_000;
+const ACTIVE_URL_TTL_MS = 2_000;
 
 /** Flatten frame options into the params a wire command carries. */
 function frameParams(o?: FrameOpts): Record<string, unknown> {
@@ -121,6 +124,12 @@ export class ExtensionExecutor implements Executor {
    *  is fresh enough to gate against. See `ACTIVE_URL_TTL_MS`. */
   cachedActiveUrl(): string | null {
     return this.bridge.lastActiveUrl(this.activeProfile(), ACTIVE_URL_TTL_MS);
+  }
+
+  /** A specific tab's URL as last reported (by a result for that tab, or by a
+   *  `tabs_list`), if fresh enough to gate against. */
+  cachedTabUrl(tabId: TabId): string | null {
+    return this.bridge.lastTabUrl(this.activeProfile(), tabId, ACTIVE_URL_TTL_MS);
   }
 
   // -- tabs ---------------------------------------------------------------
@@ -201,8 +210,12 @@ export class ExtensionExecutor implements Executor {
   async getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean } & FrameOpts): Promise<{ html: string }> {
     return (await this.send('get_html', { ...targetParams(t), ...frameParams(opts), outer: opts?.outer }, { tabId: opts?.tabId })) as { html: string };
   }
-  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number } & FrameOpts): Promise<SnapshotResult> {
-    return (await this.send('snapshot', { interactiveOnly: opts?.interactiveOnly, max: opts?.max, ...frameParams(opts) }, { tabId: opts?.tabId })) as SnapshotResult;
+  async snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number; locator?: SnapshotLocator } & FrameOpts): Promise<SnapshotResult> {
+    return (await this.send(
+      'snapshot',
+      { interactiveOnly: opts?.interactiveOnly, max: opts?.max, locator: opts?.locator, ...frameParams(opts) },
+      { tabId: opts?.tabId },
+    )) as SnapshotResult;
   }
   async getCookies(opts?: { tabId?: TabId; url?: string }): Promise<{ cookies: CookieItem[] }> {
     return (await this.send('get_cookies', { url: opts?.url }, { tabId: opts?.tabId })) as { cookies: CookieItem[] };
@@ -210,8 +223,19 @@ export class ExtensionExecutor implements Executor {
   async storage(args: { op: StorageOp; key?: string; value?: string; session?: boolean; tabId?: TabId }): Promise<StorageResult> {
     return (await this.send('storage', { op: args.op, key: args.key, value: args.value, session: args.session }, { tabId: args.tabId })) as StorageResult;
   }
-  async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & FrameOpts): Promise<ScreenshotResult> {
-    return (await this.send('screenshot', { fullPage: opts?.fullPage, ...targetParams(opts?.target), ...frameParams(opts) }, { tabId: opts?.tabId })) as ScreenshotResult;
+  async screenshot(opts?: { tabId?: TabId; fullPage?: boolean; target?: Target } & ScreenshotEncoding & FrameOpts): Promise<ScreenshotResult> {
+    return (await this.send(
+      'screenshot',
+      {
+        fullPage: opts?.fullPage,
+        format: opts?.format,
+        quality: opts?.quality,
+        scale: opts?.scale,
+        ...targetParams(opts?.target),
+        ...frameParams(opts),
+      },
+      { tabId: opts?.tabId },
+    )) as ScreenshotResult;
   }
   async eval(expression: string, opts?: { tabId?: TabId; awaitPromise?: boolean } & FrameOpts): Promise<EvalResult> {
     const result = (await this.send('eval', { expression, awaitPromise: opts?.awaitPromise, ...frameParams(opts) }, { tabId: opts?.tabId })) as EvalResult;

@@ -119,8 +119,6 @@ export function pageOp(a: PageOpArgs): unknown {
   };
 
   const sel = typeof a.selector === 'string' && a.selector.length > 0 ? a.selector : null;
-  const el = sel ? (deepQuery(sel) as HTMLElement | null) : null;
-  const missing = sel !== null && el === null;
 
   /** Set a value the way React/Vue see it (they patch the instance setter). */
   const setValue = (node: HTMLInputElement | HTMLTextAreaElement, next: string): void => {
@@ -130,183 +128,213 @@ export function pageOp(a: PageOpArgs): unknown {
     node.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
-  switch (a.op) {
-    case 'probe':
-      return { found: true, url: location.href, title: document.title };
+  /** The op proper, against an element already resolved (or null). */
+  const perform = (el: HTMLElement | null): unknown => {
+    const missing = sel !== null && el === null;
 
-    case 'text': {
-      if (missing) return { found: false };
-      const root = el ?? document.body;
-      return { found: true, text: root ? (root as HTMLElement).innerText ?? '' : '' };
-    }
+    switch (a.op) {
+      case 'probe':
+        return { found: true, url: location.href, title: document.title };
 
-    case 'html': {
-      if (missing) return { found: false };
-      const root = el ?? document.documentElement;
-      if (!root) return { found: true, html: '' };
-      const outer = a.outer === true || !sel;
-      return { found: true, html: outer ? root.outerHTML : (root as HTMLElement).innerHTML };
-    }
-
-    case 'click': {
-      if (!el) return { found: false };
-      el.scrollIntoView({ block: 'center' });
-      el.click();
-      return { found: true };
-    }
-
-    case 'type': {
-      const node = el as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!node) return { found: false };
-      node.focus();
-      const next = (a.clear ? '' : node.value ?? '') + (a.text ?? '');
-      setValue(node, next);
-      node.dispatchEvent(new Event('change', { bubbles: true }));
-      return { found: true };
-    }
-
-    case 'focus': {
-      const node = el as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!node) return { found: false };
-      node.focus();
-      if (a.clear) setValue(node, '');
-      return { found: true };
-    }
-
-    case 'point': {
-      if (!el) return { found: false };
-      el.scrollIntoView({ block: 'center', inline: 'center' });
-      const r = el.getBoundingClientRect();
-      const off = frameOffset();
-      return {
-        found: true,
-        x: r.left + r.width / 2 + off.dx,
-        y: r.top + r.height / 2 + off.dy,
-        // false => this frame's coordinates cannot be mapped to the top viewport.
-        exact: off.exact,
-      };
-    }
-
-    case 'hover': {
-      if (!el) return { found: false };
-      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      return { found: true };
-    }
-
-    case 'select': {
-      const node = el as unknown as HTMLSelectElement | null;
-      if (!node || !node.options) return { found: false };
-      const want = new Set(a.values ?? []);
-      let matched = false;
-      for (const opt of Array.from(node.options)) {
-        const on = want.has(opt.value) || want.has(opt.label) || want.has(opt.text);
-        opt.selected = on;
-        if (on) matched = true;
+      case 'text': {
+        if (missing) return { found: false };
+        const root = el ?? document.body;
+        return { found: true, text: root ? (root as HTMLElement).innerText ?? '' : '' };
       }
-      node.dispatchEvent(new Event('input', { bubbles: true }));
-      node.dispatchEvent(new Event('change', { bubbles: true }));
-      return { found: true, matched };
-    }
 
-    case 'measure': {
-      const d = document.documentElement;
-      const dims = {
-        w: window.innerWidth,
-        h: window.innerHeight,
-        fullW: Math.max(d.scrollWidth, d.clientWidth),
-        fullH: Math.max(d.scrollHeight, d.clientHeight),
-      };
-      if (!sel) return { found: true, dims, element: null, missing: false };
-      if (!el) return { found: true, dims, element: null, missing: true };
-      el.scrollIntoView({ block: 'center', inline: 'center' });
-      const r = el.getBoundingClientRect();
-      const off = frameOffset();
-      // viewport rect + this frame's offset + the TOP document's scroll ->
-      // document coordinates of the page the screenshot actually captures.
-      return {
-        found: true,
-        dims,
-        element: {
-          x: r.left + off.dx + off.scrollX,
-          y: r.top + off.dy + off.scrollY,
-          w: r.width,
-          h: r.height,
-        },
-        missing: false,
-        exact: off.exact,
-      };
-    }
+      case 'html': {
+        if (missing) return { found: false };
+        const root = el ?? document.documentElement;
+        if (!root) return { found: true, html: '' };
+        const outer = a.outer === true || !sel;
+        return { found: true, html: outer ? root.outerHTML : (root as HTMLElement).innerHTML };
+      }
 
-    case 'scroll': {
-      if (el) el.scrollIntoView({ block: 'center' });
-      else if (a.x != null || a.y != null) window.scrollTo(a.x ?? 0, a.y ?? 0);
-      else window.scrollBy(a.deltaX ?? 0, a.deltaY ?? 0);
-      return { found: !missing };
-    }
+      case 'click': {
+        if (!el) return { found: false };
+        el.scrollIntoView({ block: 'center' });
+        el.click();
+        return { found: true };
+      }
 
-    case 'storage': {
-      const store = a.session ? window.sessionStorage : window.localStorage;
-      const op = a.storageOp;
-      if (op === 'set') {
-        store.setItem(String(a.key), String(a.value ?? ''));
-        return { found: true, ok: true };
+      case 'type': {
+        const node = el as HTMLInputElement | HTMLTextAreaElement | null;
+        if (!node) return { found: false };
+        node.focus();
+        const next = (a.clear ? '' : node.value ?? '') + (a.text ?? '');
+        setValue(node, next);
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+        return { found: true };
       }
-      if (op === 'remove') {
-        store.removeItem(String(a.key));
-        return { found: true, ok: true };
-      }
-      if (op === 'clear') {
-        store.clear();
-        return { found: true, ok: true };
-      }
-      if (a.key) return { found: true, ok: true, value: store.getItem(a.key) };
-      const entries: Record<string, string> = {};
-      for (let i = 0; i < store.length; i++) {
-        const k = store.key(i);
-        if (k) entries[k] = store.getItem(k) ?? '';
-      }
-      return { found: true, ok: true, entries };
-    }
 
-    // -- the two polling ops: one injection that resolves in-page, rather than
-    //    one executeScript round-trip per tick --
-    case 'waitSelector': {
-      const deadline = Date.now() + (a.timeoutMs ?? 5_000);
-      const every = a.interval ?? 120;
-      return new Promise<unknown>((resolve) => {
-        const tick = (): void => {
-          if (sel && deepQuery(sel)) return resolve({ found: true });
-          if (Date.now() > deadline) return resolve({ found: false });
-          setTimeout(tick, every);
+      case 'focus': {
+        const node = el as HTMLInputElement | HTMLTextAreaElement | null;
+        if (!node) return { found: false };
+        node.focus();
+        if (a.clear) setValue(node, '');
+        return { found: true };
+      }
+
+      case 'point': {
+        if (!el) return { found: false };
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const r = el.getBoundingClientRect();
+        const off = frameOffset();
+        return {
+          found: true,
+          x: r.left + r.width / 2 + off.dx,
+          y: r.top + r.height / 2 + off.dy,
+          // false => this frame's coordinates cannot be mapped to the top viewport.
+          exact: off.exact,
         };
-        tick();
-      });
-    }
+      }
 
-    case 'waitFor': {
-      const deadline = Date.now() + (a.timeoutMs ?? 30_000);
-      const every = a.interval ?? 150;
-      const want = typeof a.textContains === 'string' && a.textContains.length > 0 ? a.textContains : null;
-      const gone = a.gone === true;
-      return new Promise<unknown>((resolve) => {
-        const hit = (): boolean => {
-          let present: boolean;
-          if (sel) present = !!deepQuery(sel);
-          else if (want) present = (document.body?.innerText ?? '').includes(want);
-          else present = true;
-          return gone ? !present : present;
-        };
-        const tick = (): void => {
-          if (hit()) return resolve({ found: true, matched: true });
-          if (Date.now() > deadline) return resolve({ found: true, matched: false });
-          setTimeout(tick, every);
-        };
-        tick();
-      });
-    }
+      case 'hover': {
+        if (!el) return { found: false };
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        return { found: true };
+      }
 
-    default:
-      return { found: false, error: `unknown page op: ${String(a.op)}` };
+      case 'select': {
+        const node = el as unknown as HTMLSelectElement | null;
+        if (!node || !node.options) return { found: false };
+        const want = new Set(a.values ?? []);
+        let matched = false;
+        for (const opt of Array.from(node.options)) {
+          const on = want.has(opt.value) || want.has(opt.label) || want.has(opt.text);
+          opt.selected = on;
+          if (on) matched = true;
+        }
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+        return { found: true, matched };
+      }
+
+      case 'measure': {
+        const d = document.documentElement;
+        const dims = {
+          w: window.innerWidth,
+          h: window.innerHeight,
+          fullW: Math.max(d.scrollWidth, d.clientWidth),
+          fullH: Math.max(d.scrollHeight, d.clientHeight),
+          dpr: window.devicePixelRatio || 1,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+        };
+        if (!sel) return { found: true, dims, element: null, missing: false };
+        if (!el) return { found: true, dims, element: null, missing: true };
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const r = el.getBoundingClientRect();
+        const off = frameOffset();
+        // viewport rect + this frame's offset + the TOP document's scroll ->
+        // document coordinates of the page the screenshot actually captures.
+        return {
+          found: true,
+          dims,
+          element: {
+            x: r.left + off.dx + off.scrollX,
+            y: r.top + off.dy + off.scrollY,
+            w: r.width,
+            h: r.height,
+          },
+          missing: false,
+          exact: off.exact,
+        };
+      }
+
+      case 'scroll': {
+        if (el) el.scrollIntoView({ block: 'center' });
+        else if (a.x != null || a.y != null) window.scrollTo(a.x ?? 0, a.y ?? 0);
+        else window.scrollBy(a.deltaX ?? 0, a.deltaY ?? 0);
+        return { found: !missing };
+      }
+
+      case 'storage': {
+        const store = a.session ? window.sessionStorage : window.localStorage;
+        const op = a.storageOp;
+        if (op === 'set') {
+          store.setItem(String(a.key), String(a.value ?? ''));
+          return { found: true, ok: true };
+        }
+        if (op === 'remove') {
+          store.removeItem(String(a.key));
+          return { found: true, ok: true };
+        }
+        if (op === 'clear') {
+          store.clear();
+          return { found: true, ok: true };
+        }
+        if (a.key) return { found: true, ok: true, value: store.getItem(a.key) };
+        const entries: Record<string, string> = {};
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (k) entries[k] = store.getItem(k) ?? '';
+        }
+        return { found: true, ok: true, entries };
+      }
+
+      // -- the two polling ops: one injection that resolves in-page, rather than
+      //    one executeScript round-trip per tick --
+      case 'waitSelector': {
+        const deadline = Date.now() + (a.timeoutMs ?? 5_000);
+        const every = a.interval ?? 120;
+        return new Promise<unknown>((resolve) => {
+          const tick = (): void => {
+            if (sel && deepQuery(sel)) return resolve({ found: true });
+            if (Date.now() > deadline) return resolve({ found: false });
+            setTimeout(tick, every);
+          };
+          tick();
+        });
+      }
+
+      case 'waitFor': {
+        const deadline = Date.now() + (a.timeoutMs ?? 30_000);
+        const every = a.interval ?? 150;
+        const want = typeof a.textContains === 'string' && a.textContains.length > 0 ? a.textContains : null;
+        const gone = a.gone === true;
+        return new Promise<unknown>((resolve) => {
+          const hit = (): boolean => {
+            let present: boolean;
+            if (sel) present = !!deepQuery(sel);
+            else if (want) present = (document.body?.innerText ?? '').includes(want);
+            else present = true;
+            return gone ? !present : present;
+          };
+          const tick = (): void => {
+            if (hit()) return resolve({ found: true, matched: true });
+            if (Date.now() > deadline) return resolve({ found: true, matched: false });
+            setTimeout(tick, every);
+          };
+          tick();
+        });
+      }
+
+      default:
+        return { found: false, error: `unknown page op: ${String(a.op)}` };
+    }
+  };
+
+  const el = sel ? (deepQuery(sel) as HTMLElement | null) : null;
+
+  // Element ops wait for their target IN THIS SAME injection when `timeoutMs`
+  // is set: a not-yet-rendered button costs a few in-page ticks, not a second
+  // executeScript round-trip (the old waitSelector-then-act pair).
+  const waits =
+    a.op === 'click' || a.op === 'type' || a.op === 'focus' || a.op === 'point' || a.op === 'hover' || a.op === 'select';
+  if (waits && sel && !el && a.timeoutMs && a.timeoutMs > 0) {
+    const deadline = Date.now() + a.timeoutMs;
+    const every = a.interval ?? 120;
+    return new Promise<unknown>((resolve) => {
+      const tick = (): void => {
+        const hit = deepQuery(sel) as HTMLElement | null;
+        if (hit) return resolve(perform(hit));
+        if (Date.now() > deadline) return resolve({ found: false });
+        setTimeout(tick, every);
+      };
+      setTimeout(tick, every);
+    });
   }
+  return perform(el);
 }

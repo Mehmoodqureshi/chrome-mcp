@@ -502,5 +502,7 @@ the fallback.
 > `chrome.debugger` is used only where it's needed and worth it: `trusted: true`
 > input (real OS-level events on React/Vue inputs) and `screenshot` (captures a
 > specific tab **without** activating it — safe under parallel `batch` — with
-> true full-page and element capture). Those ops briefly show the debug banner
-> while attached.
+> true full-page and element capture). Those ops show the debug banner while
+> attached; the session lingers 1.5s after the last op so a burst of them
+> attaches once. Screenshots are JPEG (quality 70) at CSS-pixel size by
+> default — pass `format: "png"`, `quality`, or `scale` to change that.
