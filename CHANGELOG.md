@@ -1,4 +1,4 @@
-## Unreleased
+## 0.9.3 - 2026-09-15
 
 Latency pass. Nothing changes what the tools do; each item removes a round-trip,
 a polling loop, or bytes from the hot path.
