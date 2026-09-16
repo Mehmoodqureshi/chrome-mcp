@@ -47,7 +47,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Category:** Developer Tools
 **Language:** English
-**Homepage URL:** https://github.com/Mehmoodqureshi/chrome-mcp
+**Homepage URL:** https://chrome-mcp-omega.vercel.app
 **Support URL:** https://github.com/Mehmoodqureshi/chrome-mcp/issues
 
 ## 3. Graphic assets
@@ -76,7 +76,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Data usage:** check "Website content", "Authentication information" (cookies), and "Personal communications" if the user's allowlist includes such sites. Certify: not sold, not used for unrelated purposes, not used for creditworthiness. All data is transferred only to a local server on the user's own machine.
 
-**Privacy policy URL:** https://github.com/Mehmoodqureshi/chrome-mcp/blob/main/docs/PRIVACY.md
+**Privacy policy URL:** https://chrome-mcp-omega.vercel.app/docs/privacy
 
 ## 5. Distribution
 
