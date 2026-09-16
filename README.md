@@ -383,6 +383,33 @@ Renders through Chrome's own print pipeline and saves to the task's `results/`
 dir, returning the path and size. The bytes themselves are never returned — a
 PDF is megabytes of base64 no model can read.
 
+### Paying less per turn — `--tools`
+
+Every MCP server you connect costs context before you ask it anything: the host
+sends the whole tool catalog to the model on **every** turn. chrome-mcp's 39
+tools are 27 KB of JSON Schema, about 6.9k tokens, on each one.
+
+Most runs need a handful of them. `--tools` advertises only those:
+
+```
+npx -y @mehmoodqureshi/chrome-mcp \
+  --allow-domain app.example.com --enable-mutations \
+  --tools tabs_list,tab_new,navigate,snapshot,click,type,get_text
+```
+
+That surface is **6.0 KB, ~1.5k tokens** — an 82% cut against the full catalog,
+for a run that was never going to print a PDF or upload a file.
+
+- Comma-separated and repeatable: `--tools navigate,get_text --tools click`.
+- A tool left out is hidden from `tools/list` **and refused if called** — a
+  `batch` op naming it fails the same way an unknown tool does. Hiding a tool is
+  a real restriction, not a display filter. It is not a substitute for the
+  policy gate, though: `--tools eval` still does nothing without
+  `--unsafe-enable-eval`.
+- An unknown name fails at startup and prints the catalog, so a typo can never
+  quietly drop `click` from the surface.
+- `chrome-mcp --help` prints the full catalog of 39 names to pick from.
+
 ## Status
 
 v0.5.0 — **safe multi-tab concurrency.** Adds the `batch` fan-out tool, makes

@@ -42,6 +42,12 @@ export interface CliConfig {
   showExtensionPath: boolean;
   /** `--persist-token`: reuse a stable on-disk token so the extension never re-pairs. */
   persistToken: boolean;
+  /**
+   * `--tools`: advertise only these tools. `undefined` = the whole catalog.
+   * Names are validated against the catalog by `setToolAllowlist` at startup —
+   * config.ts deliberately does not import the tool surface.
+   */
+  tools?: string[];
   showHelp: boolean;
   showVersion: boolean;
   logLevel: LogLevel;
@@ -116,6 +122,10 @@ export function parseArgs(argv: string[]): CliConfig {
   let showVersion = false;
   let showExtensionPath = false;
   let logLevel: LogLevel = 'info';
+  // Insertion-ordered so `--tools` keeps the order the operator wrote, and a
+  // name repeated across two flags is listed once.
+  const tools = new Set<string>();
+  let toolsFlagSeen = false;
 
   // Policy assembled from flags, layered over an optional file.
   let policyFile: Partial<Policy> | undefined;
@@ -210,6 +220,10 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--persist-token':
         persistToken = true;
         break;
+      case '--tools':
+        toolsFlagSeen = true;
+        for (const name of splitList(requireValue(argv[++i], '--tools'))) tools.add(name);
+        break;
       case '--log-level':
         logLevel = requireLogLevel(argv[++i]);
         break;
@@ -234,6 +248,13 @@ export function parseArgs(argv: string[]): CliConfig {
   // but no dir, rather than silently allow unrestricted local-file access.
   if (policy.allowUploads && !policy.uploadsDir) {
     throw new Error('--enable-uploads requires --uploads-dir <path> (uploads must be confined to a directory)');
+  }
+
+  // `--tools ""` (or `--tools ,,`) means the operator asked for a restriction and
+  // got none — an empty surface is never what they wanted, and silently serving
+  // all 39 tools is the opposite of what they asked for.
+  if (toolsFlagSeen && tools.size === 0) {
+    throw new Error('--tools requires at least one tool name (comma-separated, e.g. --tools navigate,get_text)');
   }
 
   // Fail at startup, not on the first read, if a redaction pattern is malformed:
@@ -263,6 +284,7 @@ export function parseArgs(argv: string[]): CliConfig {
     showVersion,
     showExtensionPath,
     logLevel,
+    tools: tools.size > 0 ? [...tools] : undefined,
   };
 }
 
@@ -287,6 +309,14 @@ function requireInt(value: string | undefined, flag: string): number {
   const n = Number.parseInt(requireValue(value, flag), 10);
   if (!Number.isInteger(n) || n < 0) throw new Error(`${flag} must be a non-negative integer`);
   return n;
+}
+
+/** Split a repeatable comma/space-separated list flag, dropping empty entries. */
+function splitList(value: string): string[] {
+  return value
+    .split(/[,\s]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function requirePreference(value: string | undefined): BackendPreference {
@@ -358,6 +388,15 @@ Security (default: deny-all safe mode):
                          with [AUTH_REQUIRED] when the page it lands on is a
                          high-confidence sign-in wall (expired session), so an
                          eval harness never scores it as some other failure.
+
+Tool surface:
+  --tools <list>         Advertise ONLY these tools (comma-separated, repeatable).
+                         Everything else is hidden from tools/list and refused if
+                         called — including from inside a batch op. The catalog is
+                         re-sent to the model on every turn, so trimming it to the
+                         tools a run actually needs is the cheapest context saving
+                         there is. Unknown names fail at startup.
+                         e.g. --tools tabs_list,navigate,get_text,click,type
 
 Misc:
   --log-level <lvl>      silent | info | debug (default info)

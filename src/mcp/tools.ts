@@ -38,7 +38,7 @@ import { resolveLocator, hasLocator, type Locator } from './locate';
 import { diffSnapshots, lastSnapshot, rememberSnapshot, resetSnapshots, scopeOf } from './snapdiff';
 import { describeAuthWall, detectAuthWall, type AuthWall } from '../../shared/auth-wall';
 import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
-import { logDebug } from './log';
+import { logDebug, logErr } from './log';
 import { listTasks } from '../bridge/tasks';
 import {
   appendHistory,
@@ -74,49 +74,63 @@ export interface ToolDefinition {
   inputSchema: z.ZodRawShape;
 }
 
-/** Shared selector|ref target — both optional; a handler that needs one calls `requireTarget`. */
+/**
+ * Element targeting, defined ONCE and spread whole by every tool that acts on
+ * an element. `TARGET_PROPS` is the plain selector|ref pair (for tools whose
+ * handler resolves a node and nothing else); `LOCATOR_PROPS` is the full block
+ * — selector | ref | role+name, in any frame — and is what click/type/hover/
+ * select_option spread as a single object.
+ *
+ * Keeping the block in one place is also what keeps `tools/list` cheap: these
+ * seven fields repeat across a dozen tools, so every byte of prose here is paid
+ * a dozen times on EVERY turn. Detail an agent does not need on every call
+ * belongs in the owning tool's description (`frames_list`, `auth_check`) or the
+ * README, not here.
+ *
+ * A handler that needs a target calls `requireTarget`; ambiguity fails loudly
+ * rather than acting on the wrong element.
+ */
 const TARGET_PROPS = {
-  selector: z.string().describe('CSS selector (exactly one of selector|ref)').optional(),
-  ref: z.string().describe('Element ref from a prior read (exactly one of selector|ref)').optional(),
+  selector: z.string().describe('CSS selector (or pass ref)').optional(),
+  ref: z.string().describe('Element ref from a snapshot').optional(),
 } as const;
 
-const tabIdField = z.string().describe('Target tab id (defaults to the active tab)').optional();
-const authWallField = z.boolean().describe('Fail with [AUTH_REQUIRED] when the page this call lands on is a high-confidence sign-in wall (session expired). Off by default unless the server runs with --fail-on-auth-wall; snapshot still reports the verdict as `authWall` either way.').optional();
-
 /**
- * Frame targeting. Omitted = the top frame, which is what every call did before
- * frames were addressable. `allFrames` is the one to reach for when a selector
- * "should" match but does not: the element is almost always inside an iframe
- * (checkout widgets, OAuth consent, embedded editors). Every frame is
- * authorized against its own URL, so a scan never reaches a site the allowlist
- * does not cover.
+ * Frame targeting. Omitted = the top frame. `allFrames` is the one to reach for
+ * when a selector "should" match but does not — the element is almost always
+ * inside an iframe. Every frame is authorized against its own URL, so a scan
+ * never reaches a site the allowlist does not cover.
  */
 const FRAME_PROPS = {
-  frameId: z.number().describe('Act inside this frame (ids come from frames_list)').optional(),
-  allFrames: z
-    .boolean()
-    .describe('Search every frame of the tab and act on the first that matches - use when a selector should match but does not (the element is in an iframe)')
-    .optional(),
+  frameId: z.number().describe('Frame id from frames_list').optional(),
+  allFrames: z.boolean().describe('Act on the first match in ANY frame (the element may be in an iframe)').optional(),
 } as const;
 
 /**
- * Target an element by role + accessible name instead of a CSS selector, so an
- * action needs no snapshot first. Resolution is server-side and fails loudly on
- * ambiguity rather than acting on the wrong element.
+ * The full locator block. role+name targets an element the way a person reads
+ * the page, so an action needs no snapshot first; resolution is server-side.
  */
 const LOCATOR_PROPS = {
-  role: z.string().describe('Target by ARIA role (e.g. button, link, textbox) - alternative to selector/ref').optional(),
-  name: z.string().describe('Target by accessible name/visible label (pairs with role)').optional(),
-  nth: z.number().describe('Pick the nth (0-based) match when a role+name locator is legitimately ambiguous').optional(),
+  ...TARGET_PROPS,
+  // These tools take role+name too, so their `selector` says so; the tools that
+  // only resolve a node keep the plain TARGET_PROPS wording.
+  selector: z.string().describe('CSS selector (or ref, or role+name)').optional(),
+  role: z.string().describe('ARIA role, e.g. button|link|textbox (pair with name)').optional(),
+  name: z.string().describe('Accessible name / visible label (pair with role)').optional(),
+  nth: z.number().describe('0-based index when role+name is ambiguous').optional(),
+  ...FRAME_PROPS,
 } as const;
+
+const tabIdField = z.string().describe('Tab id (default: active tab)').optional();
+const authWallField = z.boolean().describe('Error with [AUTH_REQUIRED] if this lands on a sign-in wall (expired session)').optional();
 
 const snapshotAfterField = z
   .boolean()
-  .describe('Return what CHANGED on the page after this action (added/removed/changed elements vs the last snapshot) instead of making you re-read the page')
+  .describe('Return what CHANGED on the page after this action instead of making you re-read it')
   .optional();
 const maxBytesField = z
   .number()
-  .describe(`Cap the returned content at this many UTF-8 bytes (default ${DEFAULT_MAX_OUTPUT_BYTES}). A truncated result reports truncated/totalBytes/returnedBytes. The full payload is still written to the task's results/ dir.`)
+  .describe(`Cap returned content at N UTF-8 bytes (default ${DEFAULT_MAX_OUTPUT_BYTES}); the full payload still lands in results/`)
   .optional();
 const waitUntilField = z.enum(['load', 'domcontentloaded', 'networkidle']).describe('When to consider navigation done').optional();
 
@@ -131,11 +145,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField, failOnAuthWall: authWallField } },
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
 
-  { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
-  { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
-  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...LOCATOR_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...LOCATOR_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...LOCATOR_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
   { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField, failOnAuthWall: authWallField } },
-  { name: 'hover', description: 'Hover over an element.', inputSchema: { ...TARGET_PROPS, ...LOCATOR_PROPS, ...FRAME_PROPS, tabId: tabIdField, snapshotAfter: snapshotAfterField } },
+  { name: 'hover', description: 'Hover over an element.', inputSchema: { ...LOCATOR_PROPS, tabId: tabIdField, snapshotAfter: snapshotAfterField } },
   { name: 'scroll', description: 'Scroll the page or to an element.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, x: z.number().optional(), y: z.number().optional(), deltaX: z.number().optional(), deltaY: z.number().optional(), tabId: tabIdField } },
 
   { name: 'screenshot', description: 'Capture a screenshot (page or element). Default is JPEG (quality 70) at CSS-pixel size, which is several times smaller than PNG and reads fine. Pass format:"png" for lossless, quality 1-100 for JPEG, scale 2 for device pixels on a Retina display or 0.5 to shrink.', inputSchema: { ...TARGET_PROPS, ...FRAME_PROPS, fullPage: z.boolean().optional(), format: z.enum(['jpeg', 'png']).optional(), quality: z.number().optional(), scale: z.number().optional(), tabId: tabIdField } },
@@ -240,6 +254,56 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Tool allowlist (--tools)
+// ---------------------------------------------------------------------------
+
+/** Every advertised tool name, in catalog order. */
+export const TOOL_NAMES: readonly string[] = TOOL_DEFINITIONS.map((d) => d.name);
+
+/** `null` = the whole catalog (the default). */
+let toolAllowlist: Set<string> | null = null;
+
+/**
+ * Restrict the tool surface to `names` (`--tools`). The catalog is the single
+ * largest fixed cost of having this server connected: every tool's JSON Schema
+ * is re-sent to the model on EVERY turn. A run that only reads pages has no use
+ * for uploads, PDFs or task management, and should not pay for their schemas.
+ *
+ * Excluded tools are neither advertised in `tools/list` nor callable — a
+ * `batch` op naming one is refused exactly like an unknown tool, so hiding a
+ * tool is a real restriction and not just a display filter.
+ *
+ * Passing `null`/`undefined`/`[]` restores the full catalog. Unknown names
+ * throw rather than being ignored: a typo that silently drops `click` from the
+ * surface is far more expensive to debug than a startup error.
+ */
+export function setToolAllowlist(names: readonly string[] | null | undefined): void {
+  if (!names || names.length === 0) {
+    toolAllowlist = null;
+    return;
+  }
+  const known = new Set(TOOL_NAMES);
+  const unknown = names.filter((n) => !known.has(n));
+  if (unknown.length > 0) {
+    throw new Error(
+      `--tools: unknown tool ${unknown.map((n) => JSON.stringify(n)).join(', ')}. ` +
+        `Known tools: ${TOOL_NAMES.join(', ')}`,
+    );
+  }
+  toolAllowlist = new Set(names);
+}
+
+/** Is `name` on the surface? True for every catalog tool when no allowlist is set. */
+export function isToolEnabled(name: string): boolean {
+  return toolAllowlist === null || toolAllowlist.has(name);
+}
+
+/** The names actually advertised, in catalog order. */
+export function enabledToolNames(): readonly string[] {
+  return TOOL_NAMES.filter(isToolEnabled);
+}
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -1110,6 +1174,9 @@ function isRetryableFault(name: string, err: unknown): boolean {
 }
 
 export async function dispatchToolCall(name: string, rawArgs: unknown): Promise<CallToolResult> {
+  // The allowlist is checked here, not only at registration, so a `batch` op
+  // cannot reach a tool the operator kept off the surface.
+  if (!isToolEnabled(name)) return errorResult(`tool not enabled on this server (--tools): ${name}`);
   const handler = TOOL_HANDLERS[name];
   if (!handler) return errorResult(`unknown tool: ${name}`);
   if (!allowCall(Date.now())) return errorResult('rate limit exceeded; slow down');
@@ -1176,10 +1243,16 @@ export function registerTools(server: McpServer): void {
   // just routes back through `dispatchToolCall` — our never-throw firewall that
   // applies the rate limit, executor readiness, policy gate, and history log.
   for (const d of TOOL_DEFINITIONS) {
+    if (!isToolEnabled(d.name)) continue;
     server.registerTool(
       d.name,
       { description: d.description, inputSchema: d.inputSchema },
       async (args: Record<string, unknown>) => dispatchToolCall(d.name, args),
     );
+  }
+
+  const advertised = enabledToolNames();
+  if (advertised.length < TOOL_NAMES.length) {
+    logErr(`--tools: advertising ${advertised.length} of ${TOOL_NAMES.length} tools (${advertised.join(', ')})`);
   }
 }

@@ -21,6 +21,7 @@ import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/da
 import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
+import { TOOL_NAMES, setToolAllowlist } from './mcp/tools';
 import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -167,6 +168,21 @@ function runTasksCommand(argv: string[]): boolean {
   return true;
 }
 
+/** The tool names, wrapped into indented lines for `--help`. */
+function toolList(): string {
+  const lines: string[] = [];
+  let line = ' ';
+  for (const name of TOOL_NAMES) {
+    if (line.length + name.length + 2 > 78) {
+      lines.push(line);
+      line = ' ';
+    }
+    line += ` ${name}`;
+  }
+  if (line.trim()) lines.push(line);
+  return lines.join('\n');
+}
+
 async function main(): Promise<void> {
   if (runTasksCommand(process.argv.slice(2))) return;
 
@@ -179,6 +195,8 @@ async function main(): Promise<void> {
 
   if (cfg.showHelp) {
     process.stdout.write(HELP_TEXT);
+    // The catalog is what `--tools` takes, so `--help` has to name it.
+    process.stdout.write(`\nTools (${TOOL_NAMES.length}) — any of these for --tools:\n${toolList()}\n`);
     return;
   }
   if (cfg.showVersion) {
@@ -189,6 +207,10 @@ async function main(): Promise<void> {
     process.stdout.write(`${installExtension()}\n`);
     return;
   }
+
+  // Before the bridge binds a port or writes a handshake: a typo'd `--tools`
+  // name should fail as a plain startup error, not leave a half-started server.
+  setToolAllowlist(cfg.tools);
 
   const dataDir = ensureDataDir(cfg.dataDir);
   const token = resolveToken(dataDir, { persist: cfg.persistToken });
@@ -304,9 +326,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // Port-busy and similar startup failures carry a plain-English message already;
-  // show that to the user without a noisy stack trace.
-  const friendly = err instanceof Error && /Couldn't start:/.test(err.message);
+  // Port-busy and bad-flag failures carry a plain-English message already
+  // (a flag error starts with the flag); show it without a noisy stack trace.
+  const friendly = err instanceof Error && /^(Couldn't start:|--|unknown argument:)/.test(err.message);
   logErr(friendly ? err.message : `fatal: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   process.exit(1);
 });
