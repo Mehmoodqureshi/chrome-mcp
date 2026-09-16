@@ -1,3 +1,39 @@
+## 0.9.4 - 2026-09-16
+
+Context pass. The tool catalog is the one cost you pay on **every** turn just
+for having this server connected — `tools/list` is re-sent to the model each
+time — and it had grown to 32.7 KB. Nothing changes what the tools do.
+
+- feat: **`--tools <list>`** — advertise only the tools a run actually needs.
+  Comma-separated and repeatable (`--tools navigate,get_text --tools click`).
+  Anything left out is hidden from `tools/list` AND refused if called, including
+  from inside a `batch` op, so trimming the surface is a real restriction and not
+  a display filter. Unknown names fail at startup with the catalog printed,
+  rather than silently dropping a tool you meant to keep. A seven-tool
+  read-and-click surface (`tabs_list,tab_new,navigate,snapshot,click,type,get_text`)
+  advertises **6.0 KB / ~1.5k tokens** instead of 32.7 KB / ~8.2k — an 82% cut
+  for a run that was never going to print a PDF.
+- perf: the element-targeting block (`selector` / `ref` / `role` / `name` /
+  `nth` / `frameId` / `allFrames`) is now **one shared schema shape** spread
+  whole by `click` / `type` / `select_option` / `hover`, instead of three
+  objects restated per tool, and its prose is written for the fact that it is
+  repeated across a dozen tools: every byte there is paid a dozen times per
+  turn. The detail that moved out still lives where it is needed once —
+  `frames_list` explains frames, `auth_check` explains auth walls, the README
+  explains both. Same fields, same validation, same behaviour.
+- perf: the repeated per-field descriptions (`failOnAuthWall` on 12 tools,
+  `allFrames` and `frameId` on 18, `tabId` on 29, `snapshotAfter`, `maxBytes`)
+  are trimmed to the sentence an agent needs at the call site.
+- Measured over a real `tools/list` (39 tools, compact JSON):
+  **32,747 B → 27,429 B, -16.2%** (~8.2k → ~6.9k tokens per turn). The largest
+  tools: `click` 1855 → 1413 B, `type` 1854 → 1412 B, `select_option`
+  1689 → 1247 B, `snapshot` 1322 → 1052 B, `hover` 1283 → 1001 B. A test now
+  holds the whole payload under a 28 KB budget, so the next tool has to be
+  worth its bytes. (The remaining 1.9 KB of `$schema` preambles is emitted by
+  the MCP SDK's zod conversion and is not ours to drop.)
+- The extension is unchanged in this release and stays at 0.9.3 — no reload
+  needed.
+
 ## 0.9.3 - 2026-09-15
 
 Latency pass. Nothing changes what the tools do; each item removes a round-trip,
