@@ -128,6 +128,40 @@ export function pageOp(a: PageOpArgs): unknown {
     node.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
+  /**
+   * Clear a contenteditable host. `setValue` cannot: a div has no `value`
+   * setter, so it assigns a meaningless JS property and the visible text
+   * survives - which is why `clear` silently did nothing on every rich editor
+   * (X, Reddit, LinkedIn) and new text landed beside the old.
+   *
+   * execCommand is deprecated but remains the only call that emits the
+   * beforeinput/input pair React, Quill and Lexical listen for. Assigning
+   * textContent leaves their internal model stale and the old text returns on
+   * the next keystroke.
+   */
+  const clearEditable = (host: HTMLElement): void => {
+    host.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand('delete');
+  };
+
+  /** Put the caret at the end of a contenteditable so text appends, not prepends. */
+  const caretToEnd = (host: HTMLElement): void => {
+    host.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
   /** The op proper, against an element already resolved (or null). */
   const perform = (el: HTMLElement | null): unknown => {
     const missing = sel !== null && el === null;
@@ -158,6 +192,15 @@ export function pageOp(a: PageOpArgs): unknown {
       }
 
       case 'type': {
+        if (!el) return { found: false };
+        // Rich editors (every social composer) are contenteditable, not inputs.
+        if (el.isContentEditable) {
+          if (a.clear) clearEditable(el);
+          else caretToEnd(el);
+          if (a.text) document.execCommand('insertText', false, a.text);
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { found: true };
+        }
         const node = el as HTMLInputElement | HTMLTextAreaElement | null;
         if (!node) return { found: false };
         node.focus();
@@ -168,6 +211,22 @@ export function pageOp(a: PageOpArgs): unknown {
       }
 
       case 'focus': {
+        if (!el) return { found: false };
+        // trustedType() clears through this op before sending real keystrokes,
+        // so contenteditable has to be handled here too or `trusted: true`
+        // appends to whatever was already in the box.
+        if (el.isContentEditable) {
+          el.focus();
+          if (a.clear) {
+            clearEditable(el);
+            // The editor re-renders after the delete and drops the selection.
+            // trustedType() sends CDP Input.insertText straight after this, and
+            // without a caret to land on the keystrokes go nowhere — the box
+            // ends up cleared but empty.
+            caretToEnd(el);
+          }
+          return { found: true };
+        }
         const node = el as HTMLInputElement | HTMLTextAreaElement | null;
         if (!node) return { found: false };
         node.focus();

@@ -425,10 +425,27 @@ async function trustedType(
   frameIds: FrameIds,
   pressEnter = false,
 ): Promise<boolean> {
-  const focused = await execOp(tabId, withWait({ op: 'focus', selector, clear }), frameIds);
+  // Focus only - never clear through the DOM here. A controlled editor (Draft,
+  // Lexical, Quill) re-renders after a DOM-level delete and throws away the
+  // selection, so the Input.insertText below would land nowhere and leave the
+  // box empty. Clearing is done with Chrome's own selectAll editing command
+  // instead, which is what Cmd+A does and which insertText then replaces.
+  const focused = await execOp(tabId, withWait({ op: 'focus', selector, clear: false }), frameIds);
   if (!focused.found) return false;
-  // One attach serves both the text and the Enter that follows it.
+  // One attach serves the select-all, the text, and the Enter that follows it.
   await withDebugger(tabId, async (t) => {
+    if (clear) {
+      for (const type of ['keyDown', 'keyUp'] as const) {
+        await chrome.debugger.sendCommand(t, 'Input.dispatchKeyEvent', {
+          type,
+          key: 'a',
+          code: 'KeyA',
+          windowsVirtualKeyCode: 65,
+          modifiers: 8, // Meta
+          ...(type === 'keyDown' ? { commands: ['selectAll'] } : {}),
+        });
+      }
+    }
     await chrome.debugger.sendCommand(t, 'Input.insertText', { text });
     if (!pressEnter) return;
     for (const type of ['keyDown', 'keyUp'] as const) {
