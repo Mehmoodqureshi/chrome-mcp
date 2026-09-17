@@ -1,3 +1,29 @@
+## 0.9.5 - 2026-09-17
+
+Typing into rich editors. `clear: true` never worked on a contenteditable, so
+every social composer, comment box and rich text field ended up with the old
+text and the new text in the same place.
+
+- fix: **`type` and `focus` handle contenteditable.** `setValue()` looks for a
+  `value` setter on the element's prototype. A `<div>` has none, so `clear`
+  assigned a dead JS property, the visible text survived, and the new text was
+  typed in beside it. Both ops now branch on `isContentEditable` and clear by
+  selecting the host's contents and issuing `execCommand('delete')` —
+  deprecated, and still the only call that emits the `beforeinput`/`input` pair
+  React, Lexical and Quill listen for. Assigning `textContent` updates the DOM
+  but leaves their model stale, and the old text returns on the next keystroke.
+- fix: **`trusted: true` clears through Chrome's own editing command.**
+  `trustedType()` used to clear via the DOM and then send CDP
+  `Input.insertText`. A controlled editor re-renders after a DOM-level delete
+  and discards the selection, so the keystrokes landed nowhere and the field
+  came out EMPTY — worse than duplicated. It now focuses, dispatches
+  `selectAll` as a CDP editing command (what Cmd+A does), and lets `insertText`
+  replace the selection. One debugger attach still covers the select, the text
+  and any `pressEnter`.
+- Verified live against X's Draft.js composer on both paths: type, then type
+  again with `clear`, leaves exactly one copy. Four regression tests added
+  (273 total, 2 skipped).
+
 ## 0.9.4 - 2026-09-16
 
 Context pass. The tool catalog is the one cost you pay on **every** turn just
