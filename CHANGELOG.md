@@ -1,3 +1,44 @@
+## 0.9.6 - 2026-09-18
+
+Many sessions, many browsers. Two Claude terminals used to fight over Chrome:
+every session starts its own chrome-mcp, the extension dials one port, and the
+newest session killed the previous one's server to take it. Now they share.
+
+- feat: **several sessions drive Chrome at once.** The first chrome-mcp to bind
+  the port becomes the hub and owns the extension connections. A later one that
+  finds the port held by a live chrome-mcp joins it as a peer over the same
+  port, authenticated with the token from the 0600 handshake, and relays its
+  calls through the hub. Each session keeps its own active profile. When the
+  hub's session ends, its peers race for the port: the winner keeps the same
+  token, so the extension re-pairs by itself, and the rest join it. A call in
+  flight at that moment fails once with `EXTENSION_DISCONNECTED` and idempotent
+  calls are retried. The old takeover (verify, then stop) is kept only for a
+  chrome-mcp too old to share. Sessions share one browser's tabs, so give each
+  its own tabs or its own profile.
+- feat: **browsers name themselves.** Chrome won't tell an extension which
+  profile it runs in, so every browser that left Profile blank paired as
+  `default` — and a second one silently knocked the first off. Each install
+  now keeps a random id and the server names it `default`, `profile-2`,
+  `profile-3`…, remembered in `~/.chrome-mcp/profiles.json`. A Profile typed
+  into Options still wins.
+- feat: **`profile_rename`** gives an auto-named browser a friendly name
+  (`profile-2` → `work`). The live connection is re-keyed in place, the name
+  survives restarts, and the profile's artifacts move with it when the new
+  name has no folder yet.
+- fix: **`chrome_status` answers when the active profile has no browser** —
+  exactly when you need it — and lists every paired browser, how it was named,
+  and its active tab as a hint.
+- fix: **pairing errors name the profile.** An unpaired profile used to report
+  `pair the extension, attach a --cdp-endpoint, or enable the CDP fallback`,
+  suggesting flags this build ignores. It now says which profile has no browser
+  and exactly what to set in that Chrome's Options.
+- fix: **Options saves without re-pasting the token.** The token field is never
+  prefilled, and Save refused an empty one, so changing only the Profile
+  silently did nothing. A blank token now keeps the stored one, and the page
+  shows the name this browser was paired as.
+- Verified live with two Chrome profiles and three concurrent sessions. 16 new
+  tests (289 total, 2 skipped).
+
 ## 0.9.5 - 2026-09-17
 
 Typing into rich editors. `clear: true` never worked on a contenteditable, so
