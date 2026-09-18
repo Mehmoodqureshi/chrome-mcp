@@ -17,11 +17,11 @@ import { type GcOptions, gcTasks, listTasks } from './bridge/tasks';
 import { configureManager } from './executor/manager';
 import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
-import { ensureDataDir, ensureWorkspace, migrateLegacyLayout } from './bridge/datadir';
+import { ensureDataDir, ensureWorkspace, handshakePath as handshakeFile, migrateLegacyLayout } from './bridge/datadir';
 import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
-import { TOOL_NAMES, setToolAllowlist } from './mcp/tools';
+import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -226,8 +226,35 @@ async function main(): Promise<void> {
     onLog: (m) => logErr(m),
     onDisplacement: (d) =>
       logErr(`SECURITY: extension connection displaced (different id: ${d.differentId})`),
+    // Only the server that owns the port publishes pairing files. A peer (another
+    // Claude session sharing this Chrome) leaves them alone, and publishes them
+    // itself if the hub exits and it takes the port over.
+    onRole: (role, info) => {
+      if (role === 'hub') publishPairing(info.port, info.token);
+      else logErr(`sharing the browsers of the chrome-mcp already on port ${info.port} (pid ${info.hubPid || '?'}) — several sessions can drive Chrome at once`);
+    },
   });
+
+  const publishPairing = (port: number, pairToken: string): void => {
+    const path = writeHandshake(dataDir, { port, token: pairToken });
+    logErr(`pairing handshake written to ${path} (mode 0600; token not logged)`);
+    // Drop the same port + token into the bundled extension folder so a Load
+    // unpacked from there pairs itself. Best-effort: a read-only install just
+    // falls back to the Options-page paste.
+    const extDir = installExtension();
+    const bundled = writeBundledPairing(extDir, { port, token: pairToken });
+    if (bundled) {
+      logErr(`auto-pairing file written to ${bundled} — Load unpacked from ${extDir} needs no token paste`);
+    } else {
+      logDebug(`auto-pairing file not written (extension folder missing or read-only at ${extDir})`);
+    }
+    // Anyone who loaded the extension straight from the package folder (0.8.0
+    // docs) keeps pairing too.
+    if (extDir !== bundledExtensionDir()) writeBundledPairing(bundledExtensionDir(), { port, token: pairToken });
+  };
+
   const port = await bridge.start();
+  setProfileBridge(bridge);
   // Never includes the pairing token — only the resolved, non-secret config.
   logDebug(
     `resolved config: ${JSON.stringify({
@@ -239,21 +266,7 @@ async function main(): Promise<void> {
       policy: cfg.policy,
     })}`,
   );
-  const handshakePath = writeHandshake(dataDir, { port, token });
-  logErr(`pairing handshake written to ${handshakePath} (mode 0600; token not logged)`);
-  // Drop the same port + token into the bundled extension folder so a Load
-  // unpacked from there pairs itself. Best-effort: a read-only install just
-  // falls back to the Options-page paste.
-  const extDir = installExtension();
-  const bundled = writeBundledPairing(extDir, { port, token });
-  if (bundled) {
-    logErr(`auto-pairing file written to ${bundled} — Load unpacked from ${extDir} needs no token paste`);
-  } else {
-    logDebug(`auto-pairing file not written (extension folder missing or read-only at ${extDir})`);
-  }
-  // Anyone who loaded the extension straight from the package folder (0.8.0
-  // docs) keeps pairing too.
-  if (extDir !== bundledExtensionDir()) writeBundledPairing(bundledExtensionDir(), { port, token });
+  const handshakePath = handshakeFile(dataDir);
   if (process.env.CHROME_MCP_TOKEN) {
     logErr('token: pinned from CHROME_MCP_TOKEN (stable; pair once, never again).');
   } else if (cfg.persistToken) {
@@ -261,7 +274,9 @@ async function main(): Promise<void> {
   }
 
   const cleanup = (): void => {
-    removeHandshake(dataDir);
+    // The handshake belongs to whichever server owns the port; a peer exiting
+    // must not delete the hub's.
+    if (bridge.role === 'hub') removeHandshake(dataDir);
   };
 
   // Manual pairing helper: run the bridge, print the path, keep alive. NOT MCP.

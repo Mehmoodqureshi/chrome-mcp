@@ -27,8 +27,9 @@ export interface SelectorDeps {
   makeCdp?: (opts: CdpOptions) => Executor;
 }
 
-/** A responsiveness-aware Executor (extension executors expose `ping`). */
-type Pingable = Executor & { ping(deadlineMs?: number): Promise<boolean> };
+/** A responsiveness-aware Executor (extension executors expose `ping`, and may
+ *  explain why they can't serve the active profile). */
+type Pingable = Executor & { ping(deadlineMs?: number): Promise<boolean>; unavailableReason?(): string };
 
 export function createSelector(deps: SelectorDeps): () => Promise<Executor> {
   const makeExt = deps.makeExtension ?? ((b) => new ExtensionExecutor(b));
@@ -91,9 +92,13 @@ export function createSelector(deps: SelectorDeps): () => Promise<Executor> {
       const c = getCdp();
       if (c) return c;
     }
+    // CDP is off in the published build, so the extension is the only way in:
+    // name the profile and the exact Options to set rather than suggest flags
+    // that are ignored.
+    const reason = ext.unavailableReason?.();
     throw new ExecutorError(
       'NO_BACKEND',
-      'No Chrome available: pair the extension, attach a --cdp-endpoint, or enable the CDP fallback.',
+      reason ?? 'No Chrome available: pair the chrome-mcp extension (Options: Port, token, Profile).',
     );
   };
 }

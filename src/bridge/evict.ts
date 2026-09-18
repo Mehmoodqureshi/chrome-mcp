@@ -1,11 +1,11 @@
 /**
  * src/bridge/evict.ts — take a pinned port back from a stale chrome-mcp.
  *
- * The extension dials exactly ONE bridge port, so only one server can own a
- * given Chrome at a time. But every MCP host session spawns its own chrome-mcp
- * child, so a second session (another Claude tab/window) racing for a pinned
- * `--port` would otherwise just fail with EADDRINUSE and force the user to kill
- * the old process by hand. Newest-session-wins: we do that kill for them.
+ * A second session normally JOINS the chrome-mcp holding the port as a peer
+ * (see ./peer) and nobody is stopped. This is the fallback for when joining
+ * fails: an older chrome-mcp that can't share the port, or a hung one. It will
+ * never release the port on its own, so rather than fail with EADDRINUSE and
+ * make the user kill it by hand, we do that for them.
  *
  * The safety bar is high, because a pid can be recycled onto an unrelated
  * process. We evict ONLY when every check agrees:

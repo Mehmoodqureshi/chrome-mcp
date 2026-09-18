@@ -157,6 +157,10 @@ export interface HelloFrame extends BaseFrame {
    *  NOT a security boundary (the token is) — it selects which connection slot the
    *  server routes commands to, so several browsers can stay paired at once. */
   profile?: string;
+  /** Random id this extension install keeps in its chrome.storage.local — one per
+   *  Chrome profile. With no `profile` label, the server names the browser from it
+   *  ("default", "profile-2", ...) so two blank-profile browsers never collide. */
+  installId?: string;
   /** Optional capability advertisements (see `WIRE_CAP_TAB_URL`). An extension
    *  that sends none gets the conservative path, so old builds stay correct. */
   caps?: string[];
@@ -192,6 +196,9 @@ export interface WelcomeFrame extends BaseFrame {
   heartbeatMs: number;
   /** The active policy, so the extension can mirror the server-side gate. */
   policy: WirePolicy;
+  /** The profile name this browser was paired as (shown in the Options page).
+   *  Optional so an older server's welcome still parses. */
+  profile?: string;
 }
 
 export interface UnauthFrame extends BaseFrame {

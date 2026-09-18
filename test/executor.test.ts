@@ -142,6 +142,21 @@ test('selector: no extension and no CDP fallback → NO_BACKEND', async () => {
   await assert.rejects(select(), (e: unknown) => e instanceof ExecutorError && e.code === 'NO_BACKEND');
 });
 
+test('selector: NO_BACKEND names the unpaired profile instead of dead CDP flags', async () => {
+  const ext = {
+    backend: 'extension',
+    ping: async () => false,
+    unavailableReason: () => 'No browser is paired for profile "muhammad".',
+  } as unknown as Executor;
+  const select = createSelector({
+    bridge: fakeBridge(true), cdpFallback: false, prefer: 'extension', cdp: cdpOpts,
+    makeExtension: () => ext, makeCdp: () => fakeCdp,
+  });
+  await assert.rejects(select(), (e: unknown) =>
+    e instanceof ExecutorError && e.code === 'NO_BACKEND' &&
+    e.message.includes('profile "muhammad"') && !e.message.includes('cdp-endpoint'));
+});
+
 /** A pingable fake that counts how many times it was probed. */
 const countingExt = (alive: () => boolean): { ext: Executor; pings: () => number } => {
   let pings = 0;

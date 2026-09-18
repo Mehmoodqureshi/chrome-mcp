@@ -25,14 +25,16 @@
     <label for="port">Port</label>
     <input id="port" type="number" inputmode="numeric" placeholder="38017" />
     <label for="token">Token</label>
-    <input id="token" type="password" placeholder="paste the handshake token" />
+    <input id="token" type="password" placeholder="leave blank to keep the current token" />
     <label for="profile">Profile</label>
-    <input id="profile" type="text" placeholder="default" />
+    <input id="profile" type="text" placeholder="automatic" />
     <p class="hint">
-      A name for this browser (e.g. <code>mehmood</code>). Several browsers can pair to the
-      same port &amp; token at once, each with its own profile — switch between them with
-      <code>profile_use</code>. Leave blank for <code>default</code>.
+      Optional. Leave blank and the server names this browser for you — the first is
+      <code>default</code>, then <code>profile-2</code>, <code>profile-3</code>… — and
+      remembers it. Rename one with <code>profile_rename</code>, switch with
+      <code>profile_use</code>. Type a name here only to pin one yourself.
     </p>
+    <p class="hint" id="paired-as"></p>
     <button id="save">Save & connect</button>
     <div class="status" id="status">Status: unknown</div>
     <script src="options.js"></script>

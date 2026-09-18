@@ -160,23 +160,41 @@ bundled file.
 
 ### Running more than one session
 
-The extension dials exactly **one** bridge port, so only one chrome-mcp can drive
-your Chrome at a time — but every MCP host session (each Claude tab/window)
-spawns its own server. With a pinned `--port`, the newest session **takes the
-port over**: it reads the owning pid from `handshake.json`, confirms that process
-really is a chrome-mcp, and stops it. Newest tab wins; the older session's browser
-tools go quiet until it reconnects. Nothing that isn't a verified chrome-mcp is
-ever touched — a port held by some other program is reported, never killed.
+Every MCP host session (each Claude terminal, tab or window) starts its own
+chrome-mcp, and they all share your Chrome at once. The first one to start owns
+the bridge port and the extension connections — the **hub**. Each later session
+finds the port held by a live chrome-mcp and joins it as a **peer**: its tool
+calls are relayed through the hub to the same browsers, so every session keeps
+working side by side. Nobody is disconnected.
 
-Two servers can only run side by side if each has its own port **and** its own
-paired extension — i.e. a separate Chrome profile running its own copy of the
-extension, pointed at the other port (`--port 9223`). A single Chrome pairs to one
-server at a time, so a second server with no extension of its own can drive
-nothing.
+When the hub's session ends, its peers race for the port; one takes it over
+(with the same token, so the extension re-pairs by itself within a few seconds)
+and the rest join the new hub. A call that was in flight at that moment fails
+once with `EXTENSION_DISCONNECTED` and is retried automatically when it is safe
+to repeat.
 
-One server can, however, serve **several browsers at once**: connections are
-routed by profile key (`--profile <name>`, matching the profile set in the
-extension's Options), so each paired Chrome gets its own routing slot.
+Peers authenticate with the pairing token from the 0600 handshake file, so only
+your own OS user can join. A chrome-mcp too old to share the port is replaced as
+before: it is verified to be chrome-mcp, then stopped. Anything that isn't a
+verified chrome-mcp is never touched — a port held by some other program is
+reported, never killed.
+
+Sessions share one browser, so they also share its tabs: two sessions driving
+the same tab at the same moment will step on each other. Give each session its
+own tabs (`tab_new`), or its own Chrome profile (below).
+
+Each session can also drive **several browsers at once**: load the extension
+in each Chrome profile and they all pair to the same server, each under its own
+profile name. Tools act on the active profile — pick it with `--profile <name>`
+at startup or the `profile_use` tool at runtime.
+
+Naming is automatic. Chrome won't tell an extension which profile it runs in, so
+each install keeps a random id and the server names it: the first browser is
+`default`, the next `profile-2`, then `profile-3`, and so on. Names are stored in
+`~/.chrome-mcp/profiles.json`, so a browser keeps its name across restarts.
+`chrome_status` lists every paired browser (with its active tab as a hint), and
+`profile_rename` gives one a friendly name (`profile-2` → `work`). To pin a name
+yourself instead, type it into the extension's Options → Profile; that always wins.
 
 Without `--port`, each server binds an ephemeral port (no conflict ever), but the
 port changes every boot — so you'd re-pair the extension each time. Pin `--port`

@@ -13,14 +13,21 @@ const saveEl = document.getElementById('save') as HTMLButtonElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 
 const sourceEl = document.getElementById('source') as HTMLParagraphElement;
+const pairedAsEl = document.getElementById('paired-as') as HTMLParagraphElement;
+
+function renderPairedAs(name: unknown): void {
+  pairedAsEl.textContent = typeof name === 'string' && name ? `This browser is paired as "${name}".` : '';
+}
 
 async function loadExisting(): Promise<void> {
-  const { wsPort, profile, connState, pairingSource } = await chrome.storage.local.get([
+  const { wsPort, profile, connState, pairingSource, pairedProfile } = await chrome.storage.local.get([
     'wsPort',
     'profile',
     'connState',
     'pairingSource',
+    'pairedProfile',
   ]);
+  renderPairedAs(pairedProfile);
   sourceEl.textContent =
     pairingSource === 'auto'
       ? 'Paired automatically from the pairing.json the server wrote into this extension folder. Saving here overrides it.'
@@ -48,8 +55,12 @@ function render(state: string): void {
 
 saveEl.addEventListener('click', async () => {
   const wsPort = Number(portEl.value);
-  const token = tokenEl.value.trim();
-  const profile = profileEl.value.trim() || 'default';
+  // The token field is never prefilled (it's a secret), so a blank one means
+  // "keep the token I already have" — e.g. when only the Profile changes.
+  const stored = await chrome.storage.local.get('token');
+  const token = tokenEl.value.trim() || (typeof stored.token === 'string' ? stored.token : '');
+  // Blank = let the server name this browser ("default", "profile-2", ...).
+  const profile = profileEl.value.trim();
   if (!Number.isInteger(wsPort) || wsPort <= 0 || !token) {
     statusEl.textContent = 'Status: enter a valid port (> 0) and token';
     return;
@@ -61,6 +72,7 @@ saveEl.addEventListener('click', async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.connState) render(String(changes.connState.newValue));
+  if (area === 'local' && changes.pairedProfile) renderPairedAs(changes.pairedProfile.newValue);
 });
 
 void loadExisting();

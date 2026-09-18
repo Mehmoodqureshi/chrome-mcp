@@ -23,8 +23,10 @@ import type { WirePolicy } from '../../../shared/protocol';
 interface PairConfig {
   wsPort: number;
   token: string;
-  /** Routing label this browser pairs as (default "default"). */
+  /** Routing label typed into Options; empty lets the server name this browser. */
   profile: string;
+  /** Stable random id for this install (one per Chrome profile). */
+  installId: string;
 }
 
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
@@ -77,6 +79,8 @@ const ws = new WsClient({
     // allowlisted sites and only when the operator opted in.
     void syncObserverScript(policy, (m) => console.debug('[chrome-mcp]', m));
   },
+  // Shown on the Options page, so you can tell which name this browser got.
+  onProfile: (profile) => void chrome.storage.local.set({ pairedProfile: profile }),
   log: (m) => console.debug('[chrome-mcp]', m),
 });
 const router = new CommandRouter({
@@ -154,12 +158,30 @@ async function reloadIfFilesChanged(): Promise<void> {
   }
 }
 
+/**
+ * This install's id, created on first use. chrome.storage.local is per Chrome
+ * profile, so each profile's copy of the extension gets its own — the server
+ * names browsers from it, since Chrome won't tell an extension which profile
+ * it is running in.
+ */
+async function ensureInstallId(installId: unknown): Promise<string> {
+  if (typeof installId === 'string' && installId.length > 0) return installId;
+  const fresh = crypto.randomUUID();
+  await chrome.storage.local.set({ installId: fresh });
+  return fresh;
+}
+
 async function getConfig(): Promise<PairConfig | null> {
-  const { wsPort, token, profile } = await chrome.storage.local.get(['wsPort', 'token', 'profile']);
+  const { wsPort, token, profile, installId } = await chrome.storage.local.get([
+    'wsPort',
+    'token',
+    'profile',
+    'installId',
+  ]);
   // wsPort must be > 0 — a stored 0 would dial ws://127.0.0.1:0 (ERR_UNSAFE_PORT).
   if (typeof wsPort === 'number' && wsPort > 0 && typeof token === 'string' && token.length > 0) {
-    const name = typeof profile === 'string' && profile.trim() ? profile.trim() : 'default';
-    return { wsPort, token, profile: name };
+    const label = typeof profile === 'string' ? profile.trim() : '';
+    return { wsPort, token, profile: label, installId: await ensureInstallId(installId) };
   }
   return null;
 }
@@ -193,7 +215,7 @@ async function ensureConnected(): Promise<void> {
   if (ws.isConnected() || ws.state === 'unauthorized') return;
   const cfg = await getConfig();
   if (!cfg) return;
-  ws.connect(cfg.wsPort, cfg.token, cfg.profile);
+  ws.connect(cfg.wsPort, cfg.token, cfg.profile, cfg.installId);
 }
 
 // --- keepalive: an awaited extension-API call resets the 30s idle timer -----

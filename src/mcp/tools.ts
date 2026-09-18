@@ -11,6 +11,7 @@
  * `Error` as an `isError` result.
  */
 
+import { existsSync, renameSync } from 'node:fs';
 import { resolve as pathResolve, sep } from 'node:path';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -40,6 +41,8 @@ import { describeAuthWall, detectAuthWall, type AuthWall } from '../../shared/au
 import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
 import { logDebug, logErr } from './log';
 import { listTasks } from '../bridge/tasks';
+import type { BridgeServer } from '../bridge/server';
+import { resolveProfileDir, sanitizeName } from '../config';
 import {
   appendHistory,
   getActiveWorkspace,
@@ -231,10 +234,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 
-  { name: 'chrome_status', description: 'Report backend/session status.', inputSchema: {} },
+  { name: 'chrome_status', description: 'Report backend/session status, including every paired browser profile and how it was named.', inputSchema: {} },
   { name: 'auth_check', description: 'Is the tab sitting on a sign-in wall? Reads the page (URL, title, password fields, sign-in controls) and returns { authRequired, confidence, signals }. Use it after a navigate, or whenever a step fails unexpectedly, to tell "the session expired" apart from "the agent got lost". Pass failOnAuthWall:true to get an [AUTH_REQUIRED] error instead of a verdict, so a harness can bucket the run as an auth failure.', inputSchema: { failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
 
   { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: { name: z.string().describe('Profile name (becomes a folder; sanitized to a safe path segment).') } },
+  { name: 'profile_rename', description: 'Rename an automatically named browser profile (e.g. "profile-2" -> "work"). The name sticks across restarts; its saved artifacts move with it.', inputSchema: { from: z.string().describe('Current profile name'), to: z.string().describe('New profile name') } },
   { name: 'task_new', description: 'Start a new task (run) under the active profile. Creates profiles/<profile>/tasks/<name>/ with downloads/, results/, screenshots/ and makes it the active task so all captured artifacts land there.', inputSchema: { name: z.string().describe('Task name (becomes a folder; sanitized to a safe path segment).') } },
   { name: 'tasks_list', description: 'List every task across all profiles under the data dir, with sizes and download counts.', inputSchema: {} },
   { name: 'task_status', description: 'Report the active profile/task and the folder paths where this run\'s artifacts are stored.', inputSchema: {} },
@@ -586,11 +590,23 @@ const waitUntil = (args: Record<string, unknown>): WaitUntil | undefined =>
  *  the active tab when `tabId` is omitted, which races under concurrency. */
 const PARALLEL_TAB_EXEMPT = new Set([
   'tabs_list', 'tab_new', 'chrome_status', 'batch',
-  'profile_use', 'task_new', 'tasks_list', 'task_status',
+  'profile_use', 'profile_rename', 'task_new', 'tasks_list', 'task_status',
 ]);
 
 /** Server-side tools that manage the task workspace and need no browser backend. */
-const NO_BACKEND_TOOLS = new Set(['profile_use', 'task_new', 'tasks_list', 'task_status']);
+const NO_BACKEND_TOOLS = new Set([
+  'profile_use', 'profile_rename', 'task_new', 'tasks_list', 'task_status',
+  // Must answer even when the active profile has no browser — that is exactly
+  // when you need it to see which profiles ARE paired.
+  'chrome_status',
+]);
+
+/** The bridge, for the profile tools that need live connection state. Set by
+ *  the CLI once the bridge is up; null in tests that don't run one. */
+let profileBridge: BridgeServer | null = null;
+export function setProfileBridge(bridge: BridgeServer | null): void {
+  profileBridge = bridge;
+}
 
 /** Project a Workspace to the path fields worth returning to the caller. */
 function workspaceView(w: ReturnType<typeof getActiveWorkspace>): Record<string, unknown> {
@@ -1029,7 +1045,21 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     });
   },
 
-  chrome_status: async (_a, ctx) => jsonResult(ctx.ex.status()),
+  chrome_status: async () => {
+    const profiles = profileBridge ? { profiles: profileBridge.pairedProfiles() } : {};
+    try {
+      const ex = await getManager().ensureReady();
+      return jsonResult({ ...ex.status(), ...profiles });
+    } catch (err) {
+      return jsonResult({
+        ready: false,
+        backend: null,
+        detail: errMessage(err),
+        activeProfile: peekActiveWorkspace()?.profile ?? 'default',
+        ...profiles,
+      });
+    }
+  },
   auth_check: async (a, ctx) => {
     await gate(ctx, 'get_text', { tabId: tabId(a) }); // read of page structure
     const snap = await ctx.ex.snapshot({ tabId: tabId(a), ...frameOpts(a), interactiveOnly: true, max: 200 });
@@ -1050,6 +1080,41 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     // against one from another machine.
     resetSnapshots();
     return jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') })));
+  },
+  profile_rename: async (a) => {
+    if (!profileBridge) throw new ExecutorError('NO_BACKEND', 'profile_rename needs the chrome-mcp bridge running');
+    let from: string;
+    let to: string;
+    try {
+      // Sanitize once so the folder move and the active-profile check below
+      // use the same name the bridge routes by.
+      from = sanitizeName(requireString(a, 'from'), 'profile');
+      to = await profileBridge.renameProfile(from, requireString(a, 'to'));
+    } catch (err) {
+      // A refusal (typed-in name, name taken, bad name) is the caller's to fix, not a crash.
+      throw new McpToolError(err instanceof Error ? err.message : String(err));
+    }
+    // Carry the profile's saved artifacts over, unless the new name already has
+    // a folder of its own (never merge or overwrite).
+    const ws = getActiveWorkspace();
+    const oldDir = resolveProfileDir(ws.dataDir, from);
+    const newDir = resolveProfileDir(ws.dataDir, to);
+    let artifactsMoved = false;
+    if (to !== from && existsSync(oldDir) && !existsSync(newDir)) {
+      try {
+        renameSync(oldDir, newDir);
+        artifactsMoved = true;
+      } catch {
+        /* leave them where they are; the rename itself already succeeded */
+      }
+    }
+    // Keep routing to the same browser if it was the active one.
+    let active: Record<string, unknown> | undefined;
+    if (ws.profile === from) {
+      resetSnapshots();
+      active = workspaceView(switchWorkspace({ profile: to }));
+    }
+    return jsonResult({ from, to, artifactsMoved, ...(active ? { active } : {}) });
   },
   task_new: async (a) => jsonResult(workspaceView(switchWorkspace({ task: requireString(a, 'name') }))),
   task_status: async () => jsonResult(workspaceView(getActiveWorkspace())),

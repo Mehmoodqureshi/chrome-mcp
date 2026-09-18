@@ -116,6 +116,17 @@ export class ExtensionExecutor implements Executor {
     }
   }
 
+  /** Why this executor can't serve the active profile right now: not paired, or
+   *  paired but not answering pings. Used for the selector's NO_BACKEND message. */
+  unavailableReason(): string {
+    const profile = this.activeProfile();
+    if (!this.bridge.hasConnection(profile)) return this.bridge.noPairMessage(profile);
+    return (
+      `The browser paired for profile "${profile}" is not responding. Open that Chrome, ` +
+      `or reload the chrome-mcp extension in chrome://extensions, then retry.`
+    );
+  }
+
   async dispose(): Promise<void> {
     // Never close the user's Chrome.
   }

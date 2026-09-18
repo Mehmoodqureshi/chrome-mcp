@@ -382,9 +382,10 @@ test('token persistence: a loose token file is REUSED on Windows (no mode bits t
 test('port conflict: a fixed port already in use surfaces a friendly, actionable error', async () => {
   const first = new BridgeServer({ token: TOKEN, serverVersion: 'test', port: 0, heartbeatMs: 0 });
   const port = await first.start();
-  // A second server on the SAME fixed port can never bind (first never releases),
-  // so after the wait window it must fail with the plain-English message — not EADDRINUSE.
-  const second = new BridgeServer({ token: TOKEN, serverVersion: 'test', port, heartbeatMs: 0 });
+  // A second server on the SAME fixed port that can't join the first (a different
+  // token, so no peer link) can never bind, so after the wait window it must fail
+  // with the plain-English message — not EADDRINUSE.
+  const second = new BridgeServer({ token: 'not-the-hub-token', serverVersion: 'test', port, heartbeatMs: 0 });
   try {
     await assert.rejects(second.start(), (err: Error) => {
       assert.match(err.message, /another program is already using/i);
@@ -402,7 +403,8 @@ test('port conflict: start retries and succeeds once the old listener releases t
   const first = new BridgeServer({ token: TOKEN, serverVersion: 'test', port: 0, heartbeatMs: 0 });
   const port = await first.start();
   const logs: string[] = [];
-  const second = new BridgeServer({ token: TOKEN, serverVersion: 'test', port, heartbeatMs: 0, onLog: (m) => logs.push(m) });
+  // A different token, so it can't join the first as a peer and has to wait for the port.
+  const second = new BridgeServer({ token: 'not-the-hub-token', serverVersion: 'test', port, heartbeatMs: 0, onLog: (m) => logs.push(m) });
   // Free the port shortly after the second server starts waiting; its retry loop should then bind.
   setTimeout(() => void first.stop(), 500);
   const boundPort = await second.start();

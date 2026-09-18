@@ -23,6 +23,8 @@ export interface WsClientDeps {
   onState: (state: ConnState, detail?: string) => void;
   /** Receives the policy the server delivers in `welcome`, for extension-side gating. */
   onPolicy: (policy: WirePolicy) => void;
+  /** Receives the profile name the server paired this browser as. */
+  onProfile?: (profile: string) => void;
   log: (message: string) => void;
 }
 
@@ -41,7 +43,7 @@ export class WsClient {
     return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN;
   }
 
-  connect(port: number, token: string, profile?: string): void {
+  connect(port: number, token: string, profile?: string, installId?: string): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -62,6 +64,7 @@ export class WsClient {
         token,
         ext: { id: chrome.runtime.id, version: chrome.runtime.getManifest().version, chrome: chromeVersion() },
         profile: profile && profile.trim() ? profile.trim() : undefined,
+        installId,
         // This build gates fail-closed and reports tab URLs on results, so the
         // server may skip its pre-flight tabs_list. An older build omits this and
         // the server keeps fetching the URL itself.
@@ -80,6 +83,7 @@ export class WsClient {
       switch (frame.type) {
         case 'welcome':
           this.deps.onPolicy(frame.policy);
+          if (typeof frame.profile === 'string') this.deps.onProfile?.(frame.profile);
           this.setState('connected');
           this.deps.log('paired with server');
           break;

@@ -342,8 +342,10 @@ Connection:
   --profile <name>       Default browser profile / identity (default "default").
                          Artifacts live under profiles/<name>/. At runtime, switch
                          with the profile_use tool. Several browsers can pair to the
-                         SAME port+token at once, each declaring its own Profile in
-                         the extension Options; tools route to the active profile.
+                         SAME port+token at once; each is named automatically
+                         (default, profile-2, ...; rename with profile_rename) unless
+                         its extension Options pins a Profile. Tools route to the
+                         active profile.
   --task <name>          Task label (default "default"). Downloads and a meta.json
                          land in profiles/<profile>/tasks/<task>/.
   --print-pairing        Write the handshake, print its path, and keep the bridge
