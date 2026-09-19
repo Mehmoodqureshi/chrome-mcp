@@ -22,6 +22,7 @@ import { setActiveWorkspace } from './bridge/workspace';
 import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
+import { initTelemetry, stopTelemetry } from './telemetry';
 import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -255,6 +256,13 @@ async function main(): Promise<void> {
 
   const port = await bridge.start();
   setProfileBridge(bridge);
+  initTelemetry({
+    dataDir,
+    version: version(),
+    disabledByFlag: cfg.noTelemetry,
+    log: (m) => logErr(m),
+    context: () => ({ role: bridge.role, browsers: bridge.connectedProfiles().length }),
+  });
   // Never includes the pairing token — only the resolved, non-secret config.
   logDebug(
     `resolved config: ${JSON.stringify({
@@ -325,7 +333,9 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     cleanup();
-    exitWithDeadline(Promise.allSettled([stopMcpServer(), bridge.stop()]));
+    // Telemetry first: its final summary reads the bridge's role and paired
+    // browsers, which bridge.stop() clears synchronously.
+    exitWithDeadline(Promise.allSettled([stopTelemetry(), stopMcpServer(), bridge.stop()]));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

@@ -41,6 +41,7 @@ import { describeAuthWall, detectAuthWall, type AuthWall } from '../../shared/au
 import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
 import { logDebug, logErr } from './log';
 import { listTasks } from '../bridge/tasks';
+import { noteToolCall } from '../telemetry';
 import type { BridgeServer } from '../bridge/server';
 import { resolveProfileDir, sanitizeName } from '../config';
 import {
@@ -1200,6 +1201,8 @@ function recordHistory(
   extra: { error?: string; ms?: number; audit?: CallAudit } = {},
 ): void {
   const a = extra.audit ?? {};
+  // Counts only — the tool name and error code, never the args or URL below.
+  noteToolCall(tool, ok, extra.error);
   appendHistory({
     ts: new Date().toISOString(),
     tool,

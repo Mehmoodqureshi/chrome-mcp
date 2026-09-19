@@ -42,6 +42,8 @@ export interface CliConfig {
   showExtensionPath: boolean;
   /** `--persist-token`: reuse a stable on-disk token so the extension never re-pairs. */
   persistToken: boolean;
+  /** `--no-telemetry`: send no anonymous usage statistics (see src/telemetry.ts). */
+  noTelemetry: boolean;
   /**
    * `--tools`: advertise only these tools. `undefined` = the whole catalog.
    * Names are validated against the catalog by `setToolAllowlist` at startup —
@@ -118,6 +120,7 @@ export function parseArgs(argv: string[]): CliConfig {
   let headless = false;
   let printPairing = false;
   let persistToken = false;
+  let noTelemetry = false;
   let showHelp = false;
   let showVersion = false;
   let showExtensionPath = false;
@@ -220,6 +223,9 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--persist-token':
         persistToken = true;
         break;
+      case '--no-telemetry':
+        noTelemetry = true;
+        break;
       case '--tools':
         toolsFlagSeen = true;
         for (const name of splitList(requireValue(argv[++i], '--tools'))) tools.add(name);
@@ -280,6 +286,7 @@ export function parseArgs(argv: string[]): CliConfig {
     headless,
     printPairing,
     persistToken,
+    noTelemetry,
     showHelp,
     showVersion,
     showExtensionPath,
@@ -357,6 +364,10 @@ Connection:
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.
+  --no-telemetry         Send no anonymous usage statistics. Same as
+                         CHROME_MCP_TELEMETRY=0 or DO_NOT_TRACK=1. Only counts are
+                         ever sent (version, OS, tool calls, error codes) — never
+                         URLs, page content or arguments.
 
 Backend:
   This build is EXTENSION-ONLY — it drives ONLY your real Chrome via the paired

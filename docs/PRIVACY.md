@@ -1,6 +1,6 @@
 # Privacy policy — MCP Extension for Chrome
 
-Last updated: 2026-09-13
+Last updated: 2026-09-18
 
 MCP Extension for Chrome is the browser half of chrome-mcp, an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
@@ -47,6 +47,16 @@ Nothing is retained by the extension beyond the local-storage items above. You
 can clear them by removing the extension. Anything the server saves
 (screenshots, downloads, action history) lives in `~/.chrome-mcp` on your own
 machine under your control.
+
+## The chrome-mcp server (separate from the extension)
+
+This policy covers the extension, which sends nothing anywhere. The chrome-mcp
+server — the npm package you run from your MCP client — sends anonymous usage
+statistics: a random install id, its version, OS, CPU architecture, Node
+version, and counts of tool calls and error codes. It never sends URLs, page
+content, tool arguments, cookies or anything the extension reads. Turn it off
+with `CHROME_MCP_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `--no-telemetry`. Details:
+https://github.com/Mehmoodqureshi/chrome-mcp#telemetry
 
 ## Contact
 

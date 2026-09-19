@@ -520,6 +520,31 @@ group/other-accessible. Windows has no such bits — `chmod` there only toggles 
 read-only attribute — so the check is skipped and the token's confidentiality
 rests on the per-user ACL of `%USERPROFILE%\.chrome-mcp`.
 
+## Telemetry
+
+The chrome-mcp **server** sends anonymous usage statistics to PostHog, so the
+project can see how many installs are active, which versions and platforms are
+in use, and which tools fail most. A notice is printed the first time it runs.
+
+What is sent: a random install id (kept in `~/.chrome-mcp/telemetry.json`), the
+chrome-mcp version, OS, CPU architecture and Node major version, whether the
+session owns the bridge port or shares it, how many browsers are paired, and
+per-tool call and error **counts** with error codes — batched every 10 minutes.
+
+What is never sent: URLs, domains, tool arguments, page content, screenshots,
+cookies, profile names, tokens, file paths, or anything you type. Events are
+personless and GeoIP lookup is disabled.
+
+The **browser extension sends nothing** — it only ever talks to `127.0.0.1`.
+
+Turn it off with any of:
+
+```bash
+CHROME_MCP_TELEMETRY=0     # or false / off
+DO_NOT_TRACK=1
+--no-telemetry             # server flag
+```
+
 ## Develop
 
 ```
