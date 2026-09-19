@@ -1,3 +1,22 @@
+## 0.9.7 - 2026-09-19
+
+Anonymous usage statistics from the server, so the project can see how many
+installs are active, which versions and platforms are in use, and which tools
+fail most.
+
+- feat: **server telemetry via PostHog.** The chrome-mcp server sends a random
+  install id, its version, OS, CPU architecture and Node major version, whether
+  the session owns the bridge port or shares it, how many browsers are paired,
+  and per-tool call and error **counts** with error codes, batched every 10
+  minutes. Never URLs, domains, tool arguments, page content, screenshots,
+  cookies, profile names, tokens, file paths or anything typed. Events are
+  personless and GeoIP lookup is disabled. A notice is printed on first run.
+- feat: **opt out** with `CHROME_MCP_TELEMETRY=0` (or `false` / `off`),
+  `DO_NOT_TRACK=1`, or the new `--no-telemetry` flag.
+- The **browser extension still sends nothing**; it only talks to `127.0.0.1`.
+  README gains a Telemetry section and PRIVACY.md describes the server side.
+- 6 new tests (295 total, 2 skipped).
+
 ## 0.9.6 - 2026-09-18
 
 Many sessions, many browsers. Two Claude terminals used to fight over Chrome:
