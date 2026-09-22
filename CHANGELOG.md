@@ -1,3 +1,28 @@
+## 0.9.8 - 2026-09-22
+
+Forms fill in one round-trip instead of one per field, without loosening the
+policy gate that protects what gets typed where.
+
+- feat: **`fill_form` writes every field in a single wire command.** A ten-field
+  form cost ten server-to-extension round-trips; it now costs one, and the page
+  gets one chance to re-render mid-fill instead of ten. The `{filled, submitted}`
+  contract is unchanged, and `submitSelector` still clicks as a separate step
+  after the fills land.
+- **Falls back automatically.** The extension advertises a `fill-form`
+  capability in its handshake; a server paired with an older extension (or
+  driving CDP) goes back to one write per field, so upgrading either side alone
+  is safe.
+- **The policy gate still runs per field.** Batching would otherwise let a page
+  navigate after the first field and collect the rest — passwords included — so
+  the allowlist is re-checked against the tab's current URL before every write,
+  and frame grants are re-probed. A field that lands off-allowlist stops the
+  batch with `POLICY_DENIED`. The sequencing moved to `shared/fill-form.ts`,
+  next to the policy decision it depends on.
+- A failed field now reports how far the batch got (`field 2 of 3 (#x) failed
+  after 1 filled`), so a caller knows a blind retry would re-write the fields
+  that already landed.
+- 6 new tests (304 total, 2 skipped).
+
 ## 0.9.7 - 2026-09-19
 
 Anonymous usage statistics from the server, so the project can see how many
