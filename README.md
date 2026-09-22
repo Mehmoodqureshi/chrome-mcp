@@ -108,6 +108,15 @@ explicitly (and is never written to disk).
 
 **2. Load the extension** — **required**; the server can drive nothing without it.
 
+Two ways to get it:
+
+- **[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)** — one click, no
+  Developer mode, and Chrome keeps it updated. The Web Store build is reviewed
+  before each release, so it can trail the npm package by a version; it pairs
+  with any server and simply skips features it predates.
+- **Load the bundled folder** (below) — always matches the npm package you just
+  installed, and the right choice when you want the newest behaviour.
+
 The extension ships prebuilt inside the npm package, and every time the server
 boots it copies it to a plain folder right under your home directory:
 
@@ -557,6 +566,12 @@ RUN_EXT_SMOKE=1 node --test dist/test/extension-smoke.test.js   # live, headed
 ```
 
 ## The extension
+
+Published on the Chrome Web Store as
+**[MCP Extension for Chrome](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
+Extension versions move only when `extension/` changes, so the listed build can
+sit a release behind the npm package; the two negotiate capabilities on
+connect, so an older extension loses features rather than breaking.
 
 `extension/` builds (esbuild) to `extension-dist/`, loaded via
 `chrome://extensions` → **Load unpacked** → select `~/chrome-mcp-extension`, the
