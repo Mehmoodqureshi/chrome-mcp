@@ -1,3 +1,14 @@
+## 0.9.9 - 2026-09-22
+
+Documentation only; no code changed and the extension is untouched, so it stays
+at 0.9.8.
+
+- docs: the install steps now point at the **Chrome Web Store listing** as the
+  one-click route beside the unpacked folder, in both the README and `SETUP.md`.
+  Both note that the listed build passes review separately and can trail the npm
+  package by a version, which capability negotiation turns into missing features
+  rather than a break.
+
 ## 0.9.8 - 2026-09-22
 
 Forms fill in one round-trip instead of one per field, without loosening the
