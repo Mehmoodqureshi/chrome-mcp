@@ -1,7 +1,8 @@
 /**
  * src/mcp/helpers.ts — the high-level tools composed SERVER-SIDE from executor
  * primitives. They never touch the wire directly: `extract_links` and
- * `read_as_markdown` read via primitives; `fill_form` sequences fill+click.
+ * `read_as_markdown` read via primitives; `fill_form` batches its field writes
+ * when the backend can (else sequences fill+click).
  * (Only `download_file` is privileged and lives on the executor.)
  */
 
@@ -90,22 +91,31 @@ export async function readAsMarkdown(
   return htmlToMarkdown(html);
 }
 
-/** Fill a set of fields (keyed by selector) and optionally submit. */
+/**
+ * Fill a set of fields (keyed by selector) and optionally submit. All writes go
+ * out as ONE executor call when the backend can batch them; otherwise (older
+ * extension, CDP) they fall back to one fill/click per field. Either way the
+ * first failing field throws, and submit is a separate click after the fills.
+ */
 export async function fillForm(
   ex: Executor,
   args: { fields: Record<string, string | boolean>; submitSelector?: string; tabId?: string } & FrameOpts,
 ): Promise<{ filled: number; submitted: boolean }> {
   const opts = { tabId: args.tabId, frameId: args.frameId, allFrames: args.allFrames };
-  let filled = 0;
-  for (const [selector, value] of Object.entries(args.fields)) {
-    const target: Target = { selector };
-    if (typeof value === 'boolean') {
-      // Checkbox/radio: a click toggles it.
-      await ex.click(target, opts);
-    } else {
-      await ex.fill(target, value, opts);
+  const ops = Object.entries(args.fields).map(([selector, value]) => ({ selector, value }));
+  const batched = ops.length > 0 && ex.fillFields ? await ex.fillFields(ops, opts) : null;
+  let filled = batched?.filled ?? 0;
+  if (!batched) {
+    for (const { selector, value } of ops) {
+      const target: Target = { selector };
+      if (typeof value === 'boolean') {
+        // Checkbox/radio: a click toggles it.
+        await ex.click(target, opts);
+      } else {
+        await ex.fill(target, value, opts);
+      }
+      filled++;
     }
-    filled++;
   }
   let submitted = false;
   if (args.submitSelector) {

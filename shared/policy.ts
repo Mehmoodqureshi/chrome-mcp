@@ -36,6 +36,7 @@ const MUTATE_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'press',
   'hover',
   'scroll',
+  'fill_form',
 ]);
 
 /** Navigation — URL-gated by the DESTINATION url, and mutation-gated. */

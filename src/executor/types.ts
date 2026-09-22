@@ -11,8 +11,9 @@
  */
 
 import type { ObserverReadResult, DialogPolicy } from '../../shared/observers';
+import type { FillFieldOp } from '../../shared/protocol';
 
-export type { ObserverReadResult, DialogPolicy };
+export type { ObserverReadResult, DialogPolicy, FillFieldOp };
 
 export type BackendKind = 'extension' | 'cdp';
 export type WaitUntil = 'load' | 'domcontentloaded' | 'networkidle';
@@ -334,6 +335,13 @@ export interface Executor {
   // provide them should omit them rather than throw from a stub. The tool layer
   // reports a clear "this backend cannot do that" instead of a mystery failure.
 
+  /**
+   * Write several fields in ONE round-trip (string = value-set like `fill`,
+   * boolean = toggle via click), in order, throwing the first field's failure.
+   * Resolves null when the live backend cannot batch (e.g. an extension build
+   * older than the op) — the caller then falls back to `fill`/`click` per field.
+   */
+  fillFields?(fields: FillFieldOp[], opts?: { tabId?: TabId } & FrameOpts): Promise<{ filled: number } | null>;
   /** Every frame of a tab that the extension can inject into, with its URL. */
   framesList?(opts?: { tabId?: TabId }): Promise<FrameInfo[]>;
   /** Read (and configure) the in-page console / network / dialog observers. */

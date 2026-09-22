@@ -358,6 +358,14 @@ export class BridgeServer {
     return conn.sendCommand(method, params, opts);
   }
 
+  /** Whether the browser paired as `profile` advertised capability `cap`. A peer
+   *  cannot see the hub's handshake, so it answers false (the conservative path). */
+  hasCap(profile: string | undefined, cap: string): boolean {
+    if (this.hub) return false;
+    const conn = this.conns.get(routeKey(profile));
+    return !!conn?.isOpen() && conn.hasCap(cap);
+  }
+
   /**
    * The active tab's URL for `profile` as last reported by the extension, if it
    * is younger than `maxAgeMs`. Null means "ask properly" — an extension too old

@@ -15,7 +15,9 @@ import {
   type DownloadResult,
   type EvalResult,
   type Executor,
+  ExecutorError,
   type ExecutorStatus,
+  type FillFieldOp,
   type FrameInfo,
   type FrameOpts,
   type ObserverArgs,
@@ -37,7 +39,9 @@ import {
   type WaitResult,
   type WaitUntil,
 } from './types';
+import { WIRE_CAP_FILL_FORM, type FillFormWireResult } from '../../shared/protocol';
 import type { BridgeServer } from '../bridge/server';
+import { mapWireErrorCode } from '../bridge/connection';
 import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
 
 /**
@@ -192,6 +196,18 @@ export class ExtensionExecutor implements Executor {
   async fill(t: Target, value: string, opts?: { tabId?: TabId } & FrameOpts): Promise<ActionOk> {
     // No dedicated wire method: a cleared insertText is the fill primitive.
     return (await this.send('type', { ...targetParams(t), ...frameParams(opts), text: value, clear: true, keyEvents: false }, { tabId: opts?.tabId })) as ActionOk;
+  }
+  async fillFields(fields: FillFieldOp[], opts?: { tabId?: TabId } & FrameOpts): Promise<{ filled: number } | null> {
+    // An extension that predates the op never advertised it: let the caller go field by field.
+    if (!this.bridge.hasCap(this.activeProfile(), WIRE_CAP_FILL_FORM)) return null;
+    const res = (await this.send('fill_form', { ops: fields, ...frameParams(opts) }, { tabId: opts?.tabId })) as FillFormWireResult;
+    if (res.error) {
+      // Say how far the batch got: the fields before this one DID land, and a
+      // blind retry of the whole form would write them a second time.
+      const where = `field ${res.filled + 1} of ${fields.length} (${res.error.selector}) failed after ${res.filled} filled`;
+      throw new ExecutorError(mapWireErrorCode(res.error.code), `${where}: ${res.error.message}`);
+    }
+    return { filled: res.filled };
   }
   async press(key: string, opts?: { tabId?: TabId; modifiers?: KeyModifier[] }): Promise<ActionOk> {
     return (await this.send('press', { key, modifiers: opts?.modifiers }, { tabId: opts?.tabId })) as ActionOk;

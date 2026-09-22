@@ -27,7 +27,7 @@ import {
 import { ExecutorError, type ExecutorErrorCodeLocal } from '../executor/types';
 
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
-const LONG_METHODS: ReadonlySet<WireMethod> = new Set(['screenshot', 'wait_for', 'navigate', 'download_file']);
+const LONG_METHODS: ReadonlySet<WireMethod> = new Set(['screenshot', 'wait_for', 'navigate', 'download_file', 'fill_form']);
 
 function defaultTimeoutFor(method: WireMethod): number {
   return LONG_METHODS.has(method) ? 60_000 : 30_000;
@@ -35,7 +35,7 @@ function defaultTimeoutFor(method: WireMethod): number {
 
 /** Map a wire error code onto a local ExecutorError code (the wire enum is a
  *  near-superset; unknown codes degrade to CDP_ERROR while keeping the message). */
-function mapWireErrorCode(code: string): ExecutorErrorCodeLocal {
+export function mapWireErrorCode(code: string): ExecutorErrorCodeLocal {
   const known: Record<string, ExecutorErrorCodeLocal> = {
     TIMEOUT: 'TIMEOUT',
     POLICY_DENIED: 'POLICY_DENIED',
@@ -93,6 +93,8 @@ export class ExtensionConnection {
   private missedPongs = 0;
   /** Whether this extension reports `tabUrl` and gates fail-closed. */
   private readonly reportsTabUrl: boolean;
+  /** Every capability the extension advertised in `hello`. */
+  private readonly caps: ReadonlySet<string>;
   /** Last URL the ACTIVE tab reported, with the wall-clock it arrived. */
   private activeUrl: { url: string; at: number } | null = null;
   /** Last URL each explicitly-targeted tab reported, keyed by wire tab id. A
@@ -107,7 +109,8 @@ export class ExtensionConnection {
     this.ws = deps.ws;
     this.extId = deps.extId;
     this.sessionId = deps.sessionId;
-    this.reportsTabUrl = deps.caps?.includes(WIRE_CAP_TAB_URL) ?? false;
+    this.caps = new Set(deps.caps ?? []);
+    this.reportsTabUrl = this.caps.has(WIRE_CAP_TAB_URL);
     this.onEvent = deps.onEvent;
     this.onClose = deps.onClose;
     this.onLog = deps.onLog;
@@ -277,6 +280,11 @@ export class ExtensionConnection {
     if (!this.reportsTabUrl || !p.activeTab) return;
     if (ACTIVE_TAB_CHANGERS.has(p.method)) return; // already invalidated; re-caching would race
     this.activeUrl = frame.tabUrl ? { url: frame.tabUrl, at: Date.now() } : null;
+  }
+
+  /** Whether the extension advertised `cap` in its `hello`. */
+  hasCap(cap: string): boolean {
+    return this.caps.has(cap);
   }
 
   /**

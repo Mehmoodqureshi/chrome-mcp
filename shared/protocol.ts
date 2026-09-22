@@ -8,9 +8,10 @@
  *
  * The server is the WebSocket SERVER; the extension is the single privileged
  * CLIENT that dials in. Methods on the wire mirror the MCP primitives 1:1.
- * Helpers (extract_links / read_as_markdown / fill_form) are NOT on the wire —
- * they are composed server-side from these primitives. Only `download_file` is a
- * wire method beyond the primitives.
+ * Helpers (extract_links / read_as_markdown) are NOT on the wire — they are
+ * composed server-side from these primitives. `download_file` is a wire method
+ * beyond the primitives, and so is `fill_form` (a batch of `type`/`click` writes
+ * in one round-trip; capability-gated, see `WIRE_CAP_FILL_FORM`).
  */
 
 /** Bumped on any breaking change to the frames below. */
@@ -44,6 +45,29 @@ export const CLOSE_SUPERSEDED = 4000 as const;
  * every call. Without it, the server falls back to fetching the URL itself.
  */
 export const WIRE_CAP_TAB_URL = 'tab-url' as const;
+
+/**
+ * `fill-form`: this extension handles the `fill_form` wire method — every field
+ * of a form written in ONE round-trip. Without it the server fills field by
+ * field over `type`/`click`, which every extension build understands.
+ */
+export const WIRE_CAP_FILL_FORM = 'fill-form' as const;
+
+/** One field write inside a `fill_form` command: set a value, or click to toggle. */
+export interface FillFieldOp {
+  selector: string;
+  /** A string is value-set (cleared first); a boolean toggles via a click. */
+  value: string | boolean;
+}
+
+/**
+ * `fill_form` result. Ops run in order and stop at the first failure, so
+ * `filled` counts the fields that landed and `error` names the one that did not.
+ */
+export interface FillFormWireResult {
+  filled: number;
+  error?: { selector: string; code: ExecutorErrorCode; message: string };
+}
 
 // ---------------------------------------------------------------------------
 // Methods
@@ -82,6 +106,7 @@ export type WireMethod =
   | 'frames_list'
   | 'observers'
   | 'print_pdf'
+  | 'fill_form'
   | 'ping_probe';
 
 /** Runtime list of every WireMethod, for boot-time drift assertions on both ends. */
@@ -113,6 +138,7 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'frames_list',
   'observers',
   'print_pdf',
+  'fill_form',
   'ping_probe',
 ] as const;
 

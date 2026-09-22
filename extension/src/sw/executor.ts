@@ -12,8 +12,15 @@
  * service-worker session is rejected (STALE/TARGET_GONE) rather than mis-routed.
  */
 
-import { type CommandFrame, type ExecutorErrorCode, type WireMethod, type WirePolicy } from '../../../shared/protocol';
+import {
+  type CommandFrame,
+  type ExecutorErrorCode,
+  type FillFieldOp,
+  type WireMethod,
+  type WirePolicy,
+} from '../../../shared/protocol';
 import { evaluatePolicy } from '../../../shared/policy';
+import { runFillFields } from '../../../shared/fill-form';
 import { sanitizeDownloadName } from '../../../shared/download';
 import { collectSnapshot } from '../../../shared/snapshot';
 import { pageOp, type PageOpArgs } from '../../../shared/page-fns';
@@ -598,7 +605,7 @@ export const HANDLED: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'screenshot', 'get_text', 'get_html', 'snapshot',
   'select_option', 'get_cookies', 'storage', 'eval', 'wait_for',
   'download_file', 'upload_file', 'ping_probe',
-  'frames_list', 'observers', 'print_pdf',
+  'frames_list', 'observers', 'print_pdf', 'fill_form',
 ]);
 
 export class ChromeExecutor {
@@ -904,6 +911,43 @@ export class ChromeExecutor {
         const out = await execOp(id, withWait({ op: 'type', selector: sel, text, clear }), frameIds);
         if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
         return { ok: true, frameId: out.frameId };
+      }
+      case 'fill_form': {
+        // Every field in one command: the same page ops `type` (cleared, no key
+        // events) and `click` run, in order, stopping at the first failure so
+        // the server can report which field broke and how many landed before it.
+        //
+        // The gate and the stop-at-first-failure sequencing live in
+        // shared/fill-form.ts — see there for why a batched fill has to re-gate
+        // per field. This side only supplies the chrome-specific pieces.
+        const id = await targetTab(cmd);
+        const raw = Array.isArray(cmd.params.ops) ? (cmd.params.ops as Array<{ selector?: unknown; value?: unknown }>) : [];
+        const ops: FillFieldOp[] = raw.map((f) => ({
+          selector: String(f.selector ?? ''),
+          value: typeof f.value === 'boolean' ? f.value : String(f.value ?? ''),
+        }));
+        return runFillFields(ops, {
+          currentUrl: () => observedTabUrl(cmd, id),
+          policy: () => this.getPolicy(),
+          // Frame ids are re-probed per field too: an iframe that navigates
+          // mid-batch must not keep a grant the policy would no longer give it.
+          write: async (op) => {
+            const out = await execOp(
+              id,
+              withWait(
+                typeof op.value === 'boolean'
+                  ? { op: 'click', selector: op.selector }
+                  : { op: 'type', selector: op.selector, text: op.value, clear: true },
+              ),
+              await this.frames(cmd, id),
+            );
+            if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${op.selector}`);
+          },
+          toError: (err) => ({
+            code: err instanceof CmdError ? err.code : 'CDP_ERROR',
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        });
       }
       case 'press': {
         const id = await targetTab(cmd);

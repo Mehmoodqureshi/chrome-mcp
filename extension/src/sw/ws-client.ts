@@ -9,6 +9,7 @@
 
 import {
   PROTOCOL_VERSION,
+  WIRE_CAP_FILL_FORM,
   WIRE_CAP_TAB_URL,
   type CommandFrame,
   type HelloFrame,
@@ -68,7 +69,7 @@ export class WsClient {
         // This build gates fail-closed and reports tab URLs on results, so the
         // server may skip its pre-flight tabs_list. An older build omits this and
         // the server keeps fetching the URL itself.
-        caps: [WIRE_CAP_TAB_URL],
+        caps: [WIRE_CAP_TAB_URL, WIRE_CAP_FILL_FORM],
       };
       ws.send(JSON.stringify(hello));
     };

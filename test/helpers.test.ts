@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 import { htmlToMarkdown } from '../src/mcp/markdown-extract';
 import { extractLinks, fillForm, readAsMarkdown } from '../src/mcp/helpers';
 import { StubExecutor } from '../src/executor/stub-executor';
-import type { Executor, Target } from '../src/executor/types';
+import { ExtensionExecutor } from '../src/executor/extension-executor';
+import { ExecutorError, type Executor, type Target } from '../src/executor/types';
+import type { BridgeServer } from '../src/bridge/server';
+import { WIRE_CAP_FILL_FORM } from '../shared/protocol';
 
 test('htmlToMarkdown converts headings, lists, links, emphasis; drops chrome', () => {
   const html = `
@@ -106,4 +109,61 @@ test('fillForm fills each field then clicks submit', async () => {
   assert.equal(out.filled, 2);
   assert.equal(out.submitted, true);
   assert.deepEqual(calls, ['fill #email=a@b.com', 'fill #name=Ada', 'click #go']);
+});
+
+/** A bridge double: records wire commands and answers `fill_form` from `reply`. */
+function fakeBridge(caps: string[], reply: (params: Record<string, unknown>) => unknown) {
+  const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const bridge = {
+    hasCap: (_profile: string, cap: string) => caps.includes(cap),
+    async sendCommand(method: string, params: Record<string, unknown>) {
+      sent.push({ method, params });
+      return method === 'fill_form' ? reply(params) : { ok: true };
+    },
+  } as unknown as BridgeServer;
+  return { ex: new ExtensionExecutor(bridge), sent };
+}
+
+test('fillForm sends every field in one fill_form command, then submits separately', async () => {
+  const { ex, sent } = fakeBridge([WIRE_CAP_FILL_FORM], (p) => ({ filled: (p.ops as unknown[]).length }));
+  const out = await fillForm(ex, {
+    fields: { '#email': 'a@b.com', '#agree': true },
+    submitSelector: '#go',
+    frameId: 3,
+  });
+  assert.deepEqual(out, { filled: 2, submitted: true });
+  assert.deepEqual(sent.map((s) => s.method), ['fill_form', 'click']);
+  assert.deepEqual(sent[0].params, {
+    ops: [
+      { selector: '#email', value: 'a@b.com' },
+      { selector: '#agree', value: true },
+    ],
+    frameId: 3,
+  });
+  assert.equal(sent[1].params.selector, '#go');
+});
+
+test('fillForm partial failure throws the failing field and never submits', async () => {
+  const { ex, sent } = fakeBridge([WIRE_CAP_FILL_FORM], () => ({
+    filled: 1,
+    error: { selector: '#missing', code: 'SELECTOR_NOT_FOUND', message: 'no element for selector: #missing' },
+  }));
+  await assert.rejects(
+    fillForm(ex, { fields: { '#email': 'a@b.com', '#missing': 'x', '#name': 'Ada' }, submitSelector: '#go' }),
+    // The message locates the failure in the batch, so a caller knows the
+    // earlier fields already landed and a blind retry would re-write them.
+    (e: unknown) =>
+      e instanceof ExecutorError &&
+      e.code === 'SELECTOR_NOT_FOUND' &&
+      e.message === 'field 2 of 3 (#missing) failed after 1 filled: no element for selector: #missing',
+  );
+  assert.deepEqual(sent.map((s) => s.method), ['fill_form']);
+});
+
+test('fillForm falls back to per-field writes when the extension predates fill_form', async () => {
+  const { ex, sent } = fakeBridge([], () => assert.fail('fill_form must not be sent'));
+  const out = await fillForm(ex, { fields: { '#email': 'a@b.com', '#agree': true } });
+  assert.deepEqual(out, { filled: 2, submitted: false });
+  assert.deepEqual(sent.map((s) => s.method), ['type', 'click']);
+  assert.equal(sent[0].params.clear, true);
 });
