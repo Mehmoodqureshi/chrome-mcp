@@ -23,7 +23,7 @@ import type { DialogPolicy, Executor, FrameOpts, TabInfo, Target, WaitUntil } fr
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
 import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
-import { evaluatePolicy } from '../../shared/policy';
+import { evaluatePolicy, isMutatingMethod } from '../../shared/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import {
   capHtml,
@@ -236,7 +236,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 
-  { name: 'chrome_status', description: 'Report backend/session status, including every paired browser profile and how it was named.', inputSchema: {} },
+  { name: 'chrome_status', description: 'Report backend/session status: paired browser profiles and how each was named, and flags for switched-off capabilities.', inputSchema: {} },
   { name: 'auth_check', description: 'Is the tab sitting on a sign-in wall? Reads the page (URL, title, password fields, sign-in controls) and returns { authRequired, confidence, signals }. Use it after a navigate, or whenever a step fails unexpectedly, to tell "the session expired" apart from "the agent got lost". Pass failOnAuthWall:true to get an [AUTH_REQUIRED] error instead of a verdict, so a harness can bucket the run as an auth failure.', inputSchema: { failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
 
   { name: 'profile_use', description: 'Switch the active browser profile (identity). Subsequent downloads, results, screenshots, and the action log are stored under profiles/<name>/. Resets the active task to "default" unless you then call task_new.', inputSchema: { name: z.string().describe('Profile name (becomes a folder; sanitized to a safe path segment).') } },
@@ -395,6 +395,64 @@ export function isToolPolicyUsable(name: string, policy?: Policy): boolean {
   const method = TOOL_GATE[name];
   if (!method) return true;
   return !isCapabilityDenied(method, policy);
+}
+
+/**
+ * The switchable capabilities, the flag that turns each on, and which wire
+ * methods it covers. `probe` is any one method it gates, fed to the real
+ * `isCapabilityDenied` so this can never disagree with the catalog filter.
+ */
+const CAPABILITIES: ReadonlyArray<{
+  capability: string;
+  flag: string;
+  probe: WireMethod;
+  covers: (m: WireMethod) => boolean;
+}> = [
+  { capability: 'mutations', flag: '--enable-mutations', probe: 'click', covers: isMutatingMethod },
+  { capability: 'eval', flag: '--unsafe-enable-eval', probe: 'eval', covers: (m) => m === 'eval' },
+  { capability: 'downloads', flag: '--enable-downloads', probe: 'download_file', covers: (m) => m === 'download_file' },
+  { capability: 'uploads', flag: '--enable-uploads', probe: 'upload_file', covers: (m) => m === 'upload_file' },
+  { capability: 'observers', flag: '--enable-observers', probe: 'observers', covers: (m) => m === 'observers' },
+];
+
+export interface DisabledCapability {
+  capability: string;
+  flag: string;
+  hiddenTools: string[];
+}
+
+/**
+ * Which capabilities the policy has switched off, the flag for each, and the
+ * tools that left the catalog because of it. Surfaced by `chrome_status`: once
+ * `navigate` is hidden the model cannot learn about it from a POLICY_DENIED
+ * any more, so without this it would tell the user it "can't browse" instead
+ * of naming the one flag that fixes it. Tools already cut by `--tools` are not
+ * listed, since the flag would not bring them back.
+ */
+export function disabledCapabilities(policy: Policy): DisabledCapability[] {
+  const out: DisabledCapability[] = [];
+  for (const c of CAPABILITIES) {
+    if (!isCapabilityDenied(c.probe, policy)) continue;
+    const hiddenTools = enabledToolNames().filter((n) => {
+      const m = TOOL_GATE[n];
+      return m != null && c.covers(m);
+    });
+    if (hiddenTools.length > 0) out.push({ capability: c.capability, flag: c.flag, hiddenTools });
+  }
+  return out;
+}
+
+/** The `chrome_status` fields describing switched-off capabilities, or nothing. */
+function capabilityStatus(policy: Policy): Record<string, unknown> {
+  const off = disabledCapabilities(policy);
+  if (off.length === 0) return {};
+  return {
+    disabledCapabilities: off,
+    capabilityHint:
+      'These tools are not available in this session because their capability is off. ' +
+      'If the user asks for one of them, tell them to add the listed flag to the chrome-mcp ' +
+      'command in their MCP config and restart the client.',
+  };
 }
 
 /** The names actually advertised, in catalog order. */
@@ -1138,11 +1196,12 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     });
   },
 
-  chrome_status: async () => {
+  chrome_status: async (_a, ctx) => {
     const profiles = profileBridge ? { profiles: profileBridge.pairedProfiles() } : {};
+    const capabilities = capabilityStatus(ctx.policy);
     try {
       const ex = await getManager().ensureReady();
-      return jsonResult({ ...ex.status(), ...profiles });
+      return jsonResult({ ...ex.status(), ...profiles, ...capabilities });
     } catch (err) {
       return jsonResult({
         ready: false,
@@ -1150,6 +1209,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
         detail: errMessage(err),
         activeProfile: peekActiveWorkspace()?.profile ?? 'default',
         ...profiles,
+        ...capabilities,
       });
     }
   },

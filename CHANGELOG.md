@@ -1,3 +1,24 @@
+## 0.9.10 - 2026-09-23
+
+The model no longer reads tools it can never use, and still knows how to
+switch them on.
+
+- perf: **tools whose capability is off are left out of `tools/list`.** The
+  catalog is re-sent to the model on every turn, and a tool the policy has
+  switched off can only ever answer `POLICY_DENIED`. Under the default policy
+  that is 20 of 40 tools. Each tool now declares the wire method it is gated on
+  (`TOOL_GATE`), the catalog filter asks the same `evaluatePolicy` the gate
+  runs, and startup fails if a new tool forgets to declare one. A blocked
+  *domain* never hides a tool, since another tab may be allowlisted. The server
+  logs which tools it dropped and the flag that brings them back.
+- feat: **`chrome_status` names what is switched off.** With `navigate` hidden,
+  the model could no longer learn from a `POLICY_DENIED` that
+  `--enable-mutations` exists, and would tell the user it cannot browse.
+  `chrome_status` now returns `disabledCapabilities` (each capability, its flag
+  and the tools it hid) plus a `capabilityHint`, so the model can point the
+  user at the one flag to add. Both fields are omitted when nothing is off.
+- 13 new tests (317 total, 2 skipped).
+
 ## 0.9.9 - 2026-09-22
 
 Documentation only; no code changed and the extension is untouched, so it stays

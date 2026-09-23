@@ -12,6 +12,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import {
   TOOL_NAMES,
+  disabledCapabilities,
   dispatchToolCall,
   enabledToolNames,
   isToolEnabled,
@@ -213,4 +214,85 @@ test('the filtered catalog is meaningfully smaller', async () => {
     filtered < full * 0.9,
     `expected the filtered catalog to save >10%; full ${full} B, filtered ${filtered} B`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// chrome_status names what the policy switched off
+// ---------------------------------------------------------------------------
+
+test('disabledCapabilities: default policy names every flag and the tools it hides', () => {
+  setToolAllowlist(null);
+  const off = disabledCapabilities(resolvePolicy({}));
+  const byCap = new Map(off.map((c) => [c.capability, c]));
+  assert.deepEqual([...byCap.keys()], ['mutations', 'eval', 'downloads', 'uploads', 'observers']);
+  const mutations = byCap.get('mutations')!;
+  assert.equal(mutations.flag, '--enable-mutations');
+  for (const n of ['navigate', 'click', 'type', 'fill_form', 'tab_new']) {
+    assert.equal(mutations.hiddenTools.includes(n), true, `${n} should be listed under mutations`);
+  }
+  assert.deepEqual(byCap.get('observers')!.hiddenTools, ['console_logs', 'network_log', 'dialogs']);
+});
+
+test('disabledCapabilities agrees with what tools/list hides', async () => {
+  setToolAllowlist(null);
+  const policy = resolvePolicy({ allowDomains: ['*'] });
+  const advertised = new Set((await listTools(policy)).map((t) => t.name));
+  const listed = disabledCapabilities(policy).flatMap((c) => c.hiddenTools);
+  assert.deepEqual(
+    listed.sort(),
+    TOOL_NAMES.filter((n) => !advertised.has(n)).sort(),
+  );
+});
+
+test('disabledCapabilities: everything on reports nothing', () => {
+  setToolAllowlist(null);
+  const open = resolvePolicy({
+    allowDomains: ['*'],
+    enableMutations: true,
+    allowEval: true,
+    allowDownloads: true,
+    allowUploads: true,
+    allowObservers: true,
+  });
+  assert.deepEqual(disabledCapabilities(open), []);
+});
+
+test('disabledCapabilities skips tools the --tools allowlist already removed', () => {
+  setToolAllowlist(['get_text', 'click']);
+  try {
+    const off = disabledCapabilities(resolvePolicy({}));
+    assert.deepEqual(off, [{ capability: 'mutations', flag: '--enable-mutations', hiddenTools: ['click'] }]);
+  } finally {
+    setToolAllowlist(null);
+  }
+});
+
+test('chrome_status reports switched-off capabilities with their flags', async () => {
+  setToolAllowlist(null);
+  resetManagerForTesting();
+  configureManager({ policy: resolvePolicy({ allowDomains: ['*'] }), makeExecutor: () => new StubExecutor() });
+  const j = JSON.parse(textOf(await dispatchToolCall('chrome_status', {})));
+  assert.equal(j.disabledCapabilities[0].capability, 'mutations');
+  assert.equal(j.disabledCapabilities[0].flag, '--enable-mutations');
+  assert.equal(j.disabledCapabilities[0].hiddenTools.includes('navigate'), true);
+  assert.match(j.capabilityHint, /flag/);
+});
+
+test('chrome_status omits the capability fields when nothing is off', async () => {
+  setToolAllowlist(null);
+  resetManagerForTesting();
+  configureManager({
+    policy: resolvePolicy({
+      allowDomains: ['*'],
+      enableMutations: true,
+      allowEval: true,
+      allowDownloads: true,
+      allowUploads: true,
+      allowObservers: true,
+    }),
+    makeExecutor: () => new StubExecutor(),
+  });
+  const j = JSON.parse(textOf(await dispatchToolCall('chrome_status', {})));
+  assert.equal('disabledCapabilities' in j, false);
+  assert.equal('capabilityHint' in j, false);
 });
