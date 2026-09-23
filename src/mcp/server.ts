@@ -12,6 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { logErr } from './log';
 import { registerTools } from './tools';
+import type { Policy } from '../security/policy';
 
 // Re-exported so existing callers (and the CLI) keep importing the logger from
 // here; the implementation lives in ./log to avoid a server↔tools import cycle.
@@ -26,13 +27,20 @@ const DEFAULT_VERSION = SERVER_VERSION;
 let server: McpServer | null = null;
 let transport: StdioServerTransport | null = null;
 
-/** Build a fresh `Server` with the full tool surface registered (no transport). */
-export function createServer(version: string = DEFAULT_VERSION): McpServer {
+/**
+ * Build a fresh `Server` with the tool surface registered (no transport).
+ *
+ * `policy` is optional: pass it and tools whose capability the policy has
+ * switched off are left out of the catalog (they could only answer
+ * POLICY_DENIED, and the catalog is re-sent on every turn). Omit it and the
+ * full catalog is advertised, which is what the tests want.
+ */
+export function createServer(version: string = DEFAULT_VERSION, policy?: Policy): McpServer {
   const srv = new McpServer(
     { name: SERVER_NAME, version },
     { capabilities: { tools: {} } },
   );
-  registerTools(srv);
+  registerTools(srv, policy);
   // `McpServer` wraps the low-level `Server`, which owns the `onerror` hook.
   srv.server.onerror = (err: unknown): void => {
     logErr(`server error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
@@ -41,12 +49,12 @@ export function createServer(version: string = DEFAULT_VERSION): McpServer {
 }
 
 /** Start over stdio. Idempotent. */
-export async function startMcpServer(version: string = DEFAULT_VERSION): Promise<void> {
+export async function startMcpServer(version: string = DEFAULT_VERSION, policy?: Policy): Promise<void> {
   if (server) {
     logErr('startMcpServer called but already running; ignoring.');
     return;
   }
-  const srv = createServer(version);
+  const srv = createServer(version, policy);
   const tx = new StdioServerTransport();
   try {
     await srv.connect(tx);

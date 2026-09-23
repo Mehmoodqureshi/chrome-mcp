@@ -15,12 +15,13 @@ import {
   dispatchToolCall,
   enabledToolNames,
   isToolEnabled,
+  isToolPolicyUsable,
   setToolAllowlist,
 } from '../src/mcp/tools';
 import { createServer } from '../src/mcp/server';
 import { configureManager, resetManagerForTesting } from '../src/executor/manager';
 import { StubExecutor } from '../src/executor/stub-executor';
-import { resolvePolicy } from '../src/security/policy';
+import { resolvePolicy, type Policy } from '../src/security/policy';
 import { parseArgs } from '../src/config';
 
 const OPEN = { allowDomains: ['*'], enableMutations: true, allowEval: true };
@@ -36,8 +37,8 @@ function textOf(r: { content: Array<{ type: string; text?: string }> }): string 
 }
 
 /** Every tool the server advertises over a real MCP `tools/list`. */
-async function listTools(): Promise<Array<{ name: string; description?: string; inputSchema: unknown }>> {
-  const server = createServer('test');
+async function listTools(policy?: Policy): Promise<Array<{ name: string; description?: string; inputSchema: unknown }>> {
+  const server = createServer('test', policy);
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTx), client.connect(clientTx)]);
@@ -127,5 +128,89 @@ test('tools/list stays within its byte budget', async () => {
   assert.ok(
     bytes <= 28_000,
     `tools/list is ${bytes} B for ${tools.length} tools, over the 28000 B budget`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Policy-filtered catalog
+// ---------------------------------------------------------------------------
+
+/** The six tools whose capability is off under the default deny-all policy. */
+const CAPABILITY_TOOLS = ['eval', 'download_file', 'upload_file', 'console_logs', 'network_log', 'dialogs'];
+
+test('no policy passed: the whole catalog is advertised (back-compat)', async () => {
+  const tools = await listTools();
+  assert.equal(tools.length, TOOL_NAMES.length);
+});
+
+test('a capability that is off drops its tools from tools/list', async () => {
+  // Domains open and mutations on, but every optional capability off — the
+  // shape of the README's own recommended command line.
+  const policy = resolvePolicy({ allowDomains: ['*'], enableMutations: true });
+  const names = (await listTools(policy)).map((t) => t.name);
+  for (const n of CAPABILITY_TOOLS) {
+    assert.equal(names.includes(n), false, `${n} should not be advertised when its capability is off`);
+  }
+  // The tools that DO work are all still there.
+  assert.equal(names.includes('click'), true);
+  assert.equal(names.includes('get_text'), true);
+  assert.equal(names.includes('batch'), true);
+});
+
+test('turning a capability on brings its tools back', async () => {
+  const open = resolvePolicy({
+    allowDomains: ['*'],
+    enableMutations: true,
+    allowEval: true,
+    allowDownloads: true,
+    allowUploads: true,
+    allowObservers: true,
+  });
+  const names = (await listTools(open)).map((t) => t.name);
+  for (const n of CAPABILITY_TOOLS) {
+    assert.equal(names.includes(n), true, `${n} should be advertised once its capability is on`);
+  }
+  assert.equal(names.length, TOOL_NAMES.length);
+});
+
+test('mutations off drops the acting tools but keeps the reads', async () => {
+  const readOnly = resolvePolicy({ allowDomains: ['*'] });
+  const names = (await listTools(readOnly)).map((t) => t.name);
+  for (const n of ['click', 'type', 'navigate', 'tab_new', 'fill_form', 'scroll']) {
+    assert.equal(names.includes(n), false, `${n} is mutating and should be hidden`);
+  }
+  for (const n of ['get_text', 'get_html', 'snapshot', 'tabs_list', 'chrome_status']) {
+    assert.equal(names.includes(n), true, `${n} is a read and should stay`);
+  }
+});
+
+test('an empty domain allowlist does NOT hide tools', async () => {
+  // Deliberate: a domain is per-page, so another tab may well be allowlisted.
+  // Only absolute capability gates prune the catalog.
+  const policy = resolvePolicy({ enableMutations: true });
+  const names = (await listTools(policy)).map((t) => t.name);
+  assert.equal(names.includes('get_text'), true);
+  assert.equal(names.includes('click'), true);
+});
+
+test('isToolPolicyUsable matches what tools/list advertises', async () => {
+  const policy = resolvePolicy({ allowDomains: ['*'], enableMutations: true });
+  const advertised = new Set((await listTools(policy)).map((t) => t.name));
+  for (const n of TOOL_NAMES) {
+    assert.equal(
+      isToolPolicyUsable(n, policy),
+      advertised.has(n),
+      `${n}: predicate and advertised catalog disagree`,
+    );
+  }
+});
+
+test('the filtered catalog is meaningfully smaller', async () => {
+  const full = Buffer.byteLength(JSON.stringify(await listTools()));
+  const policy = resolvePolicy({ allowDomains: ['*'], enableMutations: true });
+  const filtered = Buffer.byteLength(JSON.stringify(await listTools(policy)));
+  assert.ok(
+    filtered < full * 0.9,
+    `expected the filtered catalog to save >10%; full ${full} B, filtered ${filtered} B`,
   );
 });
