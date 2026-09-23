@@ -1,3 +1,13 @@
+## 0.9.11 - 2026-09-23
+
+Metadata only; no code changed and the extension stays at 0.9.8.
+
+- chore: **listed on the official MCP registry** as
+  `io.github.Mehmoodqureshi/chrome-mcp`. `package.json` gains the `mcpName`
+  field the registry uses to prove the npm package belongs to this repo, and a
+  new `server.json` holds the registry entry. Its `version` fields must move
+  with `package.json` on every release that is re-published to the registry.
+
 ## 0.9.10 - 2026-09-23
 
 The model no longer reads tools it can never use, and still knows how to
