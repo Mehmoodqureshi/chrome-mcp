@@ -1,0 +1,99 @@
+name: Publish
+
+# Pushing a release tag (vX.Y.Z) publishes that version everywhere it is
+# pinned: npm, the official MCP registry, and a GitHub release. No secrets:
+# npm and the registry both trust this workflow through GitHub OIDC, so there is
+# no token to leak and no 2FA prompt. The npm side is configured once on
+# npmjs.com (package settings -> Trusted Publisher -> this repo + publish.yml).
+#
+# Every step is safe to re-run: a version already on npm or already released is
+# skipped rather than failing the job.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write # OIDC for npm trusted publishing and mcp-publisher
+  contents: write # create the GitHub release
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
+
+      - name: Tag must match package.json
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          NAME="$(node -p "require('./package.json').name")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Publish to npm
+        run: |
+          if npm view "${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }}" version >/dev/null 2>&1; then
+            echo "${{ steps.meta.outputs.version }} is already on npm; skipping."
+          else
+            npm publish --access public
+          fi
+
+      - name: Publish to the MCP registry
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          # server.json pins the exact npm version; keep it in step with the tag
+          # here so it never has to be bumped by hand.
+          V="${{ steps.meta.outputs.version }}"
+          jq --arg v "$V" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
+          ./mcp-publisher login github-oidc
+          if ! ./mcp-publisher publish 2>&1 | tee publish.log; then
+            if grep -qi "already exists\|duplicate\|cannot publish duplicate" publish.log; then
+              echo "$V is already on the MCP registry; skipping."
+            else
+              exit 1
+            fi
+          fi
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "Release v$V already exists; skipping."
+            exit 0
+          fi
+          # Notes: this version's CHANGELOG section. Title: the release commit's
+          # summary ("release: X.Y.Z — summary" -> "vX.Y.Z — summary").
+          awk -v v="$V" '
+            $0 ~ "^## " v " " { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          SUBJECT="$(git log -1 --format=%s "$GITHUB_SHA")"
+          SUMMARY="$(printf '%s' "$SUBJECT" | sed -E "s/^release: $V — //")"
+          [ "$SUMMARY" = "$SUBJECT" ] && TITLE="v$V" || TITLE="v$V — $SUMMARY"
+          gh release create "v$V" --verify-tag --title "$TITLE" --notes-file notes.md --latest
