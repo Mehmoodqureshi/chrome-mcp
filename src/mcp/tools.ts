@@ -23,6 +23,7 @@ import type { DialogPolicy, Executor, FrameOpts, TabInfo, Target, WaitUntil } fr
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
 import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
+import { evaluatePolicy } from '../../shared/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import {
   capHtml,
@@ -303,6 +304,97 @@ export function setToolAllowlist(names: readonly string[] | null | undefined): v
 /** Is `name` on the surface? True for every catalog tool when no allowlist is set. */
 export function isToolEnabled(name: string): boolean {
   return toolAllowlist === null || toolAllowlist.has(name);
+}
+
+// ---------------------------------------------------------------------------
+// Policy-dead tools (capability gates)
+// ---------------------------------------------------------------------------
+
+/**
+ * The wire method each tool is gated on, mirroring the `gate(ctx, ...)` call in
+ * its handler. `null` = the tool touches no page and no capability (tab listing,
+ * status, task bookkeeping, `batch` itself), so no policy can disable it.
+ *
+ * This exists so the catalog can drop tools the policy has switched off. The
+ * catalog is re-sent to the model on EVERY turn, and a tool whose capability is
+ * off can only ever answer POLICY_DENIED — so describing it is pure waste, and
+ * it also invites the model to spend a call discovering that.
+ *
+ * Kept in step with the handlers by `assertNoDrift`, which fails startup if a
+ * tool is missing an entry.
+ */
+const TOOL_GATE: Readonly<Record<string, WireMethod | null>> = {
+  // no gate — always usable
+  tabs_list: null,
+  chrome_status: null,
+  batch: null,
+  profile_use: null,
+  profile_rename: null,
+  task_new: null,
+  task_status: null,
+  tasks_list: null,
+  storage: null,
+  // tab management (mutation-gated)
+  tab_select: 'tab_select',
+  tab_new: 'tab_new',
+  tab_close: 'tab_close',
+  // navigation (mutation-gated)
+  navigate: 'navigate',
+  back: 'back',
+  forward: 'forward',
+  reload: 'reload',
+  // interaction (mutation-gated)
+  click: 'click',
+  type: 'type',
+  select_option: 'type',
+  press: 'press',
+  hover: 'hover',
+  scroll: 'scroll',
+  fill_form: 'type',
+  // reads (domain-gated only)
+  screenshot: 'screenshot',
+  get_text: 'get_text',
+  get_html: 'get_html',
+  snapshot: 'get_text',
+  get_cookies: 'get_text',
+  extract_links: 'get_text',
+  read_as_markdown: 'get_text',
+  auth_check: 'get_text',
+  wait_for: 'wait_for',
+  frames_list: 'frames_list',
+  print_pdf: 'print_pdf',
+  // capability-gated
+  eval: 'eval',
+  download_file: 'download_file',
+  upload_file: 'upload_file',
+  console_logs: 'observers',
+  network_log: 'observers',
+  dialogs: 'observers',
+};
+
+/**
+ * Would `method` be refused on EVERY page under this policy?
+ *
+ * Runs the REAL `evaluatePolicy` — the same function the gate and the extension
+ * router run, so this can never disagree with them — but with the domain
+ * allowlist widened to `*`. Only the capability gates (eval / downloads /
+ * uploads / observers / mutations) can then reject, which is exactly the
+ * question we want: a tool blocked merely because the current tab is off the
+ * allowlist stays advertised, since another tab may well be on it.
+ */
+function isCapabilityDenied(method: WireMethod, policy: Policy): boolean {
+  return !evaluatePolicy('https://probe.invalid/', method, { ...policy, allowDomains: ['*'] }).ok;
+}
+
+/**
+ * Is `name` usable at all under `policy`? Undefined policy = advertise
+ * everything (tests and any caller that builds a server without one).
+ */
+export function isToolPolicyUsable(name: string, policy?: Policy): boolean {
+  if (!policy) return true;
+  const method = TOOL_GATE[name];
+  if (!method) return true;
+  return !isCapabilityDenied(method, policy);
 }
 
 /** The names actually advertised, in catalog order. */
@@ -1297,21 +1389,33 @@ export function assertNoDrift(): void {
   const handlers = new Set(Object.keys(TOOL_HANDLERS));
   for (const n of defs) if (!handlers.has(n)) throw new Error(`tool "${n}" is advertised but has no handler`);
   for (const n of handlers) if (!defs.has(n)) throw new Error(`handler "${n}" has no advertised definition`);
+  // A tool with no TOOL_GATE entry would silently be treated as always-usable,
+  // so a new tool must declare the method it gates on (or `null`) explicitly.
+  for (const n of defs) {
+    if (!(n in TOOL_GATE)) throw new Error(`tool "${n}" has no TOOL_GATE entry (declare its wire method, or null)`);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerTools(server: McpServer): void {
+export function registerTools(server: McpServer, policy?: Policy): void {
   assertNoDrift();
 
   // Register each tool with its zod `inputSchema`. The SDK advertises it in
   // `tools/list` and validates arguments before invoking the handler, which
   // just routes back through `dispatchToolCall` — our never-throw firewall that
   // applies the rate limit, executor readiness, policy gate, and history log.
+  const policyDropped: string[] = [];
   for (const d of TOOL_DEFINITIONS) {
     if (!isToolEnabled(d.name)) continue;
+    // A tool the policy has switched off can only ever answer POLICY_DENIED.
+    // Don't pay for its schema on every turn, and don't invite a wasted call.
+    if (!isToolPolicyUsable(d.name, policy)) {
+      policyDropped.push(d.name);
+      continue;
+    }
     server.registerTool(
       d.name,
       { description: d.description, inputSchema: d.inputSchema },
@@ -1322,5 +1426,11 @@ export function registerTools(server: McpServer): void {
   const advertised = enabledToolNames();
   if (advertised.length < TOOL_NAMES.length) {
     logErr(`--tools: advertising ${advertised.length} of ${TOOL_NAMES.length} tools (${advertised.join(', ')})`);
+  }
+  if (policyDropped.length > 0) {
+    logErr(
+      `policy: ${policyDropped.length} tool(s) not advertised because the capability is off ` +
+        `(${policyDropped.join(', ')}) — enable them with the matching flag to get them back.`,
+    );
   }
 }

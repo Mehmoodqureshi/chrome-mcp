@@ -347,7 +347,9 @@ async function main(): Promise<void> {
   process.stdin.on('end', shutdown);
   process.stdin.on('close', shutdown);
 
-  await startMcpServer(version());
+  // The resolved policy shapes the advertised catalog: a capability that is off
+  // means its tools are never described to the model.
+  await startMcpServer(version(), cfg.policy);
 }
 
 main().catch((err) => {
