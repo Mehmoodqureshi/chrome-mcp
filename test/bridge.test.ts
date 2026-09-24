@@ -14,6 +14,7 @@ import { chmodSync, mkdtempSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
+import { createServer, type AddressInfo } from 'node:net';
 
 import { BridgeServer, type DisplacementInfo } from '../src/bridge/server';
 import {
@@ -23,6 +24,8 @@ import {
   resolveToken,
   tokenPath,
   tokensMatch,
+  bundledPairingHeldByOther,
+  readBundledPairingPort,
   writeBundledPairing,
   writeHandshake,
   writePersistedToken,
@@ -137,6 +140,28 @@ test('auth: bundled pairing.json is written 0600 into the extension folder; miss
   assert.equal((JSON.parse(readFileSync(path!, 'utf8')) as { port: number }).port, 38018);
   // A folder that does not exist (read-only / relocated install) degrades to null.
   assert.equal(writeBundledPairing(join(extDir, 'nope', 'deeper'), { port: 1, token }), null);
+});
+
+test('auth: pairing.json owned by another live chrome-mcp is not taken over; dead or own port is', async () => {
+  const extDir = mkdtempSync(join(tmpdir(), 'cmcp-ext-'));
+  const token = generateToken();
+  // No file yet → free to write.
+  assert.equal(await bundledPairingHeldByOther(extDir, 38017), false);
+
+  // Another server is live on its own port and owns the pairing file.
+  const other = createServer();
+  await new Promise<void>((r) => other.listen(0, '127.0.0.1', () => r()));
+  const otherPort = (other.address() as AddressInfo).port;
+  try {
+    writeBundledPairing(extDir, { port: otherPort, token });
+    assert.equal(readBundledPairingPort(extDir), otherPort);
+    assert.equal(await bundledPairingHeldByOther(extDir, otherPort + 1), true, 'a live foreign owner keeps its pairing');
+    assert.equal(await bundledPairingHeldByOther(extDir, otherPort), false, 'our own port (failover) may rewrite');
+  } finally {
+    await new Promise<void>((r) => other.close(() => r()));
+  }
+  // Owner gone → the stale file may be replaced.
+  assert.equal(await bundledPairingHeldByOther(extDir, otherPort + 1), false);
 });
 
 test('correct token → welcome; hasActiveExtension true', async () => {

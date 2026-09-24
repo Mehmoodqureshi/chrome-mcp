@@ -1,3 +1,24 @@
+## 0.9.12 - 2026-09-24
+
+Two fixes for running more than one chrome-mcp, and for long forms. The
+extension moves to 0.9.12 (the Web Store still carries the older build).
+
+- fix: **a second chrome-mcp no longer steals the extension's pairing.** Any
+  server that owned its own port wrote `~/chrome-mcp-extension/pairing.json`,
+  so a second one started with its own `CHROME_MCP_DATA` or
+  `CHROME_MCP_WS_PORT` re-pointed the user's extension at itself and the first
+  server lost its browser. A hub now leaves the file alone when it names a
+  different port that is still listening, and logs that it did. A file naming
+  its own port (failover), a dead port, or no file at all is still written.
+- fix: **`fill_form` has time for long forms.** One flat 60 s budget covered
+  the whole batch, while every field may wait 5 s for its element, so a long
+  form timed out server-side while the extension kept typing. The wire timeout
+  now grows with the field count (10 s + 6 s per field, 60 s to 10 min), and
+  the extension stops starting fields once that deadline passes, returning a
+  `TIMEOUT` that says how many landed, instead of writing into the page after
+  the caller was told it failed.
+- 4 new tests (321 total, 2 skipped).
+
 ## 0.9.11 - 2026-09-23
 
 Metadata only; no code changed and the extension stays at 0.9.8.

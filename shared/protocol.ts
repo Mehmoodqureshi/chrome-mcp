@@ -60,6 +60,24 @@ export interface FillFieldOp {
   value: string | boolean;
 }
 
+/** Floor for a batched `fill_form` — the old flat budget, so small forms keep it. */
+export const FILL_FORM_MIN_TIMEOUT_MS = 60_000;
+/** Per-field allowance: the extension's 5 s element wait plus headroom for the write. */
+export const FILL_FORM_PER_FIELD_MS = 6_000;
+/** Ceiling, so a runaway field count can't hold the tab for longer than this. */
+export const FILL_FORM_MAX_TIMEOUT_MS = 600_000;
+
+/**
+ * Wire timeout for a `fill_form` of `fields` fields. One flat 60 s used to cover
+ * the whole batch, so a long form whose fields each waited for their element
+ * timed out server-side while the extension was still typing. The budget now
+ * grows with the field count (10 s base + 6 s per field), clamped to 60 s..10 min.
+ */
+export function fillFormTimeoutMs(fields: number): number {
+  const n = Number.isFinite(fields) && fields > 0 ? Math.floor(fields) : 0;
+  return Math.min(FILL_FORM_MAX_TIMEOUT_MS, Math.max(FILL_FORM_MIN_TIMEOUT_MS, 10_000 + n * FILL_FORM_PER_FIELD_MS));
+}
+
 /**
  * `fill_form` result. Ops run in order and stop at the first failure, so
  * `filled` counts the fields that landed and `error` names the one that did not.

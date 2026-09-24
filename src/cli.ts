@@ -19,7 +19,7 @@ import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
 import { ensureDataDir, ensureWorkspace, handshakePath as handshakeFile, migrateLegacyLayout } from './bridge/datadir';
 import { setActiveWorkspace } from './bridge/workspace';
-import { removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
+import { bundledPairingHeldByOther, removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { initTelemetry, stopTelemetry } from './telemetry';
@@ -237,12 +237,27 @@ async function main(): Promise<void> {
   });
 
   const publishPairing = (port: number, pairToken: string): void => {
+    // Synchronous so a handshake that can't be made private still fails closed.
     const path = writeHandshake(dataDir, { port, token: pairToken });
     logErr(`pairing handshake written to ${path} (mode 0600; token not logged)`);
+    publishBundledPairing(port, pairToken).catch((err) =>
+      logDebug(`auto-pairing file not written: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  };
+
+  const publishBundledPairing = async (port: number, pairToken: string): Promise<void> => {
     // Drop the same port + token into the bundled extension folder so a Load
     // unpacked from there pairs itself. Best-effort: a read-only install just
-    // falls back to the Options-page paste.
+    // falls back to the Options-page paste. Never take over a pairing file that
+    // a different, still-running chrome-mcp published (a second server with its
+    // own data dir or port would otherwise re-point the user's extension).
     const extDir = installExtension();
+    if (await bundledPairingHeldByOther(extDir, port)) {
+      logErr(
+        `auto-pairing file at ${extDir} belongs to another running chrome-mcp — left as is; pair this server from the extension Options page if you want it`,
+      );
+      return;
+    }
     const bundled = writeBundledPairing(extDir, { port, token: pairToken });
     if (bundled) {
       logErr(`auto-pairing file written to ${bundled} — Load unpacked from ${extDir} needs no token paste`);
@@ -251,7 +266,10 @@ async function main(): Promise<void> {
     }
     // Anyone who loaded the extension straight from the package folder (0.8.0
     // docs) keeps pairing too.
-    if (extDir !== bundledExtensionDir()) writeBundledPairing(bundledExtensionDir(), { port, token: pairToken });
+    const pkgDir = bundledExtensionDir();
+    if (extDir !== pkgDir && !(await bundledPairingHeldByOther(pkgDir, port))) {
+      writeBundledPairing(pkgDir, { port, token: pairToken });
+    }
   };
 
   const port = await bridge.start();

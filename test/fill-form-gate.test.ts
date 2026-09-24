@@ -97,3 +97,39 @@ test('an empty field list is a no-op, not an error', async () => {
   assert.deepEqual(await runFillFields([], hooks), { filled: 0 });
   assert.deepEqual(wrote, []);
 });
+
+test('fill_form: the wire timeout grows with the field count, clamped to 60 s..10 min', async () => {
+  const { fillFormTimeoutMs } = await import('../shared/protocol');
+  assert.equal(fillFormTimeoutMs(0), 60_000);
+  assert.equal(fillFormTimeoutMs(3), 60_000, 'small forms keep the old flat budget');
+  assert.equal(fillFormTimeoutMs(20), 130_000);
+  assert.ok(fillFormTimeoutMs(20) > 20 * 5_000, 'covers every field waiting out its 5 s element wait');
+  assert.equal(fillFormTimeoutMs(10_000), 600_000);
+  assert.equal(fillFormTimeoutMs(Number.NaN), 60_000);
+});
+
+test('fill_form: past the deadline no further field is written, and the stop is a TIMEOUT', async () => {
+  const { hooks, wrote } = harness([ALLOWED]);
+  let clock = 0;
+  const res = await runFillFields(FIELDS, {
+    ...hooks,
+    deadline: 100,
+    now: () => clock,
+    write: async (op) => {
+      wrote.push(op.selector);
+      clock += 60; // each write eats 60 ms of a 100 ms budget
+    },
+  });
+  assert.deepEqual(wrote, ['#user', '#password']);
+  assert.equal(res.filled, 2);
+  assert.equal(res.error?.code, 'TIMEOUT');
+  assert.equal(res.error?.selector, '#remember');
+});
+
+test('fill_form: no deadline means every field runs, as before', async () => {
+  const { hooks, wrote } = harness([ALLOWED]);
+  const res = await runFillFields(FIELDS, hooks);
+  assert.equal(res.filled, 3);
+  assert.equal(res.error, undefined);
+  assert.deepEqual(wrote, ['#user', '#password', '#remember']);
+});

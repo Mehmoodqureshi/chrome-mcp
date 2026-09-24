@@ -29,6 +29,14 @@ export interface FillFormHooks {
   write: (op: FillFieldOp) => Promise<void>;
   /** Map a thrown value to a wire error. */
   toError: (err: unknown) => { code: FillFormError['code']; message: string };
+  /**
+   * Epoch ms after which no further field is started — the moment the server
+   * stops waiting for this command. Without it a timed-out batch kept typing
+   * into the page after the caller had already been told it failed.
+   */
+  deadline?: number;
+  /** Clock, injectable for tests. */
+  now?: () => number;
 }
 
 type FillFormError = NonNullable<FillFormWireResult['error']>;
@@ -41,7 +49,16 @@ type FillFormError = NonNullable<FillFormWireResult['error']>;
  */
 export async function runFillFields(ops: readonly FillFieldOp[], hooks: FillFormHooks): Promise<FillFormWireResult> {
   const res: FillFormWireResult = { filled: 0 };
+  const now = hooks.now ?? Date.now;
   for (const op of ops) {
+    if (hooks.deadline !== undefined && now() >= hooks.deadline) {
+      res.error = {
+        selector: op.selector,
+        code: 'TIMEOUT',
+        message: `fill_form ran out of time after ${res.filled} of ${ops.length} fields; the rest were not written`,
+      };
+      return res;
+    }
     try {
       // Fails CLOSED, exactly as the router does: no policy means nothing runs.
       const policy = hooks.policy();

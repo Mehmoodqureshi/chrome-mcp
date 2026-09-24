@@ -39,7 +39,7 @@ import {
   type WaitResult,
   type WaitUntil,
 } from './types';
-import { WIRE_CAP_FILL_FORM, type FillFormWireResult } from '../../shared/protocol';
+import { WIRE_CAP_FILL_FORM, fillFormTimeoutMs, type FillFormWireResult } from '../../shared/protocol';
 import type { BridgeServer } from '../bridge/server';
 import { mapWireErrorCode } from '../bridge/connection';
 import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
@@ -200,7 +200,11 @@ export class ExtensionExecutor implements Executor {
   async fillFields(fields: FillFieldOp[], opts?: { tabId?: TabId } & FrameOpts): Promise<{ filled: number } | null> {
     // An extension that predates the op never advertised it: let the caller go field by field.
     if (!this.bridge.hasCap(this.activeProfile(), WIRE_CAP_FILL_FORM)) return null;
-    const res = (await this.send('fill_form', { ops: fields, ...frameParams(opts) }, { tabId: opts?.tabId })) as FillFormWireResult;
+    const res = (await this.send(
+      'fill_form',
+      { ops: fields, ...frameParams(opts) },
+      { tabId: opts?.tabId, timeoutMs: fillFormTimeoutMs(fields.length) },
+    )) as FillFormWireResult;
     if (res.error) {
       // Say how far the batch got: the fields before this one DID land, and a
       // blind retry of the whole form would write them a second time.

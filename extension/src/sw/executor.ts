@@ -926,7 +926,12 @@ export class ChromeExecutor {
           selector: String(f.selector ?? ''),
           value: typeof f.value === 'boolean' ? f.value : String(f.value ?? ''),
         }));
+        // Stop starting fields once the server has stopped waiting (it scales
+        // timeoutMs with the field count); a small margin lets the partial
+        // result still reach it in time.
+        const deadline = typeof cmd.timeoutMs === 'number' && cmd.timeoutMs > 0 ? Date.now() + cmd.timeoutMs - 1_000 : undefined;
         return runFillFields(ops, {
+          deadline,
           currentUrl: () => observedTabUrl(cmd, id),
           policy: () => this.getPolicy(),
           // Frame ids are re-probed per field too: an iframe that navigates

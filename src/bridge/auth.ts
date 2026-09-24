@@ -16,6 +16,7 @@
 import { chmodSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { connect } from 'node:net';
 
 import { PROTOCOL_VERSION, type HandshakeFile } from '../../shared/protocol';
 import { handshakePath } from './datadir';
@@ -144,6 +145,43 @@ export function writeBundledPairing(extDir: string, fields: WriteHandshakeFields
     }
     return null;
   }
+}
+
+/** The port an existing `<extDir>/pairing.json` points at, or null when absent/unreadable. */
+export function readBundledPairingPort(extDir: string): number | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(extDir, BUNDLED_PAIRING_FILE), 'utf8')) as { port?: unknown };
+    return typeof raw.port === 'number' && Number.isInteger(raw.port) && raw.port > 0 ? raw.port : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when something is accepting TCP connections on 127.0.0.1:`port`. */
+export function portIsListening(port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = connect({ host: '127.0.0.1', port });
+    const done = (live: boolean): void => {
+      sock.destroy();
+      resolve(live);
+    };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+}
+
+/**
+ * Should a hub on `port` leave `<extDir>/pairing.json` alone? Yes when the file
+ * already points the extension at a DIFFERENT port that is still live: another
+ * chrome-mcp (e.g. one started with its own CHROME_MCP_DATA / --ws-port) owns
+ * that pairing, and overwriting it would silently steal the user's extension.
+ * A file naming our own port, a dead port, or no file at all is fair game.
+ */
+export async function bundledPairingHeldByOther(extDir: string, port: number): Promise<boolean> {
+  const current = readBundledPairingPort(extDir);
+  if (current === null || current === port) return false;
+  return portIsListening(current);
 }
 
 /**
