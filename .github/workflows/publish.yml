@@ -61,7 +61,30 @@ jobs:
             npm publish --access public
           fi
 
+      # npm accepts a publish minutes before it serves the version (about 3
+      # minutes for 0.9.12), and the MCP registry validates against what npm
+      # serves. Registering straight after `npm publish` was rejected with
+      # "version not found", so wait until npm answers for this exact version.
+      - name: Wait for npm to serve the version
+        shell: bash
+        run: |
+          SPEC="${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }}"
+          for i in $(seq 1 40); do
+            if [ "$(npm view "$SPEC" version --prefer-online 2>/dev/null)" = "${{ steps.meta.outputs.version }}" ]; then
+              echo "npm serves $SPEC (after ~$(( (i - 1) * 15 ))s)"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::npm still does not serve $SPEC after 10 minutes"
+          exit 1
+
+      # `shell: bash` runs with -eo pipefail. Without pipefail the exit status of
+      # `mcp-publisher publish | tee` was tee's, so a rejected publish passed as
+      # green (0.9.12's first run). A "not found" rejection is retried, since the
+      # registry's own view of npm can lag a little behind ours.
       - name: Publish to the MCP registry
+        shell: bash
         run: |
           curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           # server.json pins the exact npm version; keep it in step with the tag
@@ -69,13 +92,22 @@ jobs:
           V="${{ steps.meta.outputs.version }}"
           jq --arg v "$V" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
           ./mcp-publisher login github-oidc
-          if ! ./mcp-publisher publish 2>&1 | tee publish.log; then
+          for attempt in 1 2 3 4 5; do
+            if ./mcp-publisher publish 2>&1 | tee publish.log; then
+              exit 0
+            fi
             if grep -qi "already exists\|duplicate\|cannot publish duplicate" publish.log; then
               echo "$V is already on the MCP registry; skipping."
-            else
-              exit 1
+              exit 0
             fi
-          fi
+            if grep -qi "not found" publish.log && [ "$attempt" -lt 5 ]; then
+              echo "registry does not see $V on npm yet; retrying in 30s ($attempt/5)"
+              sleep 30
+              continue
+            fi
+            echo "::error::MCP registry publish failed for $V"
+            exit 1
+          done
 
       - name: GitHub release
         env:
