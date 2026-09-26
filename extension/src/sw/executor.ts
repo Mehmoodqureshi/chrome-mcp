@@ -540,6 +540,16 @@ async function screenshotViaDebugger(
   };
   if (enc.format === 'jpeg') params.quality = enc.quality;
   if (plan.clip) params.clip = plan.clip;
+  // Always render the capture fresh. A bare viewport capture of the tab in
+  // front hands back the frame last shown on screen, which can predate a style
+  // change made just before the call (the tab border taken down for the shot,
+  // or a page the window has not repainted yet). A viewport-sized clip with
+  // captureBeyondViewport makes Chrome paint the page for this capture.
+  if (!plan.clip) {
+    const d = measured.dims;
+    params.clip = { x: d.scrollX ?? 0, y: d.scrollY ?? 0, width: d.w, height: d.h, scale: 1 / (d.dpr && d.dpr > 0 ? d.dpr : 1) };
+  }
+  params.captureBeyondViewport = true;
 
   const data = await withDebugger(tabId, async (target) => {
     const res = (await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', params)) as { data?: string };

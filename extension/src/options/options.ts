@@ -14,6 +14,11 @@ const statusEl = document.getElementById('status') as HTMLDivElement;
 
 const sourceEl = document.getElementById('source') as HTMLParagraphElement;
 const pairedAsEl = document.getElementById('paired-as') as HTMLParagraphElement;
+const borderEl = document.getElementById('tab-border') as HTMLInputElement;
+
+// Takes effect at once: the service worker clears every border when this turns off.
+void chrome.storage.local.get('tabBorder').then(({ tabBorder }) => (borderEl.checked = tabBorder !== false));
+borderEl.addEventListener('change', () => void chrome.storage.local.set({ tabBorder: borderEl.checked }));
 
 function renderPairedAs(name: unknown): void {
   pairedAsEl.textContent = typeof name === 'string' && name ? `This browser is paired as "${name}".` : '';

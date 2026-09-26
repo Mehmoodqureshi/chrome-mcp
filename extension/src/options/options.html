@@ -12,6 +12,8 @@
       .status { margin-top: 1rem; padding: 0.5rem 0.75rem; border-radius: 0.4rem; background: #eef; }
       code { background: #f3f3f3; padding: 0 0.25rem; }
       .hint { color: #555; font-size: 0.9rem; }
+      label.check { display: flex; gap: 0.5rem; align-items: center; font-weight: 600; margin-top: 1rem; }
+      label.check input { width: auto; }
     </style>
   </head>
   <body>
@@ -35,6 +37,11 @@
       <code>profile_use</code>. Type a name here only to pin one yourself.
     </p>
     <p class="hint" id="paired-as"></p>
+    <label class="check"><input id="tab-border" type="checkbox" checked /> Outline the tabs chrome-mcp is working in</label>
+    <p class="hint">
+      A border in the page's theme colour (blue when the site has none) marks every tab the
+      agent is driving. It never shows in screenshots or PDFs, and is removed when the server disconnects.
+    </p>
     <button id="save">Save & connect</button>
     <div class="status" id="status">Status: unknown</div>
     <script src="options.js"></script>

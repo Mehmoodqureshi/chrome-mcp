@@ -18,6 +18,7 @@ import { WsClient, type ConnState } from './ws-client';
 import { CommandRouter } from './router';
 import { ChromeExecutor } from './executor';
 import { syncObserverScript } from './observers';
+import { TabBorder } from './tab-border';
 import type { WirePolicy } from '../../../shared/protocol';
 
 interface PairConfig {
@@ -38,6 +39,8 @@ let currentPolicy: WirePolicy | null = null;
 // The executor reads the live policy so a frame-scoped command can be gated
 // against the FRAME's origin, not just the tab's.
 const executor = new ChromeExecutor(() => currentPolicy);
+// Outlines the tabs chrome-mcp is working in; follows the live policy.
+const border = new TabBorder(() => currentPolicy);
 // --- reconnect backoff --------------------------------------------------------
 // Waiting for the 30s keepalive alarm after a drop (server restart, laptop
 // wake) made the first tool call after it stall for up to half a minute. Redial
@@ -69,6 +72,8 @@ const ws = new WsClient({
     if (state === 'connected') clearReconnect();
     // 'idle' after a dial = the socket closed or the dial failed: redial soon.
     else if (state === 'idle') scheduleReconnect();
+    // No server, no agent at work: take the borders down.
+    if (state === 'idle' || state === 'unauthorized') void border.clearAll();
     // A reject with an auto-adopted token usually means the server rotated it
     // (no --persist-token) and rewrote pairing.json — re-read and retry once.
     if (state === 'unauthorized') void adoptBundledPairing();
@@ -88,6 +93,7 @@ const router = new CommandRouter({
   send: (frame) => ws.send(frame),
   getPolicy: () => currentPolicy,
   log: (m) => console.debug('[chrome-mcp]', m),
+  border,
 });
 
 /** Shape of the auto-pairing file the server writes next to this extension. */
@@ -236,7 +242,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) void keepalivePulse();
 });
 
+// A new page drops the border's CSS; repaint it (the theme may differ too).
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === 'complete') void border.loaded(tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => void border.closed(tabId));
+
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.tabBorder?.newValue === false) void border.clearAll();
   if (area === 'local' && (changes.wsPort || changes.token || changes.profile)) {
     // New pairing config (e.g. from the options page) → clear any prior reject and
     // reconnect so a changed profile re-pairs under the new routing label.

@@ -23,7 +23,16 @@ export interface RouterDeps {
   /** The policy delivered in `welcome`, or null before one arrives. */
   getPolicy: () => WirePolicy | null;
   log: (message: string) => void;
+  /** The "chrome-mcp is working here" tab border; optional so tests can omit it. */
+  border?: {
+    used(tabId: number): Promise<void>;
+    opened(tabId: number): Promise<void>;
+    aroundCapture<T>(tabId: number | null, fn: () => Promise<T>): Promise<T>;
+  };
 }
+
+/** Commands whose output is an image of the page: the border is taken off first. */
+const CAPTURES = new Set<string>(['screenshot', 'print_pdf']);
 
 export class CommandRouter {
   constructor(private readonly deps: RouterDeps) {
@@ -60,7 +69,12 @@ export class CommandRouter {
         const verdict = evaluatePolicy(url, cmd.method, policy);
         if (!verdict.ok) throw new CmdError('POLICY_DENIED', verdict.reason);
       }
-      const data = await this.deps.exec.run(cmd, tab);
+      const border = this.deps.border;
+      const data =
+        border && CAPTURES.has(cmd.method)
+          ? await border.aroundCapture(tab, () => this.deps.exec.run(cmd, tab))
+          : await this.deps.exec.run(cmd, tab);
+      if (border) void this.markBorder(border, cmd, tab, data);
       const frame: ResultFrame = { type: 'result', v: PROTOCOL_VERSION, id: cmd.id, ok: true, data };
       // Ride the tab's landing URL home so the server's next gate needs no
       // round-trip. Best-effort: a closed/unreadable tab just omits it.
@@ -79,6 +93,26 @@ export class CommandRouter {
         error: { code, message },
       };
       this.deps.send(frame);
+    }
+  }
+
+  /** Border the tab a successful command worked in. Never delays or fails the reply. */
+  private async markBorder(
+    border: NonNullable<RouterDeps['border']>,
+    cmd: CommandFrame,
+    tab: number | null,
+    data: unknown,
+  ): Promise<void> {
+    try {
+      if (cmd.method === 'tab_new') {
+        const handle = (data as { tabId?: unknown } | null)?.tabId;
+        const id = typeof handle === 'string' ? Number(handle.split(':')[2]) : NaN;
+        if (Number.isInteger(id)) await border.opened(id);
+      } else if (tab !== null && cmd.method !== 'tab_close') {
+        await border.used(tab);
+      }
+    } catch {
+      /* cosmetic only */
     }
   }
 }
