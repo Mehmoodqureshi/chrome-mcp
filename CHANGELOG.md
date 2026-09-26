@@ -1,3 +1,25 @@
+## 0.9.13 - 2026-09-26
+
+You can now see which tabs the agent is working in, and screenshots no longer
+come back stale. The extension moves to 0.9.13.
+
+- feat: **a border marks every tab chrome-mcp is working in.** It takes the
+  site's own theme colour when that stands out from the page, and is blue
+  otherwise (a lighter blue on dark pages). It is drawn with a user stylesheet,
+  so `get_html`, `get_text` and `snapshot` never see it, and it is taken down
+  for screenshots and PDFs. It follows the tab to each new page, goes away when
+  the tab leaves the allowed sites or the server disconnects, and can be turned
+  off on the extension's Options page ("Outline the tabs chrome-mcp is working
+  in").
+- fix: **screenshots always render a fresh frame.** A plain viewport capture
+  of the tab in front returned the frame last shown on screen, which could
+  predate a change made just before the call and sometimes left a grey strip at
+  the bottom. Viewport captures now ask Chrome to paint the page for the shot.
+- docs: a README section on using Claude in your signed-in Chrome (Gmail,
+  GitHub, dashboards), and Chrome Web Store links in the intro and install
+  steps.
+- 8 new tests (329 total, 2 skipped).
+
 ## 0.9.12 - 2026-09-24
 
 Two fixes for running more than one chrome-mcp, and for long forms. The

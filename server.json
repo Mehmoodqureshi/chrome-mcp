@@ -8,12 +8,12 @@
     "url": "https://github.com/Mehmoodqureshi/chrome-mcp",
     "source": "github"
   },
-  "version": "0.9.12",
+  "version": "0.9.13",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@mehmoodqureshi/chrome-mcp",
-      "version": "0.9.12",
+      "version": "0.9.13",
       "transport": {
         "type": "stdio"
       },
