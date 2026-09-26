@@ -16,7 +16,9 @@ localhost WebSocket server and drives the browser you already have open, through
 `chrome.scripting`/`chrome.tabs`. Works with Claude Code, Claude Desktop, and any
 other MCP host.
 
-Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
+Distributed as an `npx` CLI (the MCP server) plus an extension, from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+or loaded unpacked.
 
 > **This build is extension-only.** It never launches or attaches a Chromium of
 > its own, so **the extension is required, not optional** — without it, no tool
@@ -26,6 +28,46 @@ Distributed as an `npx` CLI (the MCP server) plus a load-unpacked extension.
 > **Full design:** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) — architecture, wire
 > protocol, the complete tool surface, the extension manifest, the security
 > model, and the phased build plan.
+
+## Use Claude in your signed-in Chrome
+
+You are already signed in to Gmail, GitHub, your analytics dashboards, the admin
+panel, the CRM. chrome-mcp lets Claude (Claude Code, Claude Desktop, or any
+other MCP host) work in those same tabs: no re-login, no second 2FA prompt, no
+password or cookie in a config file. The extension runs inside your normal
+Chrome, so a page the agent opens is the page you would see.
+
+- **Gmail** — read a thread or search results in a tab you already have open.
+- **GitHub** — go through PRs, issues and settings pages as yourself, private
+  repositories included.
+- **Dashboards** — pull numbers from analytics, billing or admin screens that
+  have no API, or whose API you never set up.
+
+Other tools drive a signed-in Chrome too (the `hangwin/mcp-chrome` extension,
+for one), so the question is what you get on top of the session:
+
+- **A per-domain allowlist, deny-all by default.** With no flags the agent can
+  read nothing. `--allow-domain mail.google.com --allow-domain github.com`
+  opens exactly those hosts (`*.example.com` covers a domain and its
+  subdomains); every other site is refused before the call reaches the page.
+  Reads are gated, not only clicks, and the extension re-checks the same policy
+  on its side. Mutations, eval, downloads and uploads are separate opt-ins.
+- **Password values are never returned**, and `--redact` scrubs tokens, API
+  keys and JWTs out of page reads.
+- **An audit trail**: every call is logged with the URL, the allow/deny
+  verdict, duration and bytes returned.
+- **Background tabs and `batch`**: open pages with `active: false` and read many
+  at once in one call, without stealing focus from the tab you are working in.
+- **Several Chrome profiles**: load the extension in your work and personal
+  profiles and switch between them with `profile_use`.
+- **`auth_check`**: when a session does expire, the agent gets an
+  `[AUTH_REQUIRED]` signal instead of a confusing timeout, so it can stop and
+  ask you to sign in again. chrome-mcp never holds credentials or signs in for
+  you.
+
+Setup is two pieces: the MCP server (`npx`, below) and the extension, which you
+can **[install from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**
+or load from the folder the server unpacks.
 
 ## Quickstart
 
