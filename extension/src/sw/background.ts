@@ -193,10 +193,10 @@ async function getConfig(): Promise<PairConfig | null> {
 }
 
 const BADGE: Record<ConnState, { text: string; color: string; title: string }> = {
-  connected: { text: '●', color: '#16a34a', title: 'MCP Extension for Chrome — connected' },
-  connecting: { text: '…', color: '#ca8a04', title: 'MCP Extension for Chrome — connecting' },
-  unauthorized: { text: '!', color: '#dc2626', title: 'MCP Extension for Chrome — rejected (bad/stale token; re-pair)' },
-  idle: { text: '○', color: '#6b7280', title: 'MCP Extension for Chrome — not connected (open options to pair)' },
+  connected: { text: '●', color: '#16a34a', title: 'MCP Browser Extension — connected' },
+  connecting: { text: '…', color: '#ca8a04', title: 'MCP Browser Extension — connecting' },
+  unauthorized: { text: '!', color: '#dc2626', title: 'MCP Browser Extension — rejected (bad/stale token; re-pair)' },
+  idle: { text: '○', color: '#6b7280', title: 'MCP Browser Extension — not connected (open options to pair)' },
 };
 
 function reflectBadge(state: ConnState): void {

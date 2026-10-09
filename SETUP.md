@@ -108,12 +108,12 @@ You cannot do this step yourself. Give the human these exact instructions:
 2. Turn on **Developer mode** (top right).
 3. Click **Load unpacked** and choose the `chrome-mcp-extension` folder in
    their home directory (the path from step 2).
-4. Confirm an extension named **MCP Extension for Chrome** now appears in the list.
+4. Confirm an extension named **MCP Browser Extension** now appears in the list.
 
 Wait for the human to confirm before continuing.
 
 If the human would rather not enable Developer mode, they can install
-[MCP Extension for Chrome](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 from the Chrome Web Store instead and skip steps 1–3. Prefer the unpacked
 folder when following this guide: it matches the package just installed, while
 the Web Store build passes review separately and can trail it by a version.
@@ -144,7 +144,7 @@ new extensions behind the puzzle-piece button at the right of the address bar,
 so give them these exact steps:
 
 1. Click the puzzle-piece button at the right of the address bar.
-2. Find **MCP Extension for Chrome** in the list and click the pin icon next to it.
+2. Find **MCP Browser Extension** in the list and click the pin icon next to it.
    The extension icon now stays in the toolbar.
 3. Look at the small badge on that icon. Hovering it shows the status in words.
 
@@ -165,7 +165,7 @@ printing the token,
 node -e "console.log(require(require('os').homedir()+'/.chrome-mcp/handshake.json').port)"
 ```
 
-then have the human open **Details** on MCP Extension for Chrome, then **Extension
+then have the human open **Details** on MCP Browser Extension, then **Extension
 options**, enter that **Port**, open `~/.chrome-mcp/handshake.json` in a text
 editor and paste its `token` into the **Token** field, leave **Profile** as
 `default`, and click **Save**. The status line should read **connected** within

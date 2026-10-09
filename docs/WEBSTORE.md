@@ -16,7 +16,7 @@ must be higher than the last one uploaded; it tracks `package.json`.
 
 ## 2. Store listing
 
-**Name (45 chars max):** MCP Extension for Chrome
+**Name (45 chars max):** MCP Browser Extension
 
 > Matches the manifest `name`. Google's branding rules allow "for Chrome" as a
 > trailing qualifier; what they refuse is a name that leads with the trademark,
@@ -26,7 +26,7 @@ must be higher than the last one uploaded; it tracks `package.json`.
 Lets a local chrome-mcp server drive the Chrome you are already logged into. Pairs with your own machine only. Deny-all by default.
 
 **Description:**
-MCP Extension for Chrome is the browser half of chrome-mcp, an open-source MCP server (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
+MCP Browser Extension is the browser half of chrome-mcp, an open-source MCP server (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
 
 How it works
 - You start the chrome-mcp server from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
@@ -47,7 +47,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Category:** Developer Tools
 **Language:** English
-**Homepage URL:** https://chrome-mcp-omega.vercel.app
+**Homepage URL:** https://mcp-browser-extension.vercel.app
 **Support URL:** https://github.com/Mehmoodqureshi/chrome-mcp/issues
 
 ## 3. Graphic assets
@@ -76,7 +76,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Data usage:** check "Website content", "Authentication information" (cookies), and "Personal communications" if the user's allowlist includes such sites. Certify: not sold, not used for unrelated purposes, not used for creditworthiness. All data is transferred only to a local server on the user's own machine.
 
-**Privacy policy URL:** https://chrome-mcp-omega.vercel.app/docs/privacy
+**Privacy policy URL:** https://mcp-browser-extension.vercel.app/docs/privacy
 
 ## 5. Distribution
 

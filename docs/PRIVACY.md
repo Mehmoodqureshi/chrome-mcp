@@ -1,8 +1,8 @@
-# Privacy policy — MCP Extension for Chrome
+# Privacy policy — MCP Browser Extension
 
 Last updated: 2026-09-18
 
-MCP Extension for Chrome is the browser half of chrome-mcp, an open-source tool
+MCP Browser Extension is the browser half of chrome-mcp, an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
 running on your own computer drive the Chrome you already use.
 

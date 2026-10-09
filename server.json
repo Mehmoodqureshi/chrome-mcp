@@ -3,17 +3,17 @@
   "name": "io.github.Mehmoodqureshi/chrome-mcp",
   "title": "chrome-mcp",
   "description": "Drive your real Chrome over MCP: real logins and cookies, multi-tab automation, deny-all by default.",
-  "websiteUrl": "https://chrome-mcp-omega.vercel.app",
+  "websiteUrl": "https://mcp-browser-extension.vercel.app",
   "repository": {
     "url": "https://github.com/Mehmoodqureshi/chrome-mcp",
     "source": "github"
   },
-  "version": "0.9.13",
+  "version": "0.9.14",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@mehmoodqureshi/chrome-mcp",
-      "version": "0.9.13",
+      "version": "0.9.14",
       "transport": {
         "type": "stdio"
       },

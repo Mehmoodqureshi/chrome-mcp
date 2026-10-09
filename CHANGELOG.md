@@ -1,3 +1,20 @@
+## 0.9.14 - 2026-10-09
+
+The extension is now called MCP Browser Extension, and the project site moved
+to https://mcp-browser-extension.vercel.app. No behaviour changes. The
+extension moves to 0.9.14.
+
+- chore: **the extension is renamed MCP Browser Extension** (was "MCP
+  Extension for Chrome"), in its manifest, toolbar tooltips and Options page
+  title. The Chrome Web Store item id is unchanged, so existing installs and
+  store links keep working.
+- docs: the site address is now https://mcp-browser-extension.vercel.app in
+  `package.json`, `server.json`, the extension's homepage link and the store
+  notes. The old chrome-mcp-omega.vercel.app address redirects there.
+- docs: the `--tools` section of the README now reflects the 40-tool catalog:
+  28 KB (about 7.1k tokens) for the full list, and a 78% cut for the
+  seven-tool example.
+
 ## 0.9.13 - 2026-09-26
 
 You can now see which tabs the agent is working in, and screenshots no longer

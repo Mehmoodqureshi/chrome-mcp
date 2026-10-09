@@ -193,7 +193,7 @@ run? It re-checks every 30 seconds and pairs as soon as the file appears.
 **Where to see the badge:** it sits on the extension's icon in Chrome's
 toolbar, not on the `chrome://extensions` page. Chrome hides new extensions
 behind the puzzle-piece button at the right of the address bar, so click that,
-find **MCP Extension for Chrome**, and click the pin next to it once; the icon then
+find **MCP Browser Extension**, and click the pin next to it once; the icon then
 stays in the toolbar. Hover it for the status in words.
 
 | Badge | Meaning |
@@ -455,8 +455,8 @@ PDF is megabytes of base64 no model can read.
 ### Paying less per turn — `--tools`
 
 Every MCP server you connect costs context before you ask it anything: the host
-sends the whole tool catalog to the model on **every** turn. chrome-mcp's 39
-tools are 27 KB of JSON Schema, about 6.9k tokens, on each one.
+sends the whole tool catalog to the model on **every** turn. chrome-mcp's 40
+tools are 28 KB of JSON Schema, about 7.1k tokens, on each one.
 
 Most runs need a handful of them. `--tools` advertises only those:
 
@@ -466,7 +466,7 @@ npx -y @mehmoodqureshi/chrome-mcp \
   --tools tabs_list,tab_new,navigate,snapshot,click,type,get_text
 ```
 
-That surface is **6.0 KB, ~1.5k tokens** — an 82% cut against the full catalog,
+That surface is **6.0 KB, ~1.5k tokens** — a 78% cut against the full catalog,
 for a run that was never going to print a PDF or upload a file.
 
 - Comma-separated and repeatable: `--tools navigate,get_text --tools click`.
@@ -477,7 +477,7 @@ for a run that was never going to print a PDF or upload a file.
   `--unsafe-enable-eval`.
 - An unknown name fails at startup and prints the catalog, so a typo can never
   quietly drop `click` from the surface.
-- `chrome-mcp --help` prints the full catalog of 39 names to pick from.
+- `chrome-mcp --help` prints the full catalog of 40 names to pick from.
 
 ## Status
 
@@ -610,7 +610,7 @@ RUN_EXT_SMOKE=1 node --test dist/test/extension-smoke.test.js   # live, headed
 ## The extension
 
 Published on the Chrome Web Store as
-**[MCP Extension for Chrome](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
+**[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
 Extension versions move only when `extension/` changes, so the listed build can
 sit a release behind the npm package; the two negotiate capabilities on
 connect, so an older extension loses features rather than breaking.

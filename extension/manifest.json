@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "MCP Extension for Chrome",
-  "version": "0.9.13",
+  "name": "MCP Browser Extension",
+  "version": "0.9.14",
   "description": "Lets a local chrome-mcp server drive this browser. Pair it with the server's handshake token.",
-  "homepage_url": "https://chrome-mcp-omega.vercel.app",
+  "homepage_url": "https://mcp-browser-extension.vercel.app",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icon16.png",
@@ -30,7 +30,7 @@
   ],
   "options_page": "options.html",
   "action": {
-    "default_title": "MCP Extension for Chrome — open options to pair",
+    "default_title": "MCP Browser Extension — open options to pair",
     "default_icon": {
       "16": "icon16.png",
       "32": "icon32.png",
