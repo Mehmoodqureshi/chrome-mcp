@@ -4,6 +4,11 @@
 [![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
 [![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
 
+**Website and docs:** [mcp-browser-extension.vercel.app](https://mcp-browser-extension.vercel.app) ·
+[Quickstart](https://mcp-browser-extension.vercel.app/docs/quickstart) ·
+[All 40 tools](https://mcp-browser-extension.vercel.app/docs/tools) ·
+[Install the extension from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+
 **Let Claude use the Chrome you are already logged into.** Not a fresh
 automated browser that greets every site as a stranger — *your* Chrome, with
 your sessions, your cookies, your 2FA already done. If you can see a page in
@@ -595,6 +600,17 @@ CHROME_MCP_TELEMETRY=0     # or false / off
 DO_NOT_TRACK=1
 --no-telemetry             # server flag
 ```
+
+## Learn more
+
+The full documentation, setup guides for each MCP client and the security model
+live on the website: **[MCP Browser Extension docs](https://mcp-browser-extension.vercel.app/docs)**.
+
+- [What an MCP browser extension is, and when you need one](https://mcp-browser-extension.vercel.app/blog/what-is-an-mcp-browser-extension)
+- [Use Claude in your signed-in Chrome](https://mcp-browser-extension.vercel.app/logged-in-chrome)
+- [Give Claude Code browser access](https://mcp-browser-extension.vercel.app/blog/claude-code-browser)
+- [Give Cursor a real browser with MCP](https://mcp-browser-extension.vercel.app/blog/cursor-browser-mcp)
+- [How it compares with other browser MCP servers](https://mcp-browser-extension.vercel.app/docs/compare)
 
 ## Develop
 
