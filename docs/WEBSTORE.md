@@ -62,10 +62,9 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Permission justifications:**
 - `tabs`: list, open, close and switch tabs on the server's instruction.
-- `scripting`: run the read and interaction commands (text, HTML, click, type) inside allowlisted pages.
-- `activeTab`: act on the tab the user is looking at when no tab id is given.
+- `scripting`: run the read and interaction commands (text, HTML, click, type) inside allowlisted pages, and draw the optional outline that marks tabs the agent is working in (a user stylesheet, removed when the agent stops or the server disconnects).
 - `downloads`: save files the server asks for into the local task folder.
-- `storage`: keep the pairing token, connection state and profile name.
+- `storage`: keep the pairing token, connection state, profile name and the user's "Outline the tabs" setting.
 - `alarms`: a 30-second keepalive so the service worker stays connected.
 - `cookies`: read cookies of allowlisted sites when the server asks, so the agent can use existing sessions.
 - `webNavigation`: know when a navigation the server triggered has committed or finished loading, so `navigate` / `reload` / `back` / `forward` return as soon as the page is ready instead of polling. Never used to observe browsing the server did not request.

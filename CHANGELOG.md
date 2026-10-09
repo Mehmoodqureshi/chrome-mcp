@@ -1,3 +1,17 @@
+## 0.9.15 - 2026-10-09
+
+The extension asks for one permission fewer. No behaviour changes. The
+extension moves to 0.9.15.
+
+- chore: **the extension no longer requests `activeTab`.** It already holds
+  host access to all sites (narrowed at run time by the server's domain
+  allowlist), which covers everything `activeTab` granted; finding the tab you
+  are looking at only needs `tabs`. Checked in a real Chrome: screenshots of
+  the front tab and of a background tab, reading, snapshots and opening tabs
+  all work without it.
+- docs: the Chrome Web Store permission justifications in `docs/WEBSTORE.md`
+  now cover the tab outline (`scripting`) and its setting (`storage`).
+
 ## 0.9.14 - 2026-10-09
 
 The extension is now called MCP Browser Extension, and the project site moved
