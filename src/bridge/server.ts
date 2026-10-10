@@ -476,7 +476,7 @@ export class BridgeServer {
    */
   pairingSteps(profile: string): string[] {
     const where = this.opts.dataDir ? handshakePath(this.opts.dataDir) : 'the handshake.json chrome-mcp printed at startup';
-    const options = `In Chrome, click the MCP Browser Extension's toolbar icon to open its Options`;
+    const options = `In Chrome, click the MCP Browser Extension's toolbar icon, then Settings`;
     switch (this.pairState(profile)) {
       case 'ok':
         return [];

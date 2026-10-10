@@ -1,3 +1,23 @@
+## 0.9.19 - 2026-10-10
+
+A popup on the toolbar icon, and PostHog MCP Analytics. The extension moves to
+0.9.19.
+
+- feat (extension): **clicking the toolbar icon opens a popup**, anchored to the
+  icon, instead of a whole Options tab. It shows whether this browser is paired,
+  whether the agent may use the site you are on (with a one-click Allow), the
+  sites it was just refused (Allow or Dismiss), the allowed sites (Remove for
+  those added from the extension), and the tab-outline switch. Light and dark
+  themes; each site gets a coloured letter badge rather than a favicon fetched
+  from a third party. Settings opens the Options page for pairing.
+- feat: **PostHog MCP Analytics.** Each tool call is also sent as a
+  `$mcp_tool_call` event, so PostHog's MCP Analytics dashboard shows tools,
+  latency, failures and clients. Only the tool name, duration, failure flag and
+  error code, client name and version, and a random session id: never
+  `$mcp_parameters`, `$mcp_response` or error messages. Batched every 15 s;
+  telemetry opt-outs turn it off too.
+- docs: blocked-site messages and pairing steps point to the toolbar popup.
+
 ## 0.9.18 - 2026-10-10
 
 The agent stops touching the tab you are working in. The extension moves to

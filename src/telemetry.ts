@@ -4,7 +4,7 @@
  * What it sends, to PostHog: a random per-install id, the chrome-mcp version,
  * OS, CPU architecture and Node major version, whether this session owns the
  * port or shares it, how many browsers are paired (and, when none, which of a
- * few fixed reasons applies), and per-tool call and error
+ * few fixed reasons applies), per-tool call and error
  * COUNTS. Never URLs, domains, tool arguments, page content, profile names,
  * tokens, file paths, or anything typed. Events are marked personless and ask
  * PostHog not to geolocate them.
@@ -16,7 +16,7 @@
  * Every failure is swallowed: telemetry can never break or slow a tool call.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { join } from 'node:path';
@@ -35,6 +35,10 @@ const FLUSH_INTERVAL_MS = 10 * 60_000;
 const FIRST_FLUSH_MS = 60_000;
 /** When to report whether a browser paired: long enough for one to dial in. */
 const PAIR_CHECK_MS = 60_000;
+/** Per-call MCP Analytics events are batched and sent this often. */
+const MCP_FLUSH_MS = 15_000;
+/** Upper bound on buffered per-call events between flushes; extra calls are only counted. */
+const MCP_BUFFER_MAX = 500;
 /** A send never holds up the process longer than this. */
 const SEND_TIMEOUT_MS = 3_000;
 const STATE_FILE = 'telemetry.json';
@@ -65,7 +69,9 @@ export interface TelemetryOptions {
   /** Live context added to each summary (role, paired browsers, pair state). */
   context?: () => Record<string, unknown>;
   /** Test seam: shortens the first-flush and pair-check delays. */
-  delaysMs?: { firstFlush?: number; pairCheck?: number };
+  delaysMs?: { firstFlush?: number; pairCheck?: number; mcpFlush?: number };
+  /** The MCP client this session serves, as it named itself at initialize. */
+  client?: () => { name?: string; version?: string } | undefined;
 }
 
 /** Whether the user has turned telemetry off, by env or flag. */
@@ -91,6 +97,11 @@ class Telemetry {
   /** One-off timers: the early first summary and the pair check. */
   private readonly once = new Set<NodeJS.Timeout>();
   private firstFlushArmed = false;
+  /** PostHog MCP Analytics: one `$mcp_tool_call` per call, buffered between flushes. */
+  private mcpEvents: Event[] = [];
+  private mcpTimer: NodeJS.Timeout | null = null;
+  /** A random id for this server session, in the shape MCP Analytics expects. */
+  private readonly sessionId = `ses_${randomBytes(16).toString('hex')}`;
   private readonly base: Record<string, unknown>;
   /** Sends still on the wire, so a quick exit doesn't cut session_started off. */
   private readonly inflight = new Set<Promise<void>>();
@@ -126,7 +137,8 @@ class Telemetry {
     this.once.add(t);
   }
 
-  noteCall(tool: string, ok: boolean, error?: string): void {
+  noteCall(tool: string, ok: boolean, error?: string, ms?: number): void {
+    this.noteMcpCall(tool, ok, error, ms);
     if (!this.firstFlushArmed) {
       this.firstFlushArmed = true;
       this.later(this.opts.delaysMs?.firstFlush ?? FIRST_FLUSH_MS, () => void this.flush());
@@ -139,6 +151,51 @@ class Telemetry {
       this.errorCodes.set(code, (this.errorCodes.get(code) ?? 0) + 1);
     }
     this.calls.set(tool, c);
+  }
+
+  /**
+   * Queue the `$mcp_tool_call` event PostHog's MCP Analytics dashboard reads.
+   * Only the standard fields that carry no user data: the tool, how long it
+   * took, whether it failed and its error CODE, and which MCP client called.
+   * Never `$mcp_parameters`, `$mcp_response` or `$mcp_error_message`: those
+   * would hold URLs, selectors and page text.
+   */
+  private noteMcpCall(tool: string, ok: boolean, error: string | undefined, ms: number | undefined): void {
+    if (this.mcpEvents.length >= MCP_BUFFER_MAX) return;
+    const client = this.opts.client?.();
+    this.mcpEvents.push(
+      this.event('$mcp_tool_call', {
+        $mcp_source: 'posthog_mcp_analytics',
+        $session_id: this.sessionId,
+        $mcp_tool_name: tool,
+        $mcp_resource_name: tool,
+        $mcp_server_name: 'chrome-mcp',
+        $mcp_server_version: this.opts.version,
+        ...(client?.name ? { $mcp_client_name: client.name } : {}),
+        ...(client?.version ? { $mcp_client_version: client.version } : {}),
+        ...(typeof ms === 'number' ? { $mcp_duration_ms: ms } : {}),
+        $mcp_is_error: !ok,
+        ...(ok ? {} : { $mcp_error_type: errorCodeOf(error) }),
+      }),
+    );
+    if (!this.mcpTimer) {
+      this.mcpTimer = setTimeout(() => {
+        this.mcpTimer = null;
+        void this.flushMcp();
+      }, this.opts.delaysMs?.mcpFlush ?? MCP_FLUSH_MS);
+      this.mcpTimer.unref();
+    }
+  }
+
+  private takeMcpEvents(): Event[] {
+    const batch = this.mcpEvents;
+    this.mcpEvents = [];
+    return batch;
+  }
+
+  private async flushMcp(): Promise<void> {
+    const batch = this.takeMcpEvents();
+    if (batch.length > 0) await this.send(batch);
   }
 
   /** Send the counts gathered since the last flush (skipped when idle). */
@@ -169,8 +226,10 @@ class Telemetry {
     this.timer = null;
     for (const t of this.once) clearTimeout(t);
     this.once.clear();
+    if (this.mcpTimer) clearTimeout(this.mcpTimer);
+    this.mcpTimer = null;
     const summary = this.takeSummary();
-    const final = this.send([...(summary ? [summary] : []), this.event('session_ended', {})]);
+    const final = this.send([...this.takeMcpEvents(), ...(summary ? [summary] : []), this.event('session_ended', {})]);
     // Also wait for anything already sent (session_started on a short session).
     await Promise.allSettled([...this.inflight, final]);
   }
@@ -246,8 +305,8 @@ export function initTelemetry(opts: TelemetryOptions): boolean {
 }
 
 /** Count one tool call. A no-op when telemetry is off. */
-export function noteToolCall(tool: string, ok: boolean, error?: string): void {
-  active?.noteCall(tool, ok, error);
+export function noteToolCall(tool: string, ok: boolean, error?: string, ms?: number): void {
+  active?.noteCall(tool, ok, error, ms);
 }
 
 /** Flush and send session_ended. Safe to call when telemetry is off. */

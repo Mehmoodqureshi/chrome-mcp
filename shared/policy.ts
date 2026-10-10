@@ -202,8 +202,8 @@ export function blockedDomainMessage(method: string, host: string, policy: WireP
     `Blocked: "${method}" can't run on ${host} because it isn't on this browser tool's allowed-sites list. ` +
     `This is a safety limit (the tool drives your real, logged-in browser, so it only touches sites you've approved) — not an error. ` +
     `${allowedLine} ` +
-    `To allow ${host} right now, ask the user to open the MCP Browser Extension's Options in Chrome ` +
-    `(click its toolbar icon) and click Allow next to ${host}: it applies at once, no restart. ` +
+    `To allow ${host} right now, ask the user to click the MCP Browser Extension's toolbar icon in Chrome ` +
+    `and click Allow next to ${host}: it applies at once, no restart. ` +
     `You cannot approve a site yourself. ` +
     `Or add --allow-domain "${host}" (or "*.${host}" to include subdomains) to the chrome-mcp settings and restart. ` +
     `To allow every site (less safe), use --unsafe-all-domains.`

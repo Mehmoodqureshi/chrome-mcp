@@ -75,8 +75,12 @@ test('a summary carries counts and error codes, never arguments or URLs', async 
   noteToolCall('get_text', true);
   await stopTelemetry();
 
-  assert.deepEqual(sent.map((e) => e.event), ['session_started', 'usage_summary', 'session_ended']);
-  const summary = sent[1].properties;
+  // The per-call MCP Analytics events ride along in the same final batch.
+  assert.deepEqual(
+    sent.map((e) => e.event),
+    ['session_started', '$mcp_tool_call', '$mcp_tool_call', '$mcp_tool_call', 'usage_summary', 'session_ended'],
+  );
+  const summary = sent.find((e) => e.event === 'usage_summary')!.properties;
   assert.equal(summary.calls, 3);
   assert.equal(summary.errors, 1);
   assert.deepEqual(summary.tools, { navigate: { calls: 2, errors: 1 }, get_text: { calls: 1, errors: 0 } });
@@ -125,4 +129,37 @@ test('errorCodeOf reads the [CODE] prefix', () => {
   assert.equal(errorCodeOf('[TAB_NOT_FOUND] no tab'), 'TAB_NOT_FOUND');
   assert.equal(errorCodeOf('internal error: boom'), 'OTHER');
   assert.equal(errorCodeOf(undefined), 'OTHER');
+});
+
+test('each call becomes a $mcp_tool_call for MCP Analytics, with no arguments, results or messages', async () => {
+  resetTelemetryForTesting();
+  const sent: Sent[] = [];
+  initTelemetry({
+    dataDir: mkdtempSync(join(tmpdir(), 'cmcp-tel-')),
+    version: '9.9.9',
+    env: {},
+    key: 'phc_test',
+    send: async (batch) => void sent.push(...(batch as Sent[])),
+    client: () => ({ name: 'claude-code', version: '2.1.0' }),
+    delaysMs: { mcpFlush: 20 },
+  });
+  noteToolCall('get_text', true, undefined, 42);
+  noteToolCall('navigate', false, '[POLICY_DENIED] Blocked: "navigate" can\'t run on secret.example.com', 7);
+  await new Promise((r) => setTimeout(r, 80));
+  const calls = sent.filter((e) => e.event === '$mcp_tool_call');
+  assert.equal(calls.length, 2);
+  const [ok, bad] = calls.map((e) => e.properties);
+  assert.equal(ok.$mcp_source, 'posthog_mcp_analytics');
+  assert.equal(ok.$mcp_tool_name, 'get_text');
+  assert.equal(ok.$mcp_duration_ms, 42);
+  assert.equal(ok.$mcp_is_error, false);
+  assert.equal(ok.$mcp_client_name, 'claude-code');
+  assert.equal(ok.$mcp_server_version, '9.9.9');
+  assert.match(String(ok.$session_id), /^ses_[0-9a-f]{32}$/);
+  assert.equal(bad.$mcp_is_error, true);
+  assert.equal(bad.$mcp_error_type, 'POLICY_DENIED');
+  const wire = JSON.stringify(calls);
+  assert.ok(!wire.includes('secret.example.com'), 'never the error message');
+  for (const k of ['$mcp_parameters', '$mcp_response', '$mcp_error_message']) assert.ok(!wire.includes(k));
+  await stopTelemetry();
 });

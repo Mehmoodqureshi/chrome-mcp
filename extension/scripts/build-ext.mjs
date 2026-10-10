@@ -1,5 +1,5 @@
 /**
- * extension/scripts/build-ext.mjs — bundle the SW + options with esbuild and
+ * extension/scripts/build-ext.mjs — bundle the SW, options and popup with esbuild and
  * assemble the load-unpacked root at <repo>/extension-dist.
  */
 import { build } from 'esbuild';
@@ -18,6 +18,7 @@ await build({
   entryPoints: {
     background: join(extRoot, 'src/sw/background.ts'),
     options: join(extRoot, 'src/options/options.ts'),
+    popup: join(extRoot, 'src/popup/popup.ts'),
     // MAIN-world observer hook, registered as a document_start content script
     // (and injected on demand as a fallback) — must be its own file.
     'page-hook': join(extRoot, 'src/page/hook.ts'),
@@ -32,6 +33,7 @@ await build({
 
 copyFileSync(join(extRoot, 'manifest.json'), join(outDir, 'manifest.json'));
 copyFileSync(join(extRoot, 'src/options/options.html'), join(outDir, 'options.html'));
+copyFileSync(join(extRoot, 'src/popup/popup.html'), join(outDir, 'popup.html'));
 // Icons sit flat in the root: the home-folder mirror copies top-level files only.
 for (const f of readdirSync(join(extRoot, 'icons'))) {
   if (f.endsWith('.png')) copyFileSync(join(extRoot, 'icons', f), join(outDir, f));

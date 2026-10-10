@@ -306,12 +306,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// The toolbar icon opens Options: that is where you pair, and where a blocked
-// site gets its Allow button.
-chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
-
 // Lets the options page trigger an immediate (re)connect after saving config,
-// and carries its Allow / Remove clicks to the server.
+// and carries the popup's and options page's Allow / Remove clicks to the server.
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.type === 'reconnect') {
     clearReconnect();

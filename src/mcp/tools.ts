@@ -1422,8 +1422,8 @@ function recordHistory(
   extra: { error?: string; ms?: number; audit?: CallAudit } = {},
 ): void {
   const a = extra.audit ?? {};
-  // Counts only — the tool name and error code, never the args or URL below.
-  noteToolCall(tool, ok, extra.error);
+  // Counts only — the tool name, duration and error code, never the args or URL below.
+  noteToolCall(tool, ok, extra.error, extra.ms);
   appendHistory({
     ts: new Date().toISOString(),
     tool,

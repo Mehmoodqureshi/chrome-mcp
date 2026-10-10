@@ -20,7 +20,7 @@ import { BridgeServer } from './bridge/server';
 import { ensureDataDir, ensureWorkspace, handshakePath as handshakeFile, migrateLegacyLayout } from './bridge/datadir';
 import { peekActiveWorkspace, setActiveWorkspace } from './bridge/workspace';
 import { bundledPairingHeldByOther, removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
-import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
+import { logDebug, logErr, mcpClientInfo, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { initTelemetry, stopTelemetry } from './telemetry';
 import { maybeHandOff } from './auto-update';
@@ -294,6 +294,7 @@ async function main(): Promise<void> {
     version: version(),
     disabledByFlag: cfg.noTelemetry,
     log: (m) => logErr(m),
+    client: () => mcpClientInfo(),
     context: () => ({
       role: bridge.role,
       browsers: bridge.connectedProfiles().length,

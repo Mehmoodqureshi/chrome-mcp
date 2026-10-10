@@ -553,9 +553,10 @@ chrome-mcp --redact                        # scrub secret-shaped strings out of 
 ```
 
 **Allowing a site without a restart.** When a call is refused because its site
-is not allowed, the extension's toolbar icon shows a `?`. Click it: the Options
-page lists the blocked site with an **Allow** button, and has a box to allow any
-other. An allowed site applies at once to every session sharing that Chrome, and
+is not allowed, the extension's toolbar icon shows a `?`. Click it: the popup
+lists the blocked site with an **Allow** button, shows whether the site you are on
+is allowed (with its own Allow), and lists the allowed sites. The Options page
+(Settings in the popup) also has a box to allow any other site. An allowed site applies at once to every session sharing that Chrome, and
 is saved to `~/.chrome-mcp/allowed-sites.json` so it survives restarts. Sites
 allowed there can be removed there; sites from `--allow-domain` stay until the
 flags change. The catch-all `*` can only come from `--unsafe-all-domains`. The
@@ -613,7 +614,11 @@ What is sent: a random install id (kept in `~/.chrome-mcp/telemetry.json`), the
 chrome-mcp version, OS, CPU architecture and Node major version, whether the
 session owns the bridge port or shares it, how many browsers are paired, and
 per-tool call and error **counts** with error codes. The first batch goes out a
-minute after the first tool call, then every 10 minutes. One `pair_check` event
+minute after the first tool call, then every 10 minutes. For PostHog's MCP
+Analytics view, each tool call is also sent as one `$mcp_tool_call` event
+carrying only the tool name, its duration, whether it failed and the error
+**code**, the MCP client's name and version (such as `claude-code`), and a
+random per-session id; these are batched every 15 seconds. One `pair_check` event
 a minute after startup says whether a browser paired and, if not, which of a few
 fixed reasons applies (`no_extension`, `token_mismatch`, `version_mismatch`,
 `profile_mismatch`), so setup problems can be fixed where they happen.

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MCP Browser Extension</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel: #f6f7f9;
+        --card: #ffffff;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --line: #e6e8ec;
+        --ok: #16a34a;
+        --ok-soft: #dcfce7;
+        --warn: #c2410c;
+        --warn-soft: #fff1e6;
+        --bad: #dc2626;
+        --accent: #2563eb;
+        --accent-2: #7c3aed;
+        --ring: rgba(37, 99, 235, 0.35);
+        --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 14px rgba(15, 23, 42, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0d12;
+          --panel: #11141b;
+          --card: #161a23;
+          --fg: #e8ebf2;
+          --muted: #8b93a7;
+          --line: #232836;
+          --ok: #34d399;
+          --ok-soft: rgba(52, 211, 153, 0.12);
+          --warn: #fb923c;
+          --warn-soft: rgba(251, 146, 60, 0.1);
+          --accent: #3b82f6;
+          --accent-2: #8b5cf6;
+          --ring: rgba(59, 130, 246, 0.45);
+          --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 20px rgba(0, 0, 0, 0.35);
+        }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; width: 360px; font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+      /* -- header -- */
+      header { position: relative; display: flex; align-items: center; gap: 11px; padding: 16px 16px 14px; overflow: hidden; }
+      header::before { content: ''; position: absolute; inset: 0; background: radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.22), transparent 55%), radial-gradient(90% 120% at 100% 0%, rgba(139, 92, 246, 0.2), transparent 60%); pointer-events: none; }
+      header > * { position: relative; }
+      .logo { width: 34px; height: 34px; border-radius: 10px; overflow: hidden; box-shadow: 0 6px 16px rgba(59, 130, 246, 0.3); }
+      .logo img { width: 34px; height: 34px; display: block; }
+      .title { flex: 1; min-width: 0; }
+      .title b { display: block; font-size: 14px; letter-spacing: -0.01em; }
+      .title span { color: var(--muted); font-size: 12px; }
+      .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); white-space: nowrap; }
+      .dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+      .pill.ok .dot { background: var(--ok); }
+      .pill.ok .dot::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; background: var(--ok); opacity: 0.35; animation: pulse 1.8s ease-out infinite; }
+      .pill.warn .dot { background: var(--warn); }
+      .pill.bad .dot { background: var(--bad); }
+      @keyframes pulse { from { transform: scale(0.6); opacity: 0.5; } to { transform: scale(1.6); opacity: 0; } }
+
+      main { padding: 4px 12px 12px; display: grid; gap: 10px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; box-shadow: var(--shadow); }
+      h2 { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      .count { font-size: 11px; letter-spacing: 0; text-transform: none; padding: 1px 7px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+
+      /* -- this site -- */
+      .site { display: flex; align-items: center; gap: 10px; }
+      .avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; font-size: 15px; color: #fff; text-transform: uppercase; }
+      .site-main { flex: 1; min-width: 0; }
+      .site-host { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .chip { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; }
+      .chip.ok { color: var(--ok); background: var(--ok-soft); }
+      .chip.warn { color: var(--warn); background: var(--warn-soft); }
+      #site-allow { margin-top: 10px; width: 100%; }
+
+      /* -- lists -- */
+      ul { list-style: none; margin: 0; padding: 0; }
+      .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; transition: background 0.15s; }
+      .row:hover { background: var(--panel); }
+      .row .host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mini { flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; text-transform: uppercase; }
+      .tag { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+      #allowed { max-height: 150px; overflow-y: auto; scrollbar-width: thin; }
+      .blocked { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); background: linear-gradient(180deg, var(--warn-soft), var(--card) 70%); }
+      .blocked h2 { color: var(--warn); }
+      .blocked .row:hover { background: color-mix(in srgb, var(--warn-soft) 70%, transparent); }
+
+      /* -- buttons -- */
+      button { font: inherit; font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; transition: transform 0.08s, background 0.15s, border-color 0.15s, box-shadow 0.15s; }
+      button:hover { border-color: color-mix(in srgb, var(--fg) 25%, var(--line)); }
+      button:active { transform: translateY(1px); }
+      button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+      button.primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+      button.primary:hover { filter: brightness(1.08); }
+      button.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 8px; }
+      button.ghost:hover { color: var(--fg); background: var(--panel); }
+
+      /* -- toggle -- */
+      .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+      .switch span { flex: 1; }
+      .switch input { appearance: none; flex: none; width: 36px; height: 20px; margin: 0; border-radius: 999px; background: var(--line); position: relative; cursor: pointer; transition: background 0.2s; }
+      .switch input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
+      .switch input:checked { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+      .switch input:checked::after { transform: translateX(16px); }
+      .switch input:focus-visible { box-shadow: 0 0 0 3px var(--ring); outline: none; }
+
+      .note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+      .note:empty { display: none; }
+      ol { margin: 2px 0 12px; padding-left: 18px; color: var(--muted); }
+      ol li { margin: 3px 0; }
+      code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); }
+      #pair { width: 100%; }
+
+      footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px 12px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
+      footer a { display: inline-flex; align-items: center; gap: 5px; color: var(--fg); font-weight: 500; text-decoration: none; cursor: pointer; padding: 4px 8px; border-radius: 8px; transition: background 0.15s; }
+      footer a:hover { background: var(--panel); }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="logo"><img src="icon48.png" alt="" /></div>
+      <div class="title">
+        <b>MCP Browser Extension</b>
+        <span id="paired-as">chrome-mcp</span>
+      </div>
+      <span class="pill" id="state"><span class="dot"></span><span id="state-text">…</span></span>
+    </header>
+
+    <main>
+      <section class="card" id="unpaired" hidden>
+        <h2>Connect your AI client</h2>
+        <ol>
+          <li>Start chrome-mcp from Claude Code, Cursor or another MCP client.</li>
+          <li>Paste the port and token from <code>~/.chrome-mcp/handshake.json</code> in Settings.</li>
+        </ol>
+        <button class="primary" id="pair">Open Settings to pair</button>
+      </section>
+
+      <section class="card" id="this-site" hidden>
+        <h2>This site</h2>
+        <div class="site">
+          <div class="avatar" id="site-avatar"></div>
+          <div class="site-main">
+            <div class="site-host" id="site-host"></div>
+            <span class="chip" id="site-state"></span>
+          </div>
+        </div>
+        <button class="primary" id="site-allow" hidden>Allow the agent on this site</button>
+      </section>
+
+      <section class="card blocked" id="blocked-section" hidden>
+        <h2>Blocked just now <span class="count" id="blocked-count"></span></h2>
+        <ul id="blocked"></ul>
+      </section>
+
+      <section class="card" id="allowed-section" hidden>
+        <h2>Allowed sites <span class="count" id="allowed-count"></span></h2>
+        <ul id="allowed"></ul>
+        <p class="note" id="allowed-note"></p>
+      </section>
+
+      <section class="card">
+        <label class="switch"><span>Outline the tabs the agent is working in</span><input id="tab-border" type="checkbox" /></label>
+      </section>
+    </main>
+
+    <footer>
+      <span id="version"></span>
+      <a id="settings">Settings <span aria-hidden="true">→</span></a>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

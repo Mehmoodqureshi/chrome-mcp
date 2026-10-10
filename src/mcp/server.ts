@@ -31,8 +31,8 @@ export const SERVER_INSTRUCTIONS =
   "chrome-mcp drives the user's real, signed-in Chrome through the MCP Browser Extension. " +
   'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), do not retry: ' +
   'give the user the steps in its `setup` field, which name what went wrong and how to fix it. ' +
-  'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it on the extension\'s ' +
-  'Options page (click its toolbar icon). It applies at once, with no restart. You cannot approve a site yourself. ' +
+  'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it from the extension\'s ' +
+  'toolbar icon (its popup has an Allow button). It applies at once, with no restart. You cannot approve a site yourself. ' +
   "Work in your own tab: tab_new opens one in the background, and calls without a tabId go to it, never to the tab the user is on. " +
   "To act on the user's current page, pass its tabId from tabs_list.";
 
@@ -102,6 +102,12 @@ export async function stopMcpServer(): Promise<void> {
     logErr(`error closing transport: ${String(err)}`);
   }
   logErr('MCP server stopped.');
+}
+
+/** The MCP client this session serves, as it named itself at initialize (for analytics). */
+export function mcpClientInfo(): { name?: string; version?: string } | undefined {
+  const info = server?.server.getClientVersion();
+  return info ? { name: info.name, version: info.version } : undefined;
 }
 
 export function isMcpServerRunning(): boolean {
