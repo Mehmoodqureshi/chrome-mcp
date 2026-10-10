@@ -1,4 +1,8 @@
-## Unreleased
+## 0.9.21 - 2026-10-10
+
+One-click Connect, store-first install, and the MCP Browser Extension name.
+The extension moves to 0.9.21; it adds one optional permission
+(`nativeMessaging`, asked only when someone clicks Connect).
 
 - feat: **one-click Connect, for every install.** The server registers a native
   messaging helper with Chrome, Brave, Edge, Chromium, Arc and Vivaldi on each

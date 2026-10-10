@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MCP Browser Extension",
-  "version": "0.9.19",
+  "version": "0.9.21",
   "description": "Lets your AI agent (Claude, Cursor, Codex) use the Chrome you are signed into, through a local MCP server. Deny-all by default.",
   "homepage_url": "https://mcp-browser-extension.vercel.app",
   "minimum_chrome_version": "116",
