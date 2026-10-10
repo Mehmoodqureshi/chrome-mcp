@@ -38,6 +38,21 @@ import { evictPortOwner } from './evict';
 import { sanitizeName } from '../config';
 import { ProfileRegistry, isValidInstallId } from './profiles';
 import { HubLink, relayError, type HubToPeerFrame, type PeerHelloFrame, type PeerToHubFrame } from './peer';
+import { SiteGrants } from './site-grants';
+import { handshakePath } from './datadir';
+
+/** Where a person gets the extension. */
+export const WEB_STORE_URL = 'https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh';
+
+/**
+ * Why a profile has no browser to drive, as far as this server can tell:
+ *   ok               — a browser is paired for it
+ *   profile_mismatch — Chrome is paired, but under a different profile name
+ *   token_mismatch   — an extension dialled in with a wrong (stale) token
+ *   version_mismatch — an extension dialled in speaking another protocol version
+ *   no_extension     — nothing has tried to connect at all
+ */
+export type PairState = 'ok' | 'profile_mismatch' | 'token_mismatch' | 'version_mismatch' | 'no_extension';
 
 /** The routing label for a hello with no/blank profile — the back-compat default. */
 const DEFAULT_PROFILE = 'default';
@@ -101,8 +116,14 @@ export interface BridgeOptions {
   token: string;
   serverVersion: string;
   /** Active policy, sent to the extension in `welcome` so it mirrors the gate.
-   *  Defaults to deny-all if omitted. */
+   *  Defaults to deny-all if omitted. Its `allowDomains` array is the LIVE
+   *  allowlist: sites allowed from the extension's Options are added to it in
+   *  place, so pass the same array the server-side gate reads. */
   policy?: WirePolicy;
+  /** Let the person allow sites from the extension's Options page at runtime
+   *  (saved to `<dataDir>/allowed-sites.json`). Default true; false keeps the
+   *  allowlist exactly what the flags say (`--no-site-grants`). */
+  siteGrants?: boolean;
   port?: number;
   host?: string;
   heartbeatMs?: number;
@@ -145,11 +166,59 @@ export class BridgeServer {
   /** Hub role: the other chrome-mcp servers relaying through us. */
   private readonly peers = new Set<WebSocket>();
   private stopped = false;
+  /** The last extension hello this hub turned away, for telling a stale token
+   *  apart from an extension that was never installed. Cleared by a good pairing. */
+  private lastRejection: 'bad_token' | 'bad_version' | null = null;
+  /** The policy every welcome carries; `allowDomains` is shared with the server gate. */
+  private readonly policy: WirePolicy;
+  /** Sites allowed at runtime from a browser's Options, or null when that is switched off. */
+  private readonly grants: SiteGrants | null;
 
   constructor(private readonly opts: BridgeOptions) {
     this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.registry = new ProfileRegistry(opts.dataDir);
     this.token = opts.token;
+    this.policy = opts.policy ?? { ...DENY_ALL_WIRE_POLICY, allowDomains: [] };
+    this.grants = opts.siteGrants === false ? null : new SiteGrants(this.policy.allowDomains, opts.dataDir);
+  }
+
+  /** Sites allowed at runtime (empty when grants are off). */
+  grantedSites(): string[] {
+    return this.grants?.list() ?? [];
+  }
+
+  /**
+   * The server gate refused a call because `host` is not on the allowlist. Tell
+   * every paired browser, so its Options page can offer a one-click Allow; a
+   * peer hands the notice to the hub, which owns the browsers.
+   */
+  noteBlocked(host: string, method: string): void {
+    if (!host || !this.grants) return;
+    if (this.hub) return this.hub.blocked(host, method);
+    for (const conn of this.conns.values()) conn.push({ type: 'blocked', v: PROTOCOL_VERSION, host, method });
+  }
+
+  /**
+   * The person allowed or removed a site on a browser's Options page. Updates
+   * the live allowlist, saves it, and pushes it to every browser and peer.
+   */
+  private applySiteGrant(host: unknown, allow: boolean): void {
+    if (!this.grants) {
+      this.log('ignored a site grant from the extension: runtime grants are off (--no-site-grants)');
+      return;
+    }
+    const site = this.grants.apply(host, allow);
+    if (!site) return;
+    this.log(`${allow ? 'allowed' : 'removed'} site "${site}" from the extension Options`);
+    const frame = { type: 'policy' as const, v: PROTOCOL_VERSION, policy: this.policy, granted: this.grants.list() };
+    for (const conn of this.conns.values()) conn.push(frame);
+    for (const peer of this.peers) this.sendPeer(peer, { type: 'peer_grant', host: site, allow });
+  }
+
+  /** Peer side: the hub reports a grant made in a browser; mirror it in our own gate. */
+  private mirrorSiteGrant(host: string, allow: boolean): void {
+    // The hub already saved it (to its data dir, normally the same one).
+    if (this.grants?.apply(host, allow, false)) this.log(`${allow ? 'allowed' : 'removed'} site "${host}" (shared by the hub)`);
   }
 
   /** 'hub' or 'peer' once started; null before start and between roles. */
@@ -228,7 +297,13 @@ export class BridgeServer {
     if (published) tokens.add(published);
     tokens.add(this.token);
     for (const token of tokens) {
-      const link = await HubLink.join(host, port, token, () => this.onHubLost());
+      const link = await HubLink.join(
+        host,
+        port,
+        token,
+        () => this.onHubLost(),
+        (site, allow) => this.mirrorSiteGrant(site, allow),
+      );
       if (!link) continue;
       if (this.stopped) {
         link.close();
@@ -384,13 +459,60 @@ export class BridgeServer {
     return conn?.isOpen() ? conn.lastTabUrl(tabId, maxAgeMs) : null;
   }
 
+  /** Why `profile` has no browser right now (see {@link PairState}). */
+  pairState(profile: string): PairState {
+    if (this.hasConnection(profile)) return 'ok';
+    if (this.connectedProfiles().length > 0) return 'profile_mismatch';
+    if (this.lastRejection === 'bad_token') return 'token_mismatch';
+    if (this.lastRejection === 'bad_version') return 'version_mismatch';
+    return 'no_extension';
+  }
+
+  /**
+   * Step-by-step pairing help for `profile`, matched to what went wrong. Shown
+   * by chrome_status and in every NO_BACKEND error, so the agent can hand the
+   * person the exact fix the first time instead of after a string of failures.
+   * Never includes the token itself, only where to find it.
+   */
+  pairingSteps(profile: string): string[] {
+    const where = this.opts.dataDir ? handshakePath(this.opts.dataDir) : 'the handshake.json chrome-mcp printed at startup';
+    const options = `In Chrome, click the MCP Browser Extension's toolbar icon to open its Options`;
+    switch (this.pairState(profile)) {
+      case 'ok':
+        return [];
+      case 'profile_mismatch': {
+        const names = this.connectedProfiles().map((n) => `"${n}"`).join(', ');
+        return [
+          `Chrome is paired, but as ${names}, not "${profile}". Call profile_use with ${names.split(', ')[0]} to drive it.`,
+          `Or, to pair a browser as "${profile}": ${options}, set Profile to "${profile}", and Save.`,
+        ];
+      }
+      case 'token_mismatch':
+        return [
+          `The extension tried to connect with an old token (chrome-mcp makes a new one each start).`,
+          `${options}, set Port ${this.boundPort}, paste the "token" value from ${where}, and Save.`,
+          `To stop this happening again, add --persist-token to the chrome-mcp command in the MCP config.`,
+        ];
+      case 'version_mismatch':
+        return [
+          `The extension and this chrome-mcp server are different versions and cannot talk.`,
+          `Update the extension (chrome://extensions, then Update, or reinstall from ${WEB_STORE_URL}) and restart the MCP client so it runs the latest chrome-mcp.`,
+        ];
+      case 'no_extension':
+        return [
+          `No browser extension has connected to this server yet.`,
+          `1. Install the MCP Browser Extension: ${WEB_STORE_URL}`,
+          `2. ${options}, set Port ${this.boundPort}, paste the "token" value from ${where}, and Save.`,
+          `3. The Options page should then say "connected". Chrome must stay open while you use it.`,
+        ];
+    }
+  }
+
   /** How to pair a browser for `profile` — surfaced whenever that profile has no live connection. */
   noPairMessage(profile: string): string {
-    return (
-      `No browser is paired for profile "${profile}". In that Chrome's chrome-mcp ` +
-      `extension Options, set Port ${this.boundPort}, paste the token, set Profile to ` +
-      `"${profile}", and Save — then it joins without disturbing your other profiles.`
-    );
+    const steps = this.pairingSteps(profile);
+    const head = `No browser is paired for profile "${profile}".`;
+    return steps.length > 0 ? `${head} ${steps.join(' ')}` : head;
   }
 
   /** Every paired browser with how it was named — for chrome_status. */
@@ -487,16 +609,19 @@ export class BridgeServer {
       if (frame.type !== 'hello') return; // ignore noise until a hello arrives
       if (frame.v !== PROTOCOL_VERSION) {
         clearTimeout(helloTimer);
+        this.lastRejection = 'bad_version';
         this.reject(ws, 'bad_version');
         return;
       }
       if (typeof frame.token !== 'string' || !tokensMatch(frame.token, this.token)) {
         clearTimeout(helloTimer);
+        this.lastRejection = 'bad_token';
         this.reject(ws, 'bad_token');
         return;
       }
       // Authenticated. Hand the socket to an ExtensionConnection under its profile.
       authed = true;
+      this.lastRejection = null;
       clearTimeout(helloTimer);
       ws.off('message', onMessage);
       const { profile, naming, installId } = this.nameFor(frame);
@@ -561,6 +686,7 @@ export class BridgeServer {
     };
     if (frame.type === 'relay') answer(frame.id, this.sendCommand(frame.method, frame.params ?? {}, frame.opts));
     else if (frame.type === 'peer_rename') answer(frame.id, this.renameProfile(frame.from, frame.to));
+    else if (frame.type === 'peer_blocked' && typeof frame.host === 'string') this.noteBlocked(frame.host, String(frame.method ?? ''));
   }
 
   /** Tell every peer which browsers are paired — on each pair, unpair and rename. */
@@ -622,6 +748,7 @@ export class BridgeServer {
       heartbeatMs: this.heartbeatMs,
       caps,
       onEvent: this.opts.onEvent,
+      onSiteGrant: (host, allow) => this.applySiteGrant(host, allow),
       onLog: (m) => this.log(m),
       onClose: () => {
         // Only clear if a newer re-pair hasn't already replaced this slot. Look it
@@ -644,8 +771,9 @@ export class BridgeServer {
       serverVersion: this.opts.serverVersion,
       sessionId,
       heartbeatMs: this.heartbeatMs,
-      policy: this.opts.policy ?? DENY_ALL_WIRE_POLICY,
+      policy: this.policy,
       profile,
+      ...(this.grants ? { granted: this.grants.list() } : {}),
     };
     this.send(ws, welcome);
     this.log(`extension paired (profile "${profile}", session ${sessionId}, id "${ext.id}")`);

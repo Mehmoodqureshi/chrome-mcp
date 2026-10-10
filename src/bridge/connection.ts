@@ -21,6 +21,8 @@ import {
   type EventFrame,
   type ExtensionFrame,
   type ResultFrame,
+  type ServerFrame,
+  type SiteGrantFrame,
   type WireEvent,
   type WireMethod,
 } from '../../shared/protocol';
@@ -78,6 +80,8 @@ export interface ConnectionDeps {
   /** Capabilities from `hello` (see WIRE_CAP_TAB_URL). Old builds send none. */
   caps?: string[];
   onEvent?: (event: WireEvent, data: Record<string, unknown>) => void;
+  /** The person allowed or removed a site on this browser's Options page. */
+  onSiteGrant?: (host: unknown, allow: boolean) => void;
   onClose?: (code: number) => void;
   onLog?: (message: string) => void;
 }
@@ -102,6 +106,7 @@ export class ExtensionConnection {
    *  parallel batch over N tabs gate on one round-trip instead of N. */
   private readonly tabUrls = new Map<string, { url: string; at: number }>();
   private readonly onEvent?: ConnectionDeps['onEvent'];
+  private readonly onSiteGrant?: ConnectionDeps['onSiteGrant'];
   private readonly onClose?: ConnectionDeps['onClose'];
   private readonly onLog?: ConnectionDeps['onLog'];
 
@@ -112,6 +117,7 @@ export class ExtensionConnection {
     this.caps = new Set(deps.caps ?? []);
     this.reportsTabUrl = this.caps.has(WIRE_CAP_TAB_URL);
     this.onEvent = deps.onEvent;
+    this.onSiteGrant = deps.onSiteGrant;
     this.onClose = deps.onClose;
     this.onLog = deps.onLog;
 
@@ -179,6 +185,16 @@ export class ExtensionConnection {
     this.handleClose(code);
   }
 
+  /** Push an unsolicited frame (a policy change, a blocked-site notice). Best-effort. */
+  push(frame: ServerFrame): void {
+    if (!this.isOpen()) return;
+    try {
+      this.ws.send(JSON.stringify(frame));
+    } catch {
+      /* socket going away; the close handler cleans up */
+    }
+  }
+
   isOpen(): boolean {
     return !this.closed && this.ws.readyState === this.ws.OPEN;
   }
@@ -209,6 +225,11 @@ export class ExtensionConnection {
       case 'pong':
         this.missedPongs = 0;
         break;
+      case 'site_grant': {
+        const g = frame as SiteGrantFrame;
+        this.onSiteGrant?.(g.host, g.allow === true);
+        break;
+      }
       default:
         // hello arrives only pre-auth (handled by the server); ignore here.
         break;

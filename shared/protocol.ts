@@ -243,6 +243,10 @@ export interface WelcomeFrame extends BaseFrame {
   /** The profile name this browser was paired as (shown in the Options page).
    *  Optional so an older server's welcome still parses. */
   profile?: string;
+  /** Sites allowed at runtime from this Options page (a subset of
+   *  `policy.allowDomains`; the rest came from the server's flags and can only be
+   *  changed there). Absent from a server too old to take runtime grants. */
+  granted?: string[];
 }
 
 export interface UnauthFrame extends BaseFrame {
@@ -308,13 +312,44 @@ export interface PongFrame extends BaseFrame {
   ts: number;
 }
 
+// ---- runtime site grants ----
+//
+// The allowlist used to be fixed at startup, so a new user's first blocked site
+// meant editing an MCP config and restarting the client. Now the server tells
+// the extension which site it just refused (`blocked`), the person clicks Allow
+// on the Options page (`site_grant`), and the server pushes the widened policy
+// to every paired browser (`policy`) without a restart. Only the extension can
+// send a grant: the agent cannot reach this extension's own pages, so it cannot
+// approve a site for itself.
+
+/** Server → extension: the live policy changed (a site was allowed or removed). */
+export interface PolicyFrame extends BaseFrame {
+  type: 'policy';
+  policy: WirePolicy;
+  granted: string[];
+}
+
+/** Server → extension: a tool call was refused because `host` is not allowed. */
+export interface BlockedFrame extends BaseFrame {
+  type: 'blocked';
+  host: string;
+  method: string;
+}
+
+/** Extension → server: the person allowed (or removed) a site in Options. */
+export interface SiteGrantFrame extends BaseFrame {
+  type: 'site_grant';
+  host: string;
+  allow: boolean;
+}
+
 // ---- unions ----
 
 /** Frames the SERVER sends to the extension. */
-export type ServerFrame = CommandFrame | WelcomeFrame | UnauthFrame | PingFrame;
+export type ServerFrame = CommandFrame | WelcomeFrame | UnauthFrame | PingFrame | PolicyFrame | BlockedFrame;
 
 /** Frames the EXTENSION sends to the server. */
-export type ExtensionFrame = HelloFrame | ResultFrame | ErrorFrame | EventFrame | PongFrame;
+export type ExtensionFrame = HelloFrame | ResultFrame | ErrorFrame | EventFrame | PongFrame | SiteGrantFrame;
 
 export type Frame = ServerFrame | ExtensionFrame;
 

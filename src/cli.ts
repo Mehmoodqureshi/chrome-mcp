@@ -18,11 +18,12 @@ import { configureManager } from './executor/manager';
 import { createSelector } from './executor/select';
 import { BridgeServer } from './bridge/server';
 import { ensureDataDir, ensureWorkspace, handshakePath as handshakeFile, migrateLegacyLayout } from './bridge/datadir';
-import { setActiveWorkspace } from './bridge/workspace';
+import { peekActiveWorkspace, setActiveWorkspace } from './bridge/workspace';
 import { bundledPairingHeldByOther, removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { initTelemetry, stopTelemetry } from './telemetry';
+import { maybeHandOff } from './auto-update';
 import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -209,6 +210,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Before anything binds the port: if npm has a newer chrome-mcp, run that
+  // instead (stdio passes straight through), so no install stays on an old copy.
+  const handedOff = await maybeHandOff({
+    current: version(),
+    packageDir: join(__dirname, '..', '..'),
+    argv: process.argv.slice(2),
+    disabledByFlag: cfg.noAutoUpdate,
+    log: (m) => logErr(m),
+  });
+  if (handedOff !== null) process.exit(handedOff);
+
   // Before the bridge binds a port or writes a handshake: a typo'd `--tools`
   // name should fail as a plain startup error, not leave a half-started server.
   setToolAllowlist(cfg.tools);
@@ -221,7 +233,10 @@ async function main(): Promise<void> {
     token,
     serverVersion: version(),
     // Wire-serializable policy subset (no local uploadsDir) so the extension mirrors the gate.
+    // `allowDomains` is passed BY REFERENCE: sites allowed from the extension's
+    // Options are spliced into this same array, which the tool gate reads too.
     policy: { allowDomains, allowEval, allowDownloads, allowUploads, allowAllTabs, enableMutations },
+    siteGrants: !cfg.noSiteGrants,
     port: cfg.wsPort,
     dataDir,
     onLog: (m) => logErr(m),
@@ -279,7 +294,11 @@ async function main(): Promise<void> {
     version: version(),
     disabledByFlag: cfg.noTelemetry,
     log: (m) => logErr(m),
-    context: () => ({ role: bridge.role, browsers: bridge.connectedProfiles().length }),
+    context: () => ({
+      role: bridge.role,
+      browsers: bridge.connectedProfiles().length,
+      pair_state: bridge.pairState(peekActiveWorkspace()?.profile ?? cfg.profile),
+    }),
   });
   // Never includes the pairing token — only the resolved, non-secret config.
   logDebug(
@@ -364,6 +383,24 @@ async function main(): Promise<void> {
   // the next connection. This is what makes reconnects "just work".
   process.stdin.on('end', shutdown);
   process.stdin.on('close', shutdown);
+
+  // Some hosts, notably on Windows, kill the process that launched us without
+  // closing our stdin, so neither signal nor EOF ever arrives: the server lingers
+  // holding the port, and its usage is never reported. Notice instead when the
+  // parent is gone, or when writing to it fails.
+  const parentPid = process.ppid;
+  const watchdog = setInterval(() => {
+    if (process.ppid !== parentPid) return shutdown(); // reparented: the parent exited
+    try {
+      process.kill(parentPid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ESRCH') shutdown();
+    }
+  }, 5_000);
+  watchdog.unref();
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') shutdown();
+  });
 
   // The resolved policy shapes the advertised catalog: a capability that is off
   // means its tools are never described to the model.

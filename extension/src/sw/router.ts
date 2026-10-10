@@ -31,6 +31,15 @@ export interface RouterDeps {
   };
 }
 
+/** True for a page served by this extension (Options and the like). */
+function isOwnExtensionPage(url: string): boolean {
+  try {
+    return url.startsWith(chrome.runtime.getURL(''));
+  } catch {
+    return false;
+  }
+}
+
 /** Commands whose output is an image of the page: the border is taken off first. */
 const CAPTURES = new Set<string>(['screenshot', 'print_pdf']);
 
@@ -66,6 +75,12 @@ export class CommandRouter {
       const tab = await resolveTab(cmd);
       if (policy) {
         const url = isUrlGated(cmd.method) ? await urlForCommand(cmd, tab) : '';
+        // This extension's own pages are where a person allows sites. The agent
+        // must never read or drive them, whatever the allowlist says, or it
+        // could approve a site for itself.
+        if (url && isOwnExtensionPage(url)) {
+          throw new CmdError('POLICY_DENIED', "chrome-mcp never acts on the extension's own pages");
+        }
         const verdict = evaluatePolicy(url, cmd.method, policy);
         if (!verdict.ok) throw new CmdError('POLICY_DENIED', verdict.reason);
       }

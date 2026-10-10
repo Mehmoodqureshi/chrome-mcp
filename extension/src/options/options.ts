@@ -75,9 +75,118 @@ saveEl.addEventListener('click', async () => {
   statusEl.textContent = 'Status: … connecting';
 });
 
+// -- allowed sites ------------------------------------------------------------
+
+const blockedWrapEl = document.getElementById('blocked-wrap') as HTMLDivElement;
+const blockedEl = document.getElementById('blocked') as HTMLUListElement;
+const allowedEl = document.getElementById('allowed') as HTMLUListElement;
+const sitesNoteEl = document.getElementById('sites-note') as HTMLParagraphElement;
+const newSiteEl = document.getElementById('new-site') as HTMLInputElement;
+const addSiteEl = document.getElementById('add-site') as HTMLButtonElement;
+
+interface BlockedSite {
+  host: string;
+  method: string;
+  at: number;
+}
+
+/** Send an Allow / Remove to the server through the service worker. */
+async function grant(host: string, allow: boolean): Promise<void> {
+  const res = (await chrome.runtime.sendMessage({ type: 'site_grant', host, allow }).catch(() => null)) as
+    | { ok: boolean; error?: string }
+    | null;
+  sitesNoteEl.textContent = res?.ok
+    ? ''
+    : `Could not reach the chrome-mcp server${res?.error ? ` (${res.error})` : ''}. Is a Claude session running?`;
+}
+
+function button(label: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function siteRow(host: string, extra: Array<HTMLElement>): HTMLLIElement {
+  const li = document.createElement('li');
+  const name = document.createElement('span');
+  name.textContent = host;
+  li.append(name, ...extra);
+  return li;
+}
+
+function tag(text: string): HTMLSpanElement {
+  const t = document.createElement('span');
+  t.className = 'tag';
+  t.textContent = text;
+  return t;
+}
+
+async function renderSites(): Promise<void> {
+  const { allowedSites, grantedSites, blockedSites, connState } = await chrome.storage.local.get([
+    'allowedSites',
+    'grantedSites',
+    'blockedSites',
+    'connState',
+  ]);
+  const allowed = Array.isArray(allowedSites) ? (allowedSites as string[]) : [];
+  // null = a server too old to take grants from here.
+  const granted = Array.isArray(grantedSites) ? (grantedSites as string[]) : null;
+  const blocked = Array.isArray(blockedSites) ? (blockedSites as BlockedSite[]) : [];
+
+  blockedEl.replaceChildren(
+    ...blocked.map((b) =>
+      siteRow(b.host, [
+        tag(b.method ? `blocked ${b.method}` : 'blocked'),
+        button('Allow', () => void grant(b.host, true)),
+        button('Dismiss', () => void chrome.runtime.sendMessage({ type: 'dismiss_blocked', host: b.host })),
+      ]),
+    ),
+  );
+  blockedWrapEl.hidden = blocked.length === 0 || granted === null;
+
+  allowedEl.replaceChildren(
+    ...allowed.map((host) =>
+      host === '*'
+        ? siteRow('Every site', [tag('--unsafe-all-domains')])
+        : granted?.includes(host)
+          ? siteRow(host, [button('Remove', () => void grant(host, false))])
+          : siteRow(host, [tag('set by server flags')]),
+    ),
+  );
+  if (connState !== 'connected') {
+    sitesNoteEl.textContent = 'Connect to the chrome-mcp server to see and change the allowed sites.';
+  } else if (granted === null) {
+    sitesNoteEl.textContent =
+      'This chrome-mcp server does not take sites from here (it is older, or runs with --no-site-grants). Use --allow-domain instead.';
+  } else if (allowed.length === 0) {
+    sitesNoteEl.textContent = 'No sites are allowed yet.';
+  } else {
+    sitesNoteEl.textContent = '';
+  }
+  const canGrant = connState === 'connected' && granted !== null;
+  addSiteEl.disabled = !canGrant;
+  newSiteEl.disabled = !canGrant;
+}
+
+addSiteEl.addEventListener('click', () => {
+  const host = newSiteEl.value.trim();
+  if (!host) return;
+  newSiteEl.value = '';
+  void grant(host, true);
+});
+newSiteEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addSiteEl.click();
+});
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.connState) render(String(changes.connState.newValue));
   if (area === 'local' && changes.pairedProfile) renderPairedAs(changes.pairedProfile.newValue);
+  if (area === 'local' && (changes.allowedSites || changes.grantedSites || changes.blockedSites || changes.connState)) {
+    void renderSites();
+  }
 });
+
+void renderSites();
 
 void loadExisting();

@@ -13,8 +13,8 @@
  * Peers authenticate with the same token the extension uses — the handshake
  * file is 0600, so only the same OS user can read it — and speak a small
  * server-to-server protocol that the extension never sees:
- *   peer → hub:  peer_hello, relay (a wire command), peer_rename
- *   hub → peer:  peer_welcome, peer_state (paired browsers), relay_result
+ *   peer → hub:  peer_hello, relay (a wire command), peer_rename, peer_blocked
+ *   hub → peer:  peer_welcome, peer_state (paired browsers), relay_result, peer_grant
  */
 
 import { WebSocket } from 'ws';
@@ -49,7 +49,13 @@ export interface PeerRenameFrame {
   from: string;
   to: string;
 }
-export type PeerToHubFrame = PeerHelloFrame | RelayFrame | PeerRenameFrame;
+/** A peer's own gate refused a site: the hub tells the browsers, so the person can allow it. */
+export interface PeerBlockedFrame {
+  type: 'peer_blocked';
+  host: string;
+  method: string;
+}
+export type PeerToHubFrame = PeerHelloFrame | RelayFrame | PeerRenameFrame | PeerBlockedFrame;
 
 export interface PeerWelcomeFrame {
   type: 'peer_welcome';
@@ -68,7 +74,13 @@ export interface RelayResultFrame {
   code?: string;
   message?: string;
 }
-export type HubToPeerFrame = PeerWelcomeFrame | PeerStateFrame | RelayResultFrame;
+/** A site was allowed or removed from a browser's Options: peers update their own gate. */
+export interface PeerGrantFrame {
+  type: 'peer_grant';
+  host: string;
+  allow: boolean;
+}
+export type HubToPeerFrame = PeerWelcomeFrame | PeerStateFrame | RelayResultFrame | PeerGrantFrame;
 
 /** Encode a hub-side failure so the peer can rethrow it with its code intact. */
 export function relayError(id: string, err: unknown): RelayResultFrame {
@@ -102,6 +114,7 @@ export class HubLink {
     private readonly ws: WebSocket,
     readonly hubPid: number,
     private readonly onClose: () => void,
+    private readonly onGrant?: (host: string, allow: boolean) => void,
   ) {
     ws.on('message', (raw) => this.handleMessage(raw.toString()));
     ws.on('close', () => this.handleClose());
@@ -113,7 +126,13 @@ export class HubLink {
    * chrome-mcp hub in time: a wrong token, an older server that doesn't speak
    * the peer protocol (it ignores the frame and times us out), or no listener.
    */
-  static join(host: string, port: number, token: string, onClose: () => void): Promise<HubLink | null> {
+  static join(
+    host: string,
+    port: number,
+    token: string,
+    onClose: () => void,
+    onGrant?: (host: string, allow: boolean) => void,
+  ): Promise<HubLink | null> {
     return new Promise((resolve) => {
       let settled = false;
       const ws = new WebSocket(`ws://${host}:${port}`);
@@ -141,7 +160,7 @@ export class HubLink {
           return done(null);
         }
         if (frame.type !== 'peer_welcome') return done(null); // 'unauthorized' or anything else
-        done(new HubLink(ws, typeof frame.hubPid === 'number' ? frame.hubPid : 0, onClose));
+        done(new HubLink(ws, typeof frame.hubPid === 'number' ? frame.hubPid : 0, onClose, onGrant));
       };
       ws.on('message', onFirst);
       ws.once('open', () => {
@@ -164,6 +183,17 @@ export class HubLink {
 
   rename(from: string, to: string): Promise<unknown> {
     return this.request({ type: 'peer_rename', id: '', from, to }, JOIN_TIMEOUT_MS * 2);
+  }
+
+  /** Tell the hub our gate refused `host`, so it can offer the person an Allow. */
+  blocked(host: string, method: string): void {
+    if (!this.isOpen()) return;
+    const frame: PeerBlockedFrame = { type: 'peer_blocked', host, method };
+    try {
+      this.ws.send(JSON.stringify(frame));
+    } catch {
+      /* hub going away */
+    }
   }
 
   close(): void {
@@ -200,6 +230,10 @@ export class HubLink {
     }
     if (frame.type === 'peer_state') {
       this.profiles = Array.isArray(frame.profiles) ? frame.profiles : [];
+      return;
+    }
+    if (frame.type === 'peer_grant') {
+      if (typeof frame.host === 'string') this.onGrant?.(frame.host, frame.allow === true);
       return;
     }
     if (frame.type !== 'relay_result') return;

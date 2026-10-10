@@ -23,7 +23,7 @@ import { evaluatePolicy } from '../../../shared/policy';
 import { runFillFields } from '../../../shared/fill-form';
 import { sanitizeDownloadName } from '../../../shared/download';
 import { collectSnapshot } from '../../../shared/snapshot';
-import { pageOp, type PageOpArgs } from '../../../shared/page-fns';
+import { pageOp, READ_WAIT_MS, type PageOpArgs } from '../../../shared/page-fns';
 import { OBSERVER_GLOBAL, readObservers } from '../../../shared/observers';
 import {
   DEFAULT_JPEG_QUALITY,
@@ -346,6 +346,15 @@ const ACTION_WAIT_MS = 5_000;
 /** Wait-and-act in ONE injection: `pageOp` polls for the selector itself when
  *  `timeoutMs` is set, then runs the op the moment the element appears. */
 const withWait = (a: PageOpArgs): PageOpArgs => ({ ...a, timeoutMs: ACTION_WAIT_MS, interval: 120 });
+
+/** The SELECTOR_NOT_FOUND for a page op that missed, naming any look-alike
+ *  elements the page offered so the caller's next try is not a blind guess. */
+function notFound(sel: string | undefined, out?: Record<string, unknown>): CmdError {
+  const raw = out?.suggestions;
+  const similar = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  const hint = similar.length > 0 ? `. Similar elements on the page: ${similar.join(', ')}` : '. Call snapshot to see what is on the page';
+  return new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}${hint}`);
+}
 
 /** Poll the page for a selector (used where the follow-up is not a page op,
  *  e.g. a CDP DOM.setFileInputFiles). Runs INSIDE the page: one executeScript
@@ -808,8 +817,12 @@ export class ChromeExecutor {
       case 'get_text': {
         const id = await targetTab(cmd);
         const frameIds = await this.frames(cmd, id);
-        const out = await execOp(id, { op: 'text', selector: selectorOf(cmd) ?? null }, frameIds);
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selectorOf(cmd)}`);
+        const out = await execOp(
+          id,
+          { op: 'text', selector: selectorOf(cmd) ?? null, timeoutMs: READ_WAIT_MS, interval: 120 },
+          frameIds,
+        );
+        if (!out.found) throw notFound(selectorOf(cmd), out);
         return { text: String(out.text ?? ''), frameId: out.frameId };
       }
       case 'get_html': {
@@ -817,10 +830,16 @@ export class ChromeExecutor {
         const frameIds = await this.frames(cmd, id);
         const out = await execOp(
           id,
-          { op: 'html', selector: selectorOf(cmd) ?? null, outer: cmd.params.outer === true },
+          {
+            op: 'html',
+            selector: selectorOf(cmd) ?? null,
+            outer: cmd.params.outer === true,
+            timeoutMs: READ_WAIT_MS,
+            interval: 120,
+          },
           frameIds,
         );
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${selectorOf(cmd)}`);
+        if (!out.found) throw notFound(selectorOf(cmd), out);
         return { html: String(out.html ?? ''), frameId: out.frameId };
       }
 
@@ -855,7 +874,7 @@ export class ChromeExecutor {
         const frameIds = await this.frames(cmd, id);
         const values = Array.isArray(cmd.params.values) ? cmd.params.values.map(String) : [];
         const out = await execOp(id, withWait({ op: 'select', selector: sel, values }), frameIds);
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!out.found) throw notFound(sel, out);
         if (out.matched !== true) throw new CmdError('SELECTOR_NOT_FOUND', `no <select> option matched for ${sel}`);
         return { ok: true, frameId: out.frameId };
       }
@@ -902,7 +921,7 @@ export class ChromeExecutor {
           if (verdict === 'ok') return { ok: true };
         }
         const out = await execOp(id, withWait({ op: 'click', selector: sel }), frameIds);
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!out.found) throw notFound(sel, out);
         return { ok: true, frameId: out.frameId, ...(cmd.params.trusted === true ? { trusted: false } : {}) };
       }
       case 'type': {
@@ -919,7 +938,7 @@ export class ChromeExecutor {
           return { ok: true };
         }
         const out = await execOp(id, withWait({ op: 'type', selector: sel, text, clear }), frameIds);
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!out.found) throw notFound(sel, out);
         return { ok: true, frameId: out.frameId };
       }
       case 'fill_form': {
@@ -956,7 +975,7 @@ export class ChromeExecutor {
               ),
               await this.frames(cmd, id),
             );
-            if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${op.selector}`);
+            if (!out.found) throw notFound(op.selector, out);
           },
           toError: (err) => ({
             code: err instanceof CmdError ? err.code : 'CDP_ERROR',
@@ -984,7 +1003,7 @@ export class ChromeExecutor {
         const sel = requireSelector(cmd);
         const frameIds = await this.frames(cmd, id);
         const out = await execOp(id, withWait({ op: 'hover', selector: sel }), frameIds);
-        if (!out.found) throw new CmdError('SELECTOR_NOT_FOUND', `no element for selector: ${sel}`);
+        if (!out.found) throw notFound(sel, out);
         return { ok: true, frameId: out.frameId };
       }
       case 'scroll': {
@@ -1016,6 +1035,10 @@ export class ChromeExecutor {
         const selector = selectorOf(cmd);
         const enc = encodingOf(cmd);
         const frameIds = await this.frames(cmd, id);
+        // An element shot right after a click races the render just like a read.
+        if (selector && !(await waitForSelector(id, selector, frameIds, READ_WAIT_MS))) {
+          throw notFound(selector, await execOp(id, { op: 'waitSelector', selector, timeoutMs: 0 }, frameIds));
+        }
         try {
           return await screenshotViaDebugger(id, fullPage, enc, selector, frameIds);
         } catch (err) {

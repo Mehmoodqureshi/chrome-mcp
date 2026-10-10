@@ -26,6 +26,10 @@ export interface WsClientDeps {
   onPolicy: (policy: WirePolicy) => void;
   /** Receives the profile name the server paired this browser as. */
   onProfile?: (profile: string) => void;
+  /** Receives the sites allowed at runtime from Options (null: the server can't take grants). */
+  onGranted?: (granted: string[] | null) => void;
+  /** The server refused a call because `host` is not on the allowlist. */
+  onBlocked?: (host: string, method: string) => void;
   log: (message: string) => void;
 }
 
@@ -85,6 +89,7 @@ export class WsClient {
         case 'welcome':
           this.deps.onPolicy(frame.policy);
           if (typeof frame.profile === 'string') this.deps.onProfile?.(frame.profile);
+          this.deps.onGranted?.(Array.isArray(frame.granted) ? frame.granted : null);
           this.setState('connected');
           this.deps.log('paired with server');
           break;
@@ -97,6 +102,14 @@ export class WsClient {
           break;
         case 'command':
           this.deps.onCommand(frame);
+          break;
+        case 'policy':
+          // A site was allowed or removed (from this browser's Options or another's).
+          this.deps.onPolicy(frame.policy);
+          this.deps.onGranted?.(Array.isArray(frame.granted) ? frame.granted : []);
+          break;
+        case 'blocked':
+          if (typeof frame.host === 'string') this.deps.onBlocked?.(frame.host, String(frame.method ?? ''));
           break;
       }
     };

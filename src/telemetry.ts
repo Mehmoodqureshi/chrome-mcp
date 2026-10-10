@@ -3,7 +3,8 @@
  *
  * What it sends, to PostHog: a random per-install id, the chrome-mcp version,
  * OS, CPU architecture and Node major version, whether this session owns the
- * port or shares it, how many browsers are paired, and per-tool call and error
+ * port or shares it, how many browsers are paired (and, when none, which of a
+ * few fixed reasons applies), and per-tool call and error
  * COUNTS. Never URLs, domains, tool arguments, page content, profile names,
  * tokens, file paths, or anything typed. Events are marked personless and ask
  * PostHog not to geolocate them.
@@ -26,6 +27,14 @@ export const POSTHOG_HOST = 'https://us.i.posthog.com';
 
 /** How often the aggregated counts are sent while a session runs. */
 const FLUSH_INTERVAL_MS = 10 * 60_000;
+/**
+ * The first summary goes out this long after the first call, not at the first
+ * 10-minute tick: hosts that kill the server without a clean shutdown (common
+ * on Windows) otherwise lose every short session's counts.
+ */
+const FIRST_FLUSH_MS = 60_000;
+/** When to report whether a browser paired: long enough for one to dial in. */
+const PAIR_CHECK_MS = 60_000;
 /** A send never holds up the process longer than this. */
 const SEND_TIMEOUT_MS = 3_000;
 const STATE_FILE = 'telemetry.json';
@@ -53,8 +62,10 @@ export interface TelemetryOptions {
   log?: (message: string) => void;
   /** Test seam: replaces the HTTP POST. */
   send?: (events: Event[]) => Promise<void>;
-  /** Live context added to each summary (role, paired browsers). */
+  /** Live context added to each summary (role, paired browsers, pair state). */
   context?: () => Record<string, unknown>;
+  /** Test seam: shortens the first-flush and pair-check delays. */
+  delaysMs?: { firstFlush?: number; pairCheck?: number };
 }
 
 /** Whether the user has turned telemetry off, by env or flag. */
@@ -77,6 +88,9 @@ class Telemetry {
   private calls = new Map<string, { calls: number; errors: number }>();
   private errorCodes = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
+  /** One-off timers: the early first summary and the pair check. */
+  private readonly once = new Set<NodeJS.Timeout>();
+  private firstFlushArmed = false;
   private readonly base: Record<string, unknown>;
   /** Sends still on the wire, so a quick exit doesn't cut session_started off. */
   private readonly inflight = new Set<Promise<void>>();
@@ -98,9 +112,25 @@ class Telemetry {
     void this.capture('session_started', this.opts.context?.() ?? {});
     this.timer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
     this.timer.unref();
+    // One event per session saying whether a browser ever paired and, if not,
+    // why: no extension, a stale token, a version skew, or a profile mismatch.
+    this.later(this.opts.delaysMs?.pairCheck ?? PAIR_CHECK_MS, () => void this.capture('pair_check', this.opts.context?.() ?? {}));
+  }
+
+  private later(ms: number, fn: () => void): void {
+    const t = setTimeout(() => {
+      this.once.delete(t);
+      fn();
+    }, ms);
+    t.unref();
+    this.once.add(t);
   }
 
   noteCall(tool: string, ok: boolean, error?: string): void {
+    if (!this.firstFlushArmed) {
+      this.firstFlushArmed = true;
+      this.later(this.opts.delaysMs?.firstFlush ?? FIRST_FLUSH_MS, () => void this.flush());
+    }
     const c = this.calls.get(tool) ?? { calls: 0, errors: 0 };
     c.calls++;
     if (!ok) {
@@ -137,6 +167,8 @@ class Telemetry {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const t of this.once) clearTimeout(t);
+    this.once.clear();
     const summary = this.takeSummary();
     const final = this.send([...(summary ? [summary] : []), this.event('session_ended', {})]);
     // Also wait for anything already sent (session_started on a short session).

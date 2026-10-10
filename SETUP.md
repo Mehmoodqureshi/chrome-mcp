@@ -40,7 +40,7 @@ extension to a plain folder directly under the home directory, and prints its
 path:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp --extension-path
+npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path
 ```
 
 It prints `~/chrome-mcp-extension` (on Windows `%USERPROFILE%\chrome-mcp-extension`).
@@ -63,7 +63,7 @@ unless they ask.
 
 ```
 claude mcp add chrome-mcp -s user -- \
-  npx -y @mehmoodqureshi/chrome-mcp \
+  npx -y @mehmoodqureshi/chrome-mcp@latest \
   --allow-domain example.com --enable-mutations --persist-token
 ```
 
@@ -82,7 +82,7 @@ Code uses a top-level `servers` key instead of `mcpServers`).
   "mcpServers": {
     "chrome-mcp": {
       "command": "npx",
-      "args": ["-y", "@mehmoodqureshi/chrome-mcp",
+      "args": ["-y", "@mehmoodqureshi/chrome-mcp@latest",
                "--allow-domain", "example.com",
                "--enable-mutations",
                "--persist-token"]
@@ -92,8 +92,8 @@ Code uses a top-level `servers` key instead of `mcpServers`).
 ```
 
 **Windows:** the command must be `cmd` with args `["/c", "npx", "-y",
-"@mehmoodqureshi/chrome-mcp", ...]`, or for Claude Code:
-`claude mcp add chrome-mcp -s user -- cmd /c npx -y @mehmoodqureshi/chrome-mcp --allow-domain example.com --enable-mutations --persist-token`.
+"@mehmoodqureshi/chrome-mcp@latest", ...]`, or for Claude Code:
+`claude mcp add chrome-mcp -s user -- cmd /c npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain example.com --enable-mutations --persist-token`.
 
 Tell the human to restart the client (or run `/mcp` in Claude Code) so the
 server loads. The first boot writes `~/.chrome-mcp/handshake.json` (mode 0600)
@@ -129,13 +129,13 @@ sure a server has booted at least once since step 2, in either of these ways:
 - start one yourself in pairing mode and leave it running in the background:
 
   ```
-  npx -y @mehmoodqureshi/chrome-mcp --print-pairing --persist-token
+  npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing --persist-token
   ```
 
 Verify the file exists (do not print it):
 
 ```
-ls "$(npx -y @mehmoodqureshi/chrome-mcp --extension-path)/pairing.json"
+ls "$(npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path)/pairing.json"
 ```
 
 Then tell the human where to look. The status badge is on the extension's

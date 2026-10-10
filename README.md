@@ -98,7 +98,7 @@ is the exact file the agent follows. The manual steps are below.
 
 ```bash
 claude mcp add chrome-mcp -s user -- \
-  npx -y @mehmoodqureshi/chrome-mcp \
+  npx -y @mehmoodqureshi/chrome-mcp@latest \
   --allow-domain example.com --enable-mutations --persist-token
 ```
 
@@ -123,7 +123,7 @@ with `/mcp` inside a session — no restart needed.
   "mcpServers": {
     "chrome-mcp": {
       "command": "npx",
-      "args": ["-y", "@mehmoodqureshi/chrome-mcp",
+      "args": ["-y", "@mehmoodqureshi/chrome-mcp@latest",
                "--allow-domain", "example.com", "--enable-mutations",
                "--persist-token"]
     }
@@ -177,7 +177,7 @@ Claude Code), the folder is already there. To create it without a client, or
 to print the exact path:
 
 ```bash
-npx -y @mehmoodqureshi/chrome-mcp --extension-path
+npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path
 ```
 
 Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
@@ -209,7 +209,7 @@ stays in the toolbar. Hover it for the status in words.
 | red exclamation mark | token rejected; the server rotated it, re-pairs by itself in a moment |
 
 Manual fallback (a copied folder, a read-only home): run
-`npx -y @mehmoodqureshi/chrome-mcp --print-pairing`, open the extension's
+`npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing`, open the extension's
 **Options** page, and paste the `port` + `token` from
 `~/.chrome-mcp/handshake.json`. Values saved there take precedence over the
 bundled file.
@@ -268,7 +268,7 @@ start. Wrap it in `cmd /c`:
   "mcpServers": {
     "chrome-mcp": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@mehmoodqureshi/chrome-mcp",
+      "args": ["/c", "npx", "-y", "@mehmoodqureshi/chrome-mcp@latest",
                "--allow-domain", "example.com", "--enable-mutations",
                "--persist-token"]
     }
@@ -276,7 +276,7 @@ start. Wrap it in `cmd /c`:
 }
 ```
 
-Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp --allow-domain example.com`
+Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain example.com`
 
 Everything else is the same — load `%USERPROFILE%\chrome-mcp-extension` and pair
 as above.
@@ -426,7 +426,7 @@ snapshot  { "failOnAuthWall": true }
 For a harness, set it once instead of per call:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp --allow-domain app.example.com --enable-mutations --fail-on-auth-wall
+npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain app.example.com --enable-mutations --fail-on-auth-wall
 ```
 
 With the flag on, every step that can move the tab (`navigate`, `click`, `type`,
@@ -466,7 +466,7 @@ tools are 28 KB of JSON Schema, about 7.1k tokens, on each one.
 Most runs need a handful of them. `--tools` advertises only those:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp \
+npx -y @mehmoodqureshi/chrome-mcp@latest \
   --allow-domain app.example.com --enable-mutations \
   --tools tabs_list,tab_new,navigate,snapshot,click,type,get_text
 ```
@@ -548,6 +548,17 @@ chrome-mcp --enable-observers              # console/network/dialog capture (pat
 chrome-mcp --redact                        # scrub secret-shaped strings out of page reads
 ```
 
+**Allowing a site without a restart.** When a call is refused because its site
+is not allowed, the extension's toolbar icon shows a `?`. Click it: the Options
+page lists the blocked site with an **Allow** button, and has a box to allow any
+other. An allowed site applies at once to every session sharing that Chrome, and
+is saved to `~/.chrome-mcp/allowed-sites.json` so it survives restarts. Sites
+allowed there can be removed there; sites from `--allow-domain` stay until the
+flags change. The catch-all `*` can only come from `--unsafe-all-domains`. The
+agent cannot approve a site itself: chrome-mcp never reads or drives the
+extension's own pages. Run with `--no-site-grants` to keep the allowlist exactly
+what the flags say.
+
 **What comes back is gated too.** The allowlist decides which pages may be read;
 it says nothing about what is on them. A logged-in page routinely renders a
 session token into a script tag or an API key onto a settings screen.
@@ -576,6 +587,18 @@ group/other-accessible. Windows has no such bits — `chmod` there only toggles 
 read-only attribute — so the check is skipped and the token's confidentiality
 rests on the per-user ACL of `%USERPROFILE%\.chrome-mcp`.
 
+## Updates
+
+You don't have to do anything to stay current. The setup snippets above use
+`@latest`, and on top of that an installed copy (npx or a global install) checks
+npm when it starts: if a newer chrome-mcp is published, it starts that version in
+its place, with the same arguments, so an MCP config written months ago still
+runs the newest release. The check gives up after 1.5 s when you are offline,
+and a copy run from a git checkout never updates itself. The new server also
+refreshes the unpacked extension in `~/chrome-mcp-extension`, which reloads
+itself; the Chrome Web Store copy updates through Chrome as usual. Turn it off
+with `--no-auto-update` or `CHROME_MCP_AUTO_UPDATE=0`.
+
 ## Telemetry
 
 The chrome-mcp **server** sends anonymous usage statistics to PostHog, so the
@@ -585,7 +608,11 @@ in use, and which tools fail most. A notice is printed the first time it runs.
 What is sent: a random install id (kept in `~/.chrome-mcp/telemetry.json`), the
 chrome-mcp version, OS, CPU architecture and Node major version, whether the
 session owns the bridge port or shares it, how many browsers are paired, and
-per-tool call and error **counts** with error codes — batched every 10 minutes.
+per-tool call and error **counts** with error codes. The first batch goes out a
+minute after the first tool call, then every 10 minutes. One `pair_check` event
+a minute after startup says whether a browser paired and, if not, which of a few
+fixed reasons applies (`no_extension`, `token_mismatch`, `version_mismatch`,
+`profile_mismatch`), so setup problems can be fixed where they happen.
 
 What is never sent: URLs, domains, tool arguments, page content, screenshots,
 cookies, profile names, tokens, file paths, or anything you type. Events are
@@ -637,7 +664,7 @@ mirror the server refreshes from `extension-dist/` on every boot (loading
 `extension-dist/` directly also works). It pairs itself from the `pairing.json`
 the server writes into that folder; the **Options** page paste of `port` +
 `token` from `~/.chrome-mcp/handshake.json` (run
-`npx -y @mehmoodqureshi/chrome-mcp --print-pairing` to get the path) is only
+`npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing` to get the path) is only
 the fallback.
 
 > **Reads/interaction use `chrome.scripting`/`chrome.tabs`** — no "is being

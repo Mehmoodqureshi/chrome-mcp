@@ -22,7 +22,7 @@ import type { WireMethod } from '../../shared/protocol';
 import type { DialogPolicy, Executor, FrameOpts, TabInfo, Target, WaitUntil } from '../executor/types';
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
-import { assertUrlAllowed, isUrlGated, type Policy } from '../security/policy';
+import { assertUrlAllowed, hostOf, isDomainAllowed, isUrlGated, type Policy } from '../security/policy';
 import { evaluatePolicy, isMutatingMethod } from '../../shared/policy';
 import { errorResult, imageResult, jsonResult, textResult } from './envelopes';
 import {
@@ -555,6 +555,11 @@ async function gate(ctx: ToolCtx, method: WireMethod, opts: { url?: string; tabI
     assertUrlAllowed(url, method, ctx.policy);
   } catch (err) {
     noteGate(url, false);
+    // Refused for its site (not for a switched-off capability): let the paired
+    // browser offer the person a one-click Allow on its Options page.
+    if (isUrlGated(method) && hostOf(url) && !isDomainAllowed(url, ctx.policy)) {
+      profileBridge?.noteBlocked(hostOf(url), method);
+    }
     throw err;
   }
   noteGate(url, true);
@@ -1199,16 +1204,26 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   chrome_status: async (_a, ctx) => {
     const profiles = profileBridge ? { profiles: profileBridge.pairedProfiles() } : {};
     const capabilities = capabilityStatus(ctx.policy);
+    // Why nothing is paired, and the steps to fix it, so the agent can relay them
+    // on the FIRST call instead of after a run of NO_BACKEND failures.
+    const active = peekActiveWorkspace()?.profile ?? 'default';
+    const steps = profileBridge?.pairingSteps(active) ?? [];
+    const pairing = profileBridge
+      ? { pairState: profileBridge.pairState(active), ...(steps.length > 0 ? { setup: steps } : {}) }
+      : {};
+    const sites = profileBridge ? { sitesAllowedFromOptions: profileBridge.grantedSites() } : {};
     try {
       const ex = await getManager().ensureReady();
-      return jsonResult({ ...ex.status(), ...profiles, ...capabilities });
+      return jsonResult({ ...ex.status(), ...profiles, ...pairing, ...sites, ...capabilities });
     } catch (err) {
       return jsonResult({
         ready: false,
         backend: null,
         detail: errMessage(err),
-        activeProfile: peekActiveWorkspace()?.profile ?? 'default',
+        activeProfile: active,
         ...profiles,
+        ...pairing,
+        ...sites,
         ...capabilities,
       });
     }

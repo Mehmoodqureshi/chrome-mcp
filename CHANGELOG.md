@@ -1,3 +1,46 @@
+## 0.9.16 - 2026-10-10
+
+Fixes for the problems new installs hit most, from the usage data: Chrome never
+pairing (the top error, 13 installs), sites blocked with no way to allow them
+short of a restart (7 installs), reads failing right after a click, and most
+sessions running weeks-old versions. The extension moves to 0.9.16.
+
+- feat: **pairing help that names what went wrong.** `chrome_status` now reports
+  a `pairState` (`ok`, `no_extension`, `token_mismatch`, `version_mismatch`,
+  `profile_mismatch`) and, when nothing is paired, a `setup` list with the exact
+  steps for that case: the Web Store link, the port, where the token is, or
+  which `profile_use` to call. Every NO_BACKEND error carries the same steps,
+  and the server's MCP instructions tell the agent to relay them instead of
+  retrying. A rejected token is remembered, so a stale token is no longer
+  reported as "no browser".
+- feat: **allow a site from the extension, no restart.** A refused site shows a
+  `?` on the toolbar icon; the Options page (the icon now opens it) lists it with
+  an Allow button and takes any other site too. The hub widens the live policy,
+  saves it to `allowed-sites.json`, and pushes it to every paired browser and
+  peer session. The agent cannot approve a site for itself: the extension
+  refuses every command aimed at its own pages. `--no-site-grants` turns this
+  off. The POLICY_DENIED message now points to the Allow button.
+- feat: **reads wait for their element.** `get_text`, `get_html` and
+  `screenshot` with a selector wait up to 1.5 s for it to render (click and type
+  already waited 5 s), which covers the click-then-read race behind most
+  SELECTOR_NOT_FOUND errors. When an element is still missing, the error now
+  lists similar selectors that are on the page.
+- feat: **every install stays on the latest release.** npx reuses the copy it
+  cached first, so most sessions ran versions weeks old. An installed copy now
+  checks npm at startup (1.5 s timeout) and, when a newer release exists, hands
+  off to `npx -y @mehmoodqureshi/chrome-mcp@<latest>` with the same arguments
+  and stdio passed straight through. A git checkout, offline start or failed
+  spawn runs the current copy; `--no-auto-update` or `CHROME_MCP_AUTO_UPDATE=0`
+  turns it off. Setup snippets in the README, SETUP and the extension's Options
+  page now say `@latest` too.
+- fix: **sessions killed without a clean exit now shut down.** Some Windows hosts
+  kill the launcher without closing stdin, leaving the server holding the port.
+  It now notices when its parent process is gone or stdout breaks.
+- telemetry: the first usage summary is sent a minute after the first call
+  instead of at the first 10-minute tick, so short sessions are counted, and a
+  `pair_check` event a minute after startup records the pair state above. No new
+  personal data: still counts and fixed codes only.
+
 ## 0.9.15 - 2026-10-09
 
 The extension asks for one permission fewer. No behaviour changes. The

@@ -54,6 +54,11 @@ export interface PageOpArgs {
   interval?: number;
 }
 
+/** How long a selector-scoped read (get_text, get_html, screenshot) waits for
+ *  its element. Short on purpose: it covers the click-then-read race without
+ *  making a genuinely wrong selector slow to report. Longer waits: wait_for. */
+export const READ_WAIT_MS = 1_500;
+
 /**
  * Runs IN THE PAGE (or in one frame of it). Returns a plain JSON-able object;
  * `found: false` means the selector matched nothing, which the caller renders as
@@ -119,6 +124,45 @@ export function pageOp(a: PageOpArgs): unknown {
   };
 
   const sel = typeof a.selector === 'string' && a.selector.length > 0 ? a.selector : null;
+
+  /**
+   * Selectors for elements that look like what a missed selector was after, so
+   * a SELECTOR_NOT_FOUND tells the caller what IS there instead of leaving it to
+   * guess again. Matches the id, class and attribute-value words in the selector
+   * against ids, classes, names, test ids and aria-labels on the page.
+   */
+  const suggest = (missed: string): string[] => {
+    const words = Array.from(
+      new Set((missed.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []).filter((w) => !/^(div|span|button|input|nth-child|not|has|first|last|type|data|aria)$/.test(w))),
+    );
+    if (words.length === 0) return [];
+    const esc = (v: string): string => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v.replace(/[^a-zA-Z0-9_-]/g, '\\$&'));
+    const out: string[] = [];
+    const add = (s: string): void => {
+      if (s !== missed && !out.includes(s)) out.push(s);
+    };
+    let nodes: Element[] = [];
+    try {
+      nodes = Array.from(document.querySelectorAll('[id],[class],[name],[data-testid],[aria-label]')).slice(0, 5_000);
+    } catch {
+      return [];
+    }
+    for (const node of nodes) {
+      if (out.length >= 5) break;
+      const hit = (v: string | null): boolean => !!v && words.some((w) => v.toLowerCase().includes(w));
+      if (hit(node.id)) add(`#${esc(node.id)}`);
+      else if (hit(node.getAttribute('data-testid'))) add(`[data-testid="${node.getAttribute('data-testid')}"]`);
+      else if (hit(node.getAttribute('name'))) add(`${node.tagName.toLowerCase()}[name="${node.getAttribute('name')}"]`);
+      else if (hit(node.getAttribute('aria-label'))) add(`${node.tagName.toLowerCase()}[aria-label="${node.getAttribute('aria-label')}"]`);
+      else {
+        const cls = Array.from(node.classList).find((c) => hit(c));
+        if (cls) add(`${node.tagName.toLowerCase()}.${esc(cls)}`);
+      }
+    }
+    return out;
+  };
+  /** A miss, with suggestions attached when there was a selector to miss. */
+  const miss = (): unknown => (sel ? { found: false, suggestions: suggest(sel) } : { found: false });
 
   /** Set a value the way React/Vue see it (they patch the instance setter). */
   const setValue = (node: HTMLInputElement | HTMLTextAreaElement, next: string): void => {
@@ -341,7 +385,7 @@ export function pageOp(a: PageOpArgs): unknown {
         return new Promise<unknown>((resolve) => {
           const tick = (): void => {
             if (sel && deepQuery(sel)) return resolve({ found: true });
-            if (Date.now() > deadline) return resolve({ found: false });
+            if (Date.now() > deadline) return resolve(miss());
             setTimeout(tick, every);
           };
           tick();
@@ -381,7 +425,14 @@ export function pageOp(a: PageOpArgs): unknown {
   // is set: a not-yet-rendered button costs a few in-page ticks, not a second
   // executeScript round-trip (the old waitSelector-then-act pair).
   const waits =
-    a.op === 'click' || a.op === 'type' || a.op === 'focus' || a.op === 'point' || a.op === 'hover' || a.op === 'select';
+    a.op === 'click' ||
+    a.op === 'type' ||
+    a.op === 'focus' ||
+    a.op === 'point' ||
+    a.op === 'hover' ||
+    a.op === 'select' ||
+    a.op === 'text' ||
+    a.op === 'html';
   if (waits && sel && !el && a.timeoutMs && a.timeoutMs > 0) {
     const deadline = Date.now() + a.timeoutMs;
     const every = a.interval ?? 120;
@@ -389,11 +440,13 @@ export function pageOp(a: PageOpArgs): unknown {
       const tick = (): void => {
         const hit = deepQuery(sel) as HTMLElement | null;
         if (hit) return resolve(perform(hit));
-        if (Date.now() > deadline) return resolve({ found: false });
+        if (Date.now() > deadline) return resolve(miss());
         setTimeout(tick, every);
       };
       setTimeout(tick, every);
     });
   }
-  return perform(el);
+  const result = perform(el) as { found?: unknown } | Promise<unknown>;
+  if (sel && !el && result && !(result instanceof Promise) && result.found === false) return miss();
+  return result;
 }

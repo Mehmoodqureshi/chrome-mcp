@@ -44,6 +44,11 @@ export interface CliConfig {
   persistToken: boolean;
   /** `--no-telemetry`: send no anonymous usage statistics (see src/telemetry.ts). */
   noTelemetry: boolean;
+  /** `--no-site-grants`: the allowlist is exactly what the flags say; the
+   *  extension's Options page cannot add sites at runtime. */
+  noSiteGrants: boolean;
+  /** `--no-auto-update`: run this copy even when npm has a newer chrome-mcp. */
+  noAutoUpdate: boolean;
   /**
    * `--tools`: advertise only these tools. `undefined` = the whole catalog.
    * Names are validated against the catalog by `setToolAllowlist` at startup —
@@ -121,6 +126,8 @@ export function parseArgs(argv: string[]): CliConfig {
   let printPairing = false;
   let persistToken = false;
   let noTelemetry = false;
+  let noSiteGrants = false;
+  let noAutoUpdate = false;
   let showHelp = false;
   let showVersion = false;
   let showExtensionPath = false;
@@ -226,6 +233,12 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--no-telemetry':
         noTelemetry = true;
         break;
+      case '--no-site-grants':
+        noSiteGrants = true;
+        break;
+      case '--no-auto-update':
+        noAutoUpdate = true;
+        break;
       case '--tools':
         toolsFlagSeen = true;
         for (const name of splitList(requireValue(argv[++i], '--tools'))) tools.add(name);
@@ -287,6 +300,8 @@ export function parseArgs(argv: string[]): CliConfig {
     printPairing,
     persistToken,
     noTelemetry,
+    noSiteGrants,
+    noAutoUpdate,
     showHelp,
     showVersion,
     showExtensionPath,
@@ -364,6 +379,10 @@ Connection:
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.
+  --no-auto-update       Run this copy even when a newer chrome-mcp is published.
+                         By default an installed copy (npx or global) checks npm at
+                         startup and hands off to the latest release, so you never
+                         run a stale version. Same as CHROME_MCP_AUTO_UPDATE=0.
   --no-telemetry         Send no anonymous usage statistics. Same as
                          CHROME_MCP_TELEMETRY=0 or DO_NOT_TRACK=1. Only counts are
                          ever sent (version, OS, tool calls, error codes) — never
@@ -381,7 +400,11 @@ Backend:
 
 Security (default: deny-all safe mode):
   --policy <file>        Load a JSON policy file
-  --allow-domain <glob>  Add a domain to the allowlist (repeatable)
+  --allow-domain <glob>  Add a domain to the allowlist (repeatable). Sites can also
+                         be allowed live from the extension's Options page (saved
+                         to <data-dir>/allowed-sites.json; no restart needed)
+  --no-site-grants       Ignore sites allowed from the extension's Options page; the
+                         allowlist is exactly what these flags and --policy say
   --unsafe-all-domains   Allow every domain (loud footgun)
   --enable-mutations     Enable click/type/navigate/… (off by default)
   --unsafe-enable-eval   Enable the eval primitive (off by default)

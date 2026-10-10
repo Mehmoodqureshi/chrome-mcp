@@ -21,6 +21,19 @@ export { getLogLevel, logDebug, logErr, setLogLevel } from './log';
 const SERVER_NAME = 'chrome-mcp';
 const SERVER_VERSION = '0.1.0';
 
+/**
+ * Sent to the host once, at initialize. It covers the two walls new users hit
+ * before anything works: no paired browser, and a site not on the allowlist.
+ * Both need the PERSON to act, so the agent's job is to relay the fix rather
+ * than retry.
+ */
+export const SERVER_INSTRUCTIONS =
+  "chrome-mcp drives the user's real, signed-in Chrome through the MCP Browser Extension. " +
+  'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), do not retry: ' +
+  'give the user the steps in its `setup` field, which name what went wrong and how to fix it. ' +
+  'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it on the extension\'s ' +
+  'Options page (click its toolbar icon). It applies at once, with no restart. You cannot approve a site yourself.';
+
 /** Default version reported when no explicit version is passed in (legacy callers/tests). */
 const DEFAULT_VERSION = SERVER_VERSION;
 
@@ -38,7 +51,7 @@ let transport: StdioServerTransport | null = null;
 export function createServer(version: string = DEFAULT_VERSION, policy?: Policy): McpServer {
   const srv = new McpServer(
     { name: SERVER_NAME, version },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
   registerTools(srv, policy);
   // `McpServer` wraps the low-level `Server`, which owns the `onerror` hook.

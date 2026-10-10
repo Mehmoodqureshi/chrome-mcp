@@ -19,7 +19,8 @@ import { CommandRouter } from './router';
 import { ChromeExecutor } from './executor';
 import { syncObserverScript } from './observers';
 import { TabBorder } from './tab-border';
-import type { WirePolicy } from '../../../shared/protocol';
+import { PROTOCOL_VERSION, type SiteGrantFrame, type WirePolicy } from '../../../shared/protocol';
+import { isDomainAllowed } from '../../../shared/policy';
 
 interface PairConfig {
   wsPort: number;
@@ -31,6 +32,15 @@ interface PairConfig {
 }
 
 const KEEPALIVE_ALARM = 'chrome-mcp-keepalive';
+
+/** A site the server refused, kept so the Options page can offer an Allow. */
+interface BlockedSite {
+  host: string;
+  method: string;
+  at: number;
+}
+/** How many refused sites the Options page lists (newest first). */
+const MAX_BLOCKED = 10;
 
 /** The policy delivered by the server in `welcome`; the router mirrors the gate
  *  against it. Null until a welcome arrives (commands only flow after welcome). */
@@ -83,9 +93,12 @@ const ws = new WsClient({
     // The observer hook is registered from the policy, so it covers exactly the
     // allowlisted sites and only when the operator opted in.
     void syncObserverScript(policy, (m) => console.debug('[chrome-mcp]', m));
+    void onAllowlist(policy);
   },
   // Shown on the Options page, so you can tell which name this browser got.
   onProfile: (profile) => void chrome.storage.local.set({ pairedProfile: profile }),
+  onGranted: (granted) => void chrome.storage.local.set({ grantedSites: granted }),
+  onBlocked: (host, method) => void rememberBlocked(host, method),
   log: (m) => console.debug('[chrome-mcp]', m),
 });
 const router = new CommandRouter({
@@ -192,6 +205,39 @@ async function getConfig(): Promise<PairConfig | null> {
   return null;
 }
 
+/** Mirror the live allowlist for the Options page, and drop refused sites it now covers. */
+async function onAllowlist(policy: WirePolicy): Promise<void> {
+  const { blockedSites } = await chrome.storage.local.get('blockedSites');
+  const still = (Array.isArray(blockedSites) ? (blockedSites as BlockedSite[]) : []).filter(
+    (b) => !isDomainAllowed(`https://${b.host}/`, policy),
+  );
+  await chrome.storage.local.set({ allowedSites: policy.allowDomains, blockedSites: still });
+  pendingBlocked = still.length;
+  reflectBadge(ws.state);
+}
+
+/** The server refused `host`: list it on the Options page and flag the toolbar icon. */
+async function rememberBlocked(host: string, method: string): Promise<void> {
+  const { blockedSites } = await chrome.storage.local.get('blockedSites');
+  const prior = (Array.isArray(blockedSites) ? (blockedSites as BlockedSite[]) : []).filter((b) => b.host !== host);
+  const next = [{ host, method, at: Date.now() }, ...prior].slice(0, MAX_BLOCKED);
+  await chrome.storage.local.set({ blockedSites: next });
+  pendingBlocked = next.length;
+  reflectBadge(ws.state);
+}
+
+/** Refused sites not yet allowed or dismissed; non-zero flags the toolbar icon. */
+let pendingBlocked = 0;
+void chrome.storage.local.get('blockedSites').then(({ blockedSites }) => {
+  pendingBlocked = Array.isArray(blockedSites) ? blockedSites.length : 0;
+});
+
+const BLOCKED_BADGE = {
+  text: '?',
+  color: '#ea580c',
+  title: 'MCP Browser Extension — a site was blocked. Click to allow it.',
+};
+
 const BADGE: Record<ConnState, { text: string; color: string; title: string }> = {
   connected: { text: '●', color: '#16a34a', title: 'MCP Browser Extension — connected' },
   connecting: { text: '…', color: '#ca8a04', title: 'MCP Browser Extension — connecting' },
@@ -200,7 +246,7 @@ const BADGE: Record<ConnState, { text: string; color: string; title: string }> =
 };
 
 function reflectBadge(state: ConnState): void {
-  const b = BADGE[state] ?? BADGE.idle;
+  const b = state === 'connected' && pendingBlocked > 0 ? BLOCKED_BADGE : (BADGE[state] ?? BADGE.idle);
   // Best-effort: chrome.action may be unavailable in some contexts.
   try {
     void chrome.action.setBadgeText({ text: b.text });
@@ -260,13 +306,38 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// Lets the options page trigger an immediate (re)connect after saving config.
-chrome.runtime.onMessage.addListener((msg) => {
+// The toolbar icon opens Options: that is where you pair, and where a blocked
+// site gets its Allow button.
+chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
+
+// Lets the options page trigger an immediate (re)connect after saving config,
+// and carries its Allow / Remove clicks to the server.
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.type === 'reconnect') {
     clearReconnect();
     ws.close();
     ws.state = 'idle';
     void ensureConnected();
+  }
+  if (msg?.type === 'site_grant' && typeof msg.host === 'string') {
+    // Only this extension's own pages may grant. A script injected into a web
+    // page also reports our id, but its url is the page's, never ours.
+    if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return;
+    if (!ws.isConnected()) {
+      reply({ ok: false, error: 'not connected to the chrome-mcp server' });
+      return;
+    }
+    const frame: SiteGrantFrame = { type: 'site_grant', v: PROTOCOL_VERSION, host: msg.host, allow: msg.allow !== false };
+    ws.send(frame);
+    reply({ ok: true });
+  }
+  if (msg?.type === 'dismiss_blocked' && typeof msg.host === 'string') {
+    void chrome.storage.local.get('blockedSites').then(async ({ blockedSites }) => {
+      const still = (Array.isArray(blockedSites) ? (blockedSites as BlockedSite[]) : []).filter((b) => b.host !== msg.host);
+      await chrome.storage.local.set({ blockedSites: still });
+      pendingBlocked = still.length;
+      reflectBadge(ws.state);
+    });
   }
 });
 

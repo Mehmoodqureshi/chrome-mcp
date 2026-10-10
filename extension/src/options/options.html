@@ -14,13 +14,22 @@
       .hint { color: #555; font-size: 0.9rem; }
       label.check { display: flex; gap: 0.5rem; align-items: center; font-weight: 600; margin-top: 1rem; }
       label.check input { width: auto; }
+      h2 { font-size: 1.05rem; margin-top: 2rem; }
+      ul.sites { list-style: none; padding: 0; margin: 0.5rem 0; }
+      ul.sites li { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0; border-bottom: 1px solid #eee; }
+      ul.sites li span { flex: 1; overflow-wrap: anywhere; }
+      ul.sites li button { margin: 0; padding: 0.25rem 0.75rem; }
+      ul.sites li .tag { flex: none; color: #555; font-size: 0.85rem; }
+      .blocked li { background: #fff7ed; padding-left: 0.5rem; }
+      .row { display: flex; gap: 0.5rem; }
+      .row button { margin-top: 0; }
     </style>
   </head>
   <body>
     <h1>Pair with chrome-mcp</h1>
     <p class="hint" id="source">Checking pairing source…</p>
     <p class="hint">
-      Manual pairing: run <code>npx -y @mehmoodqureshi/chrome-mcp --print-pairing</code>,
+      Manual pairing: run <code>npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing</code>,
       open the printed <code>handshake.json</code>, and paste its <code>port</code>
       and <code>token</code> below.
     </p>
@@ -44,6 +53,25 @@
     </p>
     <button id="save">Save & connect</button>
     <div class="status" id="status">Status: unknown</div>
+
+    <section id="sites-section">
+      <h2>Allowed sites</h2>
+      <p class="hint">
+        chrome-mcp only reads or acts on sites you allow. Allowing one here applies at once to every
+        Claude session, with no restart, and is remembered.
+      </p>
+      <div id="blocked-wrap" hidden>
+        <p><strong>Recently blocked</strong></p>
+        <ul class="sites blocked" id="blocked"></ul>
+      </div>
+      <ul class="sites" id="allowed"></ul>
+      <p class="hint" id="sites-note"></p>
+      <label for="new-site">Allow a site</label>
+      <div class="row">
+        <input id="new-site" type="text" placeholder="example.com or *.example.com" />
+        <button id="add-site">Allow</button>
+      </div>
+    </section>
     <script src="options.js"></script>
   </body>
 </html>
