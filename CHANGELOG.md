@@ -1,3 +1,15 @@
+## 0.9.17 - 2026-10-10
+
+A server-only fix; the extension stays at 0.9.16.
+
+- fix: **a call right after a background `tab_new` no longer fails with
+  TAB_NOT_FOUND.** Chrome leaves a background tab out of the tab list until its
+  navigation commits, so the policy gate could not place it and refused the next
+  call aimed at it, most often from a second Claude session sharing the browser
+  (it has no URL cache to fall back on). The server now remembers tabs it just
+  opened and, for those only, waits up to 5 s for the URL. Any other unknown tab
+  still fails at once. Found while automating the website's screenshots.
+
 ## 0.9.16 - 2026-10-10
 
 Fixes for the problems new installs hit most, from the usage data: Chrome never

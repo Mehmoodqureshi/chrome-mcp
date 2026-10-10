@@ -472,6 +472,8 @@ interface ToolCtx {
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult>;
 
 const GATE_CONTEXT = 'cannot resolve the target tab URL for the policy gate';
+/** How long the gate waits for a just-opened background tab to report its URL. */
+const OPENING_TAB_WAIT_MS = 5_000;
 
 /**
  * Resolve the URL the policy should be evaluated against: the URL of the tab
@@ -503,6 +505,16 @@ async function gatedUrl(ex: Executor, tabId?: string): Promise<string> {
   let tabs: TabInfo[];
   try {
     tabs = await ex.tabsList();
+    // A tab opened a moment ago in the background has no URL until its
+    // navigation commits (Chrome leaves it out of the list until then). Wait
+    // for it rather than refusing the very next call aimed at it.
+    if (tabId && ex.isOpeningTab?.(tabId)) {
+      const deadline = Date.now() + OPENING_TAB_WAIT_MS;
+      while (!tabs.find((t) => t.tabId === tabId)?.url && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 150));
+        tabs = await ex.tabsList();
+      }
+    }
   } catch (err) {
     // Keep the underlying code (TIMEOUT / EXTENSION_DISCONNECTED / …) so the
     // caller can tell a transient bridge failure from a policy decision — the

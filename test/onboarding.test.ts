@@ -294,3 +294,39 @@ test('get_text with a selector waits for an element that renders late', async ()
     restore();
   }
 });
+
+// -- E. a just-opened background tab is waited for, not refused ------------------
+
+test('a call right after a background tab_new waits for the tab to get its URL', async () => {
+  const { dispatchToolCall, resetRateLimiter } = await import('../src/mcp/tools');
+  const { configureManager, resetManagerForTesting } = await import('../src/executor/manager');
+  const { StubExecutor } = await import('../src/executor/stub-executor');
+  const { resolvePolicy } = await import('../src/security/policy');
+  resetManagerForTesting();
+  resetRateLimiter();
+  const ex = new StubExecutor({ activeUrl: 'https://example.com' });
+  const TAB = 'ext:fresh:1';
+  let lists = 0;
+  // The tab is missing from the first two listings, as Chrome leaves it out until it commits.
+  Object.assign(ex, {
+    isOpeningTab: (id: string) => id === TAB,
+    tabsList: async () => {
+      lists++;
+      return lists < 3
+        ? [{ tabId: 'ext:other:2', url: 'https://example.com', title: '', active: true, index: 0 }]
+        : [{ tabId: TAB, url: 'https://github.com/x', title: '', active: false, index: 1 }];
+    },
+  });
+  configureManager({ policy: resolvePolicy({ allowDomains: ['github.com'] }), makeExecutor: () => ex });
+  const r = await dispatchToolCall('get_text', { tabId: TAB });
+  assert.equal(r.isError, undefined, JSON.stringify(r.content));
+  assert.ok(lists >= 3, 'listed again until the tab appeared');
+
+  // A tab this session did not just open still fails fast, as before.
+  lists = 0;
+  Object.assign(ex, { isOpeningTab: () => false });
+  const miss = await dispatchToolCall('get_text', { tabId: 'ext:gone:9' });
+  assert.equal(miss.isError, true);
+  assert.equal(lists, 1);
+  resetManagerForTesting();
+});

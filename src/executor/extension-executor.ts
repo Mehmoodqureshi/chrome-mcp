@@ -56,6 +56,9 @@ import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
  */
 const ACTIVE_URL_TTL_MS = 2_000;
 
+/** How long a freshly opened tab may go without a URL before the gate gives up on it. */
+const OPENING_TAB_MS = 10_000;
+
 /** Flatten frame options into the params a wire command carries. */
 function frameParams(o?: FrameOpts): Record<string, unknown> {
   if (!o) return {};
@@ -73,6 +76,8 @@ function targetParams(t?: Target): Record<string, unknown> {
 
 export class ExtensionExecutor implements Executor {
   readonly backend: BackendKind = 'extension';
+  /** Tabs opened by tab_new whose navigation had not committed: tab id → expiry. */
+  private readonly openingTabs = new Map<TabId, number>();
 
   constructor(private readonly bridge: BridgeServer) {}
 
@@ -155,7 +160,21 @@ export class ExtensionExecutor implements Executor {
     return (await this.send('tab_select', {}, { tabId })) as TabInfo;
   }
   async tabNew(url?: string, opts?: { active?: boolean }): Promise<TabInfo> {
-    return (await this.send('tab_new', { url, active: opts?.active })) as TabInfo;
+    const tab = (await this.send('tab_new', { url, active: opts?.active })) as TabInfo;
+    // A background tab comes back before its navigation commits, with no URL.
+    // Remember it briefly, so a call aimed at it right away waits for the URL
+    // instead of failing the policy gate with TAB_NOT_FOUND.
+    if (url && !tab.url) {
+      const now = Date.now();
+      for (const [id, until] of this.openingTabs) if (until < now) this.openingTabs.delete(id);
+      this.openingTabs.set(tab.tabId, now + OPENING_TAB_MS);
+    }
+    return tab;
+  }
+
+  isOpeningTab(tabId: TabId): boolean {
+    const until = this.openingTabs.get(tabId);
+    return until !== undefined && until >= Date.now();
   }
   async tabClose(tabId: TabId): Promise<{ closed: true; tabId: TabId }> {
     return (await this.send('tab_close', {}, { tabId })) as { closed: true; tabId: TabId };

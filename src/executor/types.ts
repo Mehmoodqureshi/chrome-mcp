@@ -272,6 +272,12 @@ export interface Executor {
    * tab, and a `tabsList` reports it for every tab). Null → resolve properly.
    */
   cachedTabUrl?(tabId: TabId): string | null;
+  /**
+   * True for a tab this executor opened moments ago whose navigation may not
+   * have committed yet: Chrome reports no URL for it until then, so the policy
+   * gate should wait for one rather than fail. Optional: false when absent.
+   */
+  isOpeningTab?(tabId: TabId): boolean;
 
   // --- tabs ---
   tabsList(): Promise<TabInfo[]>;
