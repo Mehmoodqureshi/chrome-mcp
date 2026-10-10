@@ -1,4 +1,4 @@
-# chrome-mcp
+# MCP Browser Extension
 
 [![CI](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
@@ -16,12 +16,15 @@ your browser, your agent can read it, without logging in again and without
 pasting credentials anywhere.
 
 Most browser MCP servers launch their own Chromium and hand your agent a
-signed-out window. chrome-mcp does the opposite: an MV3 extension dials into a
+signed-out window. MCP Browser Extension does the opposite: an MV3 extension dials into a
 localhost WebSocket server and drives the browser you already have open, through
 `chrome.scripting`/`chrome.tabs`. Works with Claude Code, Claude Desktop, and any
 other MCP host.
 
-Distributed as an `npx` CLI (the MCP server) plus an extension, from the
+MCP Browser Extension has two parts: the extension, and a small MCP server you run
+with `npx` (npm package `@mehmoodqureshi/chrome-mcp`, command `chrome-mcp`; the
+names predate the rename and stay so existing setups keep working). The extension
+comes from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 or loaded unpacked.
 
@@ -37,7 +40,7 @@ or loaded unpacked.
 ## Use Claude in your signed-in Chrome
 
 You are already signed in to Gmail, GitHub, your analytics dashboards, the admin
-panel, the CRM. chrome-mcp lets Claude (Claude Code, Claude Desktop, or any
+panel, the CRM. MCP Browser Extension lets Claude (Claude Code, Claude Desktop, or any
 other MCP host) work in those same tabs: no re-login, no second 2FA prompt, no
 password or cookie in a config file. The extension runs inside your normal
 Chrome, so a page the agent opens is the page you would see.
@@ -68,7 +71,7 @@ for one), so the question is what you get on top of the session:
   profiles and switch between them with `profile_use`.
 - **`auth_check`**: when a session does expire, the agent gets an
   `[AUTH_REQUIRED]` signal instead of a confusing timeout, so it can stop and
-  ask you to sign in again. chrome-mcp never holds credentials or signs in for
+  ask you to sign in again. MCP Browser Extension never holds credentials or signs in for
   you.
 
 Setup is two pieces: the MCP server (`npx`, below) and the extension, which you
@@ -84,7 +87,7 @@ installs the server, wires it into the client, and walks you through the two
 steps that must happen inside Chrome:
 
 ```text
-Set up chrome-mcp on this machine by fetching and following
+Set up MCP Browser Extension on this machine by fetching and following
 https://raw.githubusercontent.com/Mehmoodqureshi/chrome-mcp/main/SETUP.md
 exactly, step by step. Work autonomously and verify each step.
 ```
@@ -154,47 +157,36 @@ token is stored 0600 at `~/.chrome-mcp/token` and reused; the extension's
 keepalive auto-reconnects with no manual step. `CHROME_MCP_TOKEN` pins the token
 explicitly (and is never written to disk).
 
-**2. Load the extension** — **required**; the server can drive nothing without it.
+**2. Install the extension** — **required**; the server can drive nothing without it.
 
-Two ways to get it:
+**[Install MCP Browser Extension from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
+One click, no Developer mode, and **Chrome keeps it updated for you**. This is
+the way to install it.
 
-- **[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)** — one click, no
-  Developer mode, and Chrome keeps it updated. The Web Store build is reviewed
-  before each release, so it can trail the npm package by a version; it pairs
-  with any server and simply skips features it predates.
-- **Load the bundled folder** (below) — always matches the npm package you just
-  installed, and the right choice when you want the newest behaviour.
+**3. Click Connect.** A fresh install opens the extension's Settings with a
+**Connect** button (it is in the toolbar popup too). Click it, allow the one
+permission Chrome asks for, and you are paired: the server registers a small
+helper with Chrome every time it starts, and the button asks it for the port and
+token. Chrome lets only this extension talk to that helper. If the server ever
+changes its token, the extension fetches the new one by itself. Nothing to copy
+or paste.
 
-The extension ships prebuilt inside the npm package, and every time the server
-boots it copies it to a plain folder right under your home directory:
+<details>
+<summary>Developers: load it unpacked instead</summary>
 
-```
-~/chrome-mcp-extension          (macOS / Linux)
-%USERPROFILE%\chrome-mcp-extension   (Windows)
-```
+The extension also ships inside the npm package, and every time the server boots
+it copies it to `~/chrome-mcp-extension` (`%USERPROFILE%\chrome-mcp-extension` on
+Windows; `CHROME_MCP_EXTENSION_DIR` moves it). `chrome://extensions` → enable
+**Developer mode** → **Load unpacked** → pick that folder. It pairs itself from a
+`pairing.json` the server writes there, and the server refreshes the files on each
+boot (never with an older build) so it reloads itself within 30 seconds.
 
-So after step 1 has started the server once (restart your client, or `/mcp` in
-Claude Code), the folder is already there. To create it without a client, or
-to print the exact path:
+An unpacked copy does not update through Chrome, so its popup suggests the store
+copy. Unpacked builds carry the store's public key and so have the same id: load
+one *or* the store copy in a Chrome profile, not both. Working from a git clone?
+`npm install && npm run build:ext` first; `extension-dist/` is gitignored.
 
-```bash
-npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path
-```
-
-Then `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-pick `chrome-mcp-extension` in your home folder. After upgrading the package the
-server refreshes the files on its next boot and the extension reloads itself
-within 30 seconds; nothing to click. `CHROME_MCP_EXTENSION_DIR` moves the
-folder somewhere else. (Working from a git clone instead? Run
-`npm install && npm run build:ext` first — `extension-dist/` is gitignored, and
-the server mirrors it to the same home folder.)
-
-**3. Pair it — usually nothing to do.** Every time the server boots it writes
-`pairing.json` (mode 0600, never shipped in the tarball) into the very
-`chrome-mcp-extension` folder you just loaded. The extension reads that file
-from its own folder on startup and pairs itself, so the toolbar badge turns
-green with no token to paste. Load the extension before the server has ever
-run? It re-checks every 30 seconds and pairs as soon as the file appears.
+</details>
 
 **Where to see the badge:** it sits on the extension's icon in Chrome's
 toolbar, not on the `chrome://extensions` page. Chrome hides new extensions
@@ -209,18 +201,17 @@ stays in the toolbar. Hover it for the status in words.
 | grey circle | not paired yet (no server has run, or no pairing file) |
 | red exclamation mark | token rejected; the server rotated it, re-pairs by itself in a moment |
 
-Manual fallback (a copied folder, a read-only home): run
-`npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing`, open the extension's
-**Options** page, and paste the `port` + `token` from
-`~/.chrome-mcp/handshake.json`. Values saved there take precedence over the
-bundled file.
+Manual fallback (the helper is turned off with `--no-native-host`, or Connect
+reports a problem): run `npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing`,
+open the extension's **Settings**, and paste the `port` + `token` from
+`~/.chrome-mcp/handshake.json`.
 
 ### Running more than one session
 
 Every MCP host session (each Claude terminal, tab or window) starts its own
-chrome-mcp, and they all share your Chrome at once. The first one to start owns
+MCP Browser Extension server, and they all share your Chrome at once. The first one to start owns
 the bridge port and the extension connections — the **hub**. Each later session
-finds the port held by a live chrome-mcp and joins it as a **peer**: its tool
+finds the port held by a live MCP Browser Extension server and joins it as a **peer**: its tool
 calls are relayed through the hub to the same browsers, so every session keeps
 working side by side. Nobody is disconnected.
 
@@ -231,9 +222,9 @@ once with `EXTENSION_DISCONNECTED` and is retried automatically when it is safe
 to repeat.
 
 Peers authenticate with the pairing token from the 0600 handshake file, so only
-your own OS user can join. A chrome-mcp too old to share the port is replaced as
-before: it is verified to be chrome-mcp, then stopped. Anything that isn't a
-verified chrome-mcp is never touched — a port held by some other program is
+your own OS user can join. A server too old to share the port is replaced as
+before: it is verified to be an MCP Browser Extension server, then stopped. Anything that isn't a
+verified MCP Browser Extension server is never touched — a port held by some other program is
 reported, never killed.
 
 Sessions share one browser, so they also share its tabs: two sessions driving
@@ -439,7 +430,7 @@ page it landed on and fails with `[AUTH_REQUIRED]` if that page is a sign-in
 wall, and a `wait_for` that times out on such a page reports `[AUTH_REQUIRED]`
 instead of `[TIMEOUT]`. Each guarded step costs one extra snapshot round-trip;
 with the flag off the cost is zero. `[AUTH_REQUIRED]` is where a harness pauses
-for a human to sign in again in the same Chrome, then retries the step. chrome-mcp
+for a human to sign in again in the same Chrome, then retries the step. MCP Browser Extension
 never re-authenticates on its own: it holds no credentials, by design.
 
 Detection reads only what the snapshot already has: the URL (sign-in routes,
@@ -464,7 +455,7 @@ PDF is megabytes of base64 no model can read.
 ### Paying less per turn — `--tools`
 
 Every MCP server you connect costs context before you ask it anything: the host
-sends the whole tool catalog to the model on **every** turn. chrome-mcp's 40
+sends the whole tool catalog to the model on **every** turn. MCP Browser Extension's 40
 tools are 28 KB of JSON Schema, about 7.1k tokens, on each one.
 
 Most runs need a handful of them. `--tools` advertises only those:
@@ -560,7 +551,7 @@ is allowed (with its own Allow), and lists the allowed sites. The Options page
 is saved to `~/.chrome-mcp/allowed-sites.json` so it survives restarts. Sites
 allowed there can be removed there; sites from `--allow-domain` stay until the
 flags change. The catch-all `*` can only come from `--unsafe-all-domains`. The
-agent cannot approve a site itself: chrome-mcp never reads or drives the
+agent cannot approve a site itself: MCP Browser Extension never reads or drives the
 extension's own pages. Run with `--no-site-grants` to keep the allowlist exactly
 what the flags say.
 
@@ -596,7 +587,7 @@ rests on the per-user ACL of `%USERPROFILE%\.chrome-mcp`.
 
 You don't have to do anything to stay current. The setup snippets above use
 `@latest`, and on top of that an installed copy (npx or a global install) checks
-npm when it starts: if a newer chrome-mcp is published, it starts that version in
+npm when it starts: if a newer version is published, it starts that version in
 its place, with the same arguments, so an MCP config written months ago still
 runs the newest release. The check gives up after 1.5 s when you are offline,
 and a copy run from a git checkout never updates itself. The new server also
@@ -606,13 +597,14 @@ with `--no-auto-update` or `CHROME_MCP_AUTO_UPDATE=0`.
 
 ## Telemetry
 
-The chrome-mcp **server** sends anonymous usage statistics to PostHog, so the
+The MCP Browser Extension **server** (not the extension) sends anonymous usage statistics to PostHog, so the
 project can see how many installs are active, which versions and platforms are
 in use, and which tools fail most. A notice is printed the first time it runs.
 
 What is sent: a random install id (kept in `~/.chrome-mcp/telemetry.json`), the
-chrome-mcp version, OS, CPU architecture and Node major version, whether the
-session owns the bridge port or shares it, how many browsers are paired, and
+server version, OS, CPU architecture and Node major version, whether the
+session owns the bridge port or shares it, how many browsers are paired, the
+paired extension's version and whether it is the store or an unpacked copy, and
 per-tool call and error **counts** with error codes. The first batch goes out a
 minute after the first tool call, then every 10 minutes. For PostHog's MCP
 Analytics view, each tool call is also sent as one `$mcp_tool_call` event

@@ -1,7 +1,7 @@
-# chrome-mcp — agent setup instructions
+# MCP Browser Extension — agent setup instructions
 
-**You are an AI agent. Follow these steps to set up chrome-mcp end-to-end on this
-machine and prove it works.** chrome-mcp lets an MCP client drive the human's
+**You are an AI agent. Follow these steps to set up MCP Browser Extension end-to-end on this
+machine and prove it works.** MCP Browser Extension lets an MCP client drive the human's
 real Chrome browser: real logins, real cookies, no separate Chromium. It has two
 halves that must be paired: a stdio MCP server (npm package
 `@mehmoodqureshi/chrome-mcp`) and a Manifest V3 extension that ships inside the

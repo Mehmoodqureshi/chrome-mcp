@@ -450,8 +450,8 @@ function capabilityStatus(policy: Policy): Record<string, unknown> {
     disabledCapabilities: off,
     capabilityHint:
       'These tools are not available in this session because their capability is off. ' +
-      'If the user asks for one of them, tell them to add the listed flag to the chrome-mcp ' +
-      'command in their MCP config and restart the client.',
+      'If the user asks for one of them, tell them to add the listed flag to the MCP Browser Extension ' +
+      "server's entry (chrome-mcp) in their MCP config and restart the client.",
   };
 }
 
@@ -1264,10 +1264,13 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       ? { pairState: profileBridge.pairState(active), ...(steps.length > 0 ? { setup: steps } : {}) }
       : {};
     const sites = profileBridge ? { sitesAllowedFromOptions: profileBridge.grantedSites() } : {};
+    const ext = profileBridge?.extensionInfo(active);
+    const tip = profileBridge?.extensionUpdateTip(active);
+    const extension = ext ? { extension: { ...ext, ...(tip ? { updateTip: tip } : {}) } } : {};
     const agentTab = { agentTab: workTab };
     try {
       const ex = await getManager().ensureReady();
-      return jsonResult({ ...ex.status(), ...agentTab, ...profiles, ...pairing, ...sites, ...capabilities });
+      return jsonResult({ ...ex.status(), ...agentTab, ...profiles, ...extension, ...pairing, ...sites, ...capabilities });
     } catch (err) {
       return jsonResult({
         ready: false,
@@ -1304,7 +1307,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') })));
   },
   profile_rename: async (a) => {
-    if (!profileBridge) throw new ExecutorError('NO_BACKEND', 'profile_rename needs the chrome-mcp bridge running');
+    if (!profileBridge) throw new ExecutorError('NO_BACKEND', 'profile_rename needs the MCP Browser Extension server bridge running');
     let from: string;
     let to: string;
     try {

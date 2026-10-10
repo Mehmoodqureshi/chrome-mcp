@@ -19,7 +19,7 @@ import type { Policy } from '../security/policy';
 // here; the implementation lives in ./log to avoid a server↔tools import cycle.
 export { getLogLevel, logDebug, logErr, setLogLevel } from './log';
 
-const SERVER_NAME = 'chrome-mcp';
+const SERVER_NAME = 'mcp-browser-extension';
 const SERVER_VERSION = '0.1.0';
 
 /**
@@ -29,7 +29,7 @@ const SERVER_VERSION = '0.1.0';
  * than retry.
  */
 export const SERVER_INSTRUCTIONS =
-  "chrome-mcp drives the user's real, signed-in Chrome through the MCP Browser Extension. " +
+  "MCP Browser Extension drives the user's real, signed-in Chrome. " +
   'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), do not retry: ' +
   'give the user the steps in its `setup` field, which name what went wrong and how to fix it. ' +
   'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it from the extension\'s ' +

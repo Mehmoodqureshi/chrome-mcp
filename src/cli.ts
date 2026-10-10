@@ -24,6 +24,7 @@ import { logDebug, logErr, mcpClientInfo, setLogLevel, startMcpServer, stopMcpSe
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { initTelemetry, stopTelemetry } from './telemetry';
 import { maybeHandOff } from './auto-update';
+import { registerNativeHost, runNativeHost } from './native-host';
 import { bundledExtensionDir, syncExtension } from './extension-install';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
@@ -57,6 +58,24 @@ function version(): string {
     return pkg.version ?? '0.0.0';
   } catch {
     return '0.0.0';
+  }
+}
+
+/** Telemetry fields for the paired extension: its version and store/unpacked. */
+function extensionContext(ext: { version?: string; source?: string } | null): Record<string, string> {
+  return {
+    ...(ext?.version ? { ext_version: ext.version } : {}),
+    ...(ext?.source ? { ext_source: ext.source } : {}),
+  };
+}
+
+/** The version of the extension bundled with this server, or undefined if unreadable. */
+function bundledExtensionVersion(): string | undefined {
+  try {
+    const m = JSON.parse(readFileSync(join(bundledExtensionDir(), 'manifest.json'), 'utf8')) as { version?: unknown };
+    return typeof m.version === 'string' ? m.version : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -185,7 +204,21 @@ function toolList(): string {
   return lines.join('\n');
 }
 
+/** The value after `name` in argv, if any. */
+function argValue(argv: string[], name: string): string | undefined {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
 async function main(): Promise<void> {
+  // Chrome starting the one-click pairing helper. Handled before anything else:
+  // Chrome appends its own arguments (the caller's origin, a window handle), and
+  // stdout must carry nothing but the framed reply.
+  if (process.argv.includes('--native-host')) {
+    const argv = process.argv.slice(2);
+    runNativeHost(argValue(argv, '--data-dir') ?? resolveDataDir(), argValue(argv, '--profile'));
+    return;
+  }
   if (runTasksCommand(process.argv.slice(2))) return;
 
   const cfg = parseArgs(process.argv.slice(2));
@@ -237,6 +270,7 @@ async function main(): Promise<void> {
     // Options are spliced into this same array, which the tool gate reads too.
     policy: { allowDomains, allowEval, allowDownloads, allowUploads, allowAllTabs, enableMutations },
     siteGrants: !cfg.noSiteGrants,
+    latestExtensionVersion: bundledExtensionVersion(),
     port: cfg.wsPort,
     dataDir,
     onLog: (m) => logErr(m),
@@ -247,7 +281,13 @@ async function main(): Promise<void> {
     // itself if the hub exits and it takes the port over.
     onRole: (role, info) => {
       if (role === 'hub') publishPairing(info.port, info.token);
-      else logErr(`sharing the browsers of the chrome-mcp already on port ${info.port} (pid ${info.hubPid || '?'}) — several sessions can drive Chrome at once`);
+      else {
+        logErr(`sharing the browsers of the chrome-mcp already on port ${info.port} (pid ${info.hubPid || '?'}) — several sessions can drive Chrome at once`);
+        // Refresh the unpacked extension folder from this session too: the hub
+        // may be an old process from a window left open for days, and it would
+        // keep the folder on its old files. The mirror never downgrades.
+        installExtension();
+      }
     },
   });
 
@@ -288,6 +328,16 @@ async function main(): Promise<void> {
   };
 
   const port = await bridge.start();
+  // One-click pairing: let the extension's Connect button fetch the port and
+  // token itself. Every session rewrites it, so it always runs the newest server.
+  if (!cfg.noNativeHost) {
+    void registerNativeHost({
+      dataDir,
+      cliPath: join(__dirname, 'cli.js'),
+      profile: cfg.profile && cfg.profile !== 'default' ? cfg.profile : undefined,
+      log: (m) => logDebug(m),
+    }).then((browsers) => logDebug(`one-click pairing helper registered with ${browsers.length} browser(s)`));
+  }
   setProfileBridge(bridge);
   initTelemetry({
     dataDir,
@@ -299,6 +349,7 @@ async function main(): Promise<void> {
       role: bridge.role,
       browsers: bridge.connectedProfiles().length,
       pair_state: bridge.pairState(peekActiveWorkspace()?.profile ?? cfg.profile),
+      ...extensionContext(bridge.extensionInfo(peekActiveWorkspace()?.profile ?? cfg.profile)),
     }),
   });
   // Never includes the pairing token — only the resolved, non-secret config.

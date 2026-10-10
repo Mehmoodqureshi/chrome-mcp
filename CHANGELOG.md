@@ -1,3 +1,34 @@
+## Unreleased
+
+- feat: **one-click Connect, for every install.** The server registers a native
+  messaging helper with Chrome, Brave, Edge, Chromium, Arc and Vivaldi on each
+  start (the registry on Windows; `--no-native-host` turns it off). The
+  extension's Connect button, in the popup and in Settings (which a fresh
+  install now opens), asks it for the port, token and the server's profile and
+  pairs. Chrome only lets our extension id reach it. The permission is optional,
+  so existing installs are untouched until someone clicks. After a token change
+  the extension refetches it by itself.
+- feat: **unpacked builds share the store id.** They carry the store's public
+  key (the store zip strips it, see `pack-ext.mjs`), so the helper allows one
+  id, and the extension reports its install type so the server can still tell
+  store copies from unpacked ones.
+- feat: **unpacked users are moved to the store copy.** The popup shows an
+  "automatic updates" banner (and "update available" when behind the bundled
+  build), `chrome_status` reports the extension's version and source with a tip,
+  and telemetry gains `ext_version` / `ext_source`.
+- fix: **every session refreshes the unpacked extension folder**, not just the
+  first, and **never with an older build**, so a server left running for days
+  can no longer pin users to old files.
+
+- chore: **user-facing text says MCP Browser Extension, not chrome-mcp.** The
+  extension's Options page, popup and store description, the server's startup
+  instructions, pairing steps, error messages, first-run telemetry notice and
+  auto-update notice, the MCP server name (`mcp-browser-extension`, also the
+  PostHog MCP Analytics server label), and the README, SETUP, privacy policy and
+  store notes. Unchanged on purpose: the npm package `@mehmoodqureshi/chrome-mcp`,
+  the `chrome-mcp` command, the `"chrome-mcp"` key in MCP configs, the
+  `~/.chrome-mcp` data folder and the repo, so every existing setup keeps working.
+
 ## 0.9.20 - 2026-10-10
 
 Server-only; the extension stays at 0.9.19.

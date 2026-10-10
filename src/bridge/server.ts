@@ -22,6 +22,8 @@ import {
   CLOSE_SUPERSEDED,
   CLOSE_UNAUTHORIZED,
   PROTOCOL_VERSION,
+  STORE_EXTENSION_ID,
+  STORE_EXTENSION_URL,
   type HelloFrame,
   type ServerFrame,
   type UnauthFrame,
@@ -42,7 +44,7 @@ import { SiteGrants } from './site-grants';
 import { handshakePath } from './datadir';
 
 /** Where a person gets the extension. */
-export const WEB_STORE_URL = 'https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh';
+export const WEB_STORE_URL = STORE_EXTENSION_URL;
 
 /**
  * Why a profile has no browser to drive, as far as this server can tell:
@@ -69,6 +71,31 @@ export interface PairedProfile {
   /** The browser's active tab when it last reported one — a hint for telling
    *  auto-named browsers apart. */
   activeUrl?: string;
+  /** The extension's version, from its hello. */
+  extVersion?: string;
+  /** store = the Chrome Web Store copy (Chrome updates it); unpacked = any other id. */
+  extSource?: 'store' | 'unpacked';
+}
+
+/** store when Chrome installed it from the store; unpacked otherwise. An
+ *  extension that reports its install type is believed; an older one is judged
+ *  by its id (before unpacked builds carried the store key, ids differed). */
+function extensionSource(o: { extId?: string; install?: string }): 'store' | 'unpacked' {
+  if (o.install) return o.install === 'normal' ? 'store' : 'unpacked';
+  return o.extId === STORE_EXTENSION_ID ? 'store' : 'unpacked';
+}
+
+/** True when x.y.z version `a` is older than `b` (anything unparseable compares as not older). */
+function isOlder(a: string, b: string): boolean {
+  const p = (v: string): number[] | null => {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+  const x = p(a);
+  const y = p(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
 }
 
 /** Reduce a hello's profile label to a safe routing key; blank/invalid → "default". */
@@ -96,12 +123,12 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 function portBusyMessage(host: string, port: number): string {
   return (
     `Couldn't start: another program is already using ${host}:${port}.\n` +
-    `A stale chrome-mcp is reclaimed automatically, so this is some OTHER program.\n` +
+    `A stale MCP Browser Extension server is reclaimed automatically, so this is some OTHER program.\n` +
     `To fix it:\n` +
     `  1. Stop whatever owns the port, then reconnect:\n` +
     `       macOS/Linux:  lsof -nP -iTCP:${port} -sTCP:LISTEN   then  kill <PID>\n` +
     `       Windows:      netstat -ano | findstr :${port}        then  taskkill /PID <PID> /F\n` +
-    `  2. Or run chrome-mcp with a different port:  --port <number>`
+    `  2. Or give the MCP Browser Extension server a different port:  --port <number>`
   );
 }
 
@@ -124,6 +151,8 @@ export interface BridgeOptions {
    *  (saved to `<dataDir>/allowed-sites.json`). Default true; false keeps the
    *  allowlist exactly what the flags say (`--no-site-grants`). */
   siteGrants?: boolean;
+  /** The extension version bundled with this server: what an up-to-date copy reports. */
+  latestExtensionVersion?: string;
   port?: number;
   host?: string;
   heartbeatMs?: number;
@@ -153,7 +182,7 @@ export class BridgeServer {
   private conns = new Map<string, ExtensionConnection>();
   /** Profile routing key → how that live connection got its name, and the
    *  install behind it (absent for extensions too old to send one). */
-  private origins = new Map<string, { naming: ProfileNaming; installId?: string }>();
+  private origins = new Map<string, { naming: ProfileNaming; installId?: string; extVersion?: string; extId?: string; install?: string }>();
   /** Remembers which name each extension install was given. */
   private registry: ProfileRegistry;
   private boundPort = 0;
@@ -459,6 +488,29 @@ export class BridgeServer {
     return conn?.isOpen() ? conn.lastTabUrl(tabId, maxAgeMs) : null;
   }
 
+  /** The paired browser's extension for `profile`: version and where it came from. */
+  extensionInfo(profile: string): { version?: string; source?: 'store' | 'unpacked' } | null {
+    const p = this.pairedProfiles().find((x) => x.name === routeKey(profile));
+    return p ? { version: p.extVersion, source: p.extSource } : null;
+  }
+
+  /**
+   * What to tell the person about keeping the extension current, or null when
+   * it is fine. An unpacked copy never updates through Chrome, so it is pointed
+   * at the store; an unpacked copy older than this server also gets the fix.
+   */
+  extensionUpdateTip(profile: string): string | null {
+    const ext = this.extensionInfo(profile);
+    if (!ext || ext.source !== 'unpacked') return null;
+    const latest = this.opts.latestExtensionVersion;
+    const behind = ext.version && latest && isOlder(ext.version, latest);
+    return (
+      (behind ? `The extension in this Chrome is ${ext.version}; the current one is ${latest}. ` : '') +
+      `It is an unpacked copy, which does not update itself. Install MCP Browser Extension from the Chrome Web Store ` +
+      `(${STORE_EXTENSION_URL}) for automatic updates, then remove the unpacked copy in chrome://extensions.`
+    );
+  }
+
   /** Why `profile` has no browser right now (see {@link PairState}). */
   pairState(profile: string): PairState {
     if (this.hasConnection(profile)) return 'ok';
@@ -475,7 +527,7 @@ export class BridgeServer {
    * Never includes the token itself, only where to find it.
    */
   pairingSteps(profile: string): string[] {
-    const where = this.opts.dataDir ? handshakePath(this.opts.dataDir) : 'the handshake.json chrome-mcp printed at startup';
+    const where = this.opts.dataDir ? handshakePath(this.opts.dataDir) : 'the handshake.json the server printed at startup';
     const options = `In Chrome, click the MCP Browser Extension's toolbar icon, then Settings`;
     switch (this.pairState(profile)) {
       case 'ok':
@@ -489,14 +541,14 @@ export class BridgeServer {
       }
       case 'token_mismatch':
         return [
-          `The extension tried to connect with an old token (chrome-mcp makes a new one each start).`,
+          `The extension tried to connect with an old token (the server makes a new one each start).`,
           `${options}, set Port ${this.boundPort}, paste the "token" value from ${where}, and Save.`,
-          `To stop this happening again, add --persist-token to the chrome-mcp command in the MCP config.`,
+          `To stop this happening again, add --persist-token to the MCP Browser Extension server's entry in the MCP config.`,
         ];
       case 'version_mismatch':
         return [
-          `The extension and this chrome-mcp server are different versions and cannot talk.`,
-          `Update the extension (chrome://extensions, then Update, or reinstall from ${WEB_STORE_URL}) and restart the MCP client so it runs the latest chrome-mcp.`,
+          `The extension and this MCP Browser Extension server are different versions and cannot talk.`,
+          `Update the extension (chrome://extensions, then Update, or reinstall from ${WEB_STORE_URL}) and restart the MCP client so it runs the latest server.`,
         ];
       case 'no_extension':
         return [
@@ -522,7 +574,14 @@ export class BridgeServer {
     for (const [name, conn] of this.conns) {
       if (!conn.isOpen()) continue;
       const activeUrl = conn.lastActiveUrl(Number.POSITIVE_INFINITY) ?? undefined;
-      out.push({ name, naming: this.origins.get(name)?.naming ?? 'legacy', ...(activeUrl ? { activeUrl } : {}) });
+      const o = this.origins.get(name);
+      out.push({
+        name,
+        naming: o?.naming ?? 'legacy',
+        ...(activeUrl ? { activeUrl } : {}),
+        ...(o?.extVersion ? { extVersion: o.extVersion } : {}),
+        ...(o?.extId || o?.install ? { extSource: extensionSource(o) } : {}),
+      });
     }
     return out;
   }
@@ -630,7 +689,13 @@ export class BridgeServer {
         frame.ext ?? { id: 'unknown', version: '0', chrome: '0' },
         profile,
         Array.isArray(frame.caps) ? frame.caps : undefined,
-        { naming, installId },
+        {
+          naming,
+          installId,
+          ...(typeof frame.ext?.version === 'string' ? { extVersion: frame.ext.version.slice(0, 32) } : {}),
+          ...(typeof frame.ext?.id === 'string' ? { extId: frame.ext.id.slice(0, 64) } : {}),
+          ...(typeof frame.install === 'string' ? { install: frame.install.slice(0, 32) } : {}),
+        },
       );
     };
 
@@ -719,7 +784,7 @@ export class BridgeServer {
     ext: HelloFrame['ext'],
     profile: string,
     caps: string[] | undefined,
-    origin: { naming: ProfileNaming; installId?: string },
+    origin: { naming: ProfileNaming; installId?: string; extVersion?: string; extId?: string; install?: string },
   ): void {
     const sessionId = randomUUID();
 
@@ -774,6 +839,7 @@ export class BridgeServer {
       policy: this.policy,
       profile,
       ...(this.grants ? { granted: this.grants.list() } : {}),
+      ...(this.opts.latestExtensionVersion ? { latestExtension: this.opts.latestExtensionVersion } : {}),
     };
     this.send(ws, welcome);
     this.log(`extension paired (profile "${profile}", session ${sessionId}, id "${ext.id}")`);

@@ -23,13 +23,13 @@ must be higher than the last one uploaded; it tracks `package.json`.
 > so keep the word order exactly as above.
 
 **Summary (132 chars max):**
-Lets a local chrome-mcp server drive the Chrome you are already logged into. Pairs with your own machine only. Deny-all by default.
+Lets your AI agent (Claude, Cursor, Codex) use the Chrome you are signed into, through a local MCP server. Pairs with your own machine only. Deny-all by default.
 
 **Description:**
-MCP Browser Extension is the browser half of chrome-mcp, an open-source MCP server (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
+MCP Browser Extension is an open-source MCP server and extension (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
 
 How it works
-- You start the chrome-mcp server from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
+- You start the MCP Browser Extension server (npm package @mehmoodqureshi/chrome-mcp) from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
 - This extension connects to that server on 127.0.0.1 and carries out its commands: tabs, navigation, clicks, typing, page reads, screenshots, downloads.
 - Nothing leaves your machine. The only endpoint the extension ever talks to is localhost.
 
@@ -41,7 +41,7 @@ Safety
 Setup
 1. Install and register the server: see https://github.com/Mehmoodqureshi/chrome-mcp
 2. Install this extension.
-3. Open the extension's Options page and paste the port and token from ~/.chrome-mcp/handshake.json. A green badge on the toolbar icon means connected.
+3. Click the toolbar icon, open Settings, and paste the port and token from ~/.chrome-mcp/handshake.json. A green badge on the toolbar icon means connected.
 
 Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
@@ -58,7 +58,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 ## 4. Privacy tab
 
-**Single purpose:** Connects this browser to a chrome-mcp server running on the same computer so a local AI agent can drive it.
+**Single purpose:** Connects this browser to the MCP Browser Extension server running on the same computer so a local AI agent can drive it.
 
 **Permission justifications:**
 - `tabs`: list, open, close and switch tabs on the server's instruction.
@@ -69,6 +69,7 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 - `cookies`: read cookies of allowlisted sites when the server asks, so the agent can use existing sessions.
 - `webNavigation`: know when a navigation the server triggered has committed or finished loading, so `navigate` / `reload` / `back` / `forward` return as soon as the page is ready instead of polling. Never used to observe browsing the server did not request.
 - `debugger`: trusted OS-level input on framework-controlled inputs and screenshots of a specific tab without focusing it. Attached only for those commands and detached afterwards.
+- `nativeMessaging` (optional, requested only when the user clicks Connect): fetch the port and token from the local MCP Browser Extension server's helper, so pairing is one click instead of copying a token. The helper runs on the user's computer, is registered by the server the user installed, and only answers the pairing.
 - `host_permissions <all_urls>`: the server's domain allowlist decides which sites may be touched; the extension needs the broad grant so that allowlist can name any site. No command runs on a page that is not allowlisted.
 
 **Remote code:** No. All code is bundled.

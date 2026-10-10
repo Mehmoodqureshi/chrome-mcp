@@ -21,6 +21,7 @@ import { syncObserverScript } from './observers';
 import { TabBorder } from './tab-border';
 import { PROTOCOL_VERSION, type SiteGrantFrame, type WirePolicy } from '../../../shared/protocol';
 import { isDomainAllowed } from '../../../shared/policy';
+import { applyPairing, fetchPairing } from '../connect';
 
 interface PairConfig {
   wsPort: number;
@@ -86,7 +87,8 @@ const ws = new WsClient({
     if (state === 'idle' || state === 'unauthorized') void border.clearAll();
     // A reject with an auto-adopted token usually means the server rotated it
     // (no --persist-token) and rewrote pairing.json — re-read and retry once.
-    if (state === 'unauthorized') void adoptBundledPairing();
+    // With one-click pairing granted, fetch the new token from the helper too.
+    if (state === 'unauthorized') void adoptBundledPairing().then((took) => (took ? true : healFromHelper()));
   },
   onPolicy: (policy) => {
     currentPolicy = policy;
@@ -99,6 +101,7 @@ const ws = new WsClient({
   onProfile: (profile) => void chrome.storage.local.set({ pairedProfile: profile }),
   onGranted: (granted) => void chrome.storage.local.set({ grantedSites: granted }),
   onBlocked: (host, method) => void rememberBlocked(host, method),
+  onLatestExtension: (version) => void chrome.storage.local.set({ latestExtension: version }),
   log: (m) => console.debug('[chrome-mcp]', m),
 });
 const router = new CommandRouter({
@@ -262,12 +265,21 @@ async function persistState(state: ConnState): Promise<void> {
   await chrome.storage.local.set({ connState: state });
 }
 
+/** How Chrome installed this copy: "normal" from the store, "development" when loaded unpacked. */
+async function installType(): Promise<string | undefined> {
+  try {
+    return (await chrome.management.getSelf()).installType;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Connect if we have config and aren't already connected (and weren't rejected). */
 async function ensureConnected(): Promise<void> {
   if (ws.isConnected() || ws.state === 'unauthorized') return;
   const cfg = await getConfig();
   if (!cfg) return;
-  ws.connect(cfg.wsPort, cfg.token, cfg.profile, cfg.installId);
+  ws.connect(cfg.wsPort, cfg.token, cfg.profile, cfg.installId, await installType());
 }
 
 // --- keepalive: an awaited extension-API call resets the 30s idle timer -----
@@ -281,7 +293,11 @@ async function keepalivePulse(): Promise<void> {
 }
 
 // --- top-level listeners (synchronous registration) -------------------------
-chrome.runtime.onInstalled.addListener(() => void bootstrap());
+chrome.runtime.onInstalled.addListener((details) => {
+  void bootstrap();
+  // A fresh install opens Settings, whose first thing is the Connect button.
+  if (details.reason === 'install') void chrome.runtime.openOptionsPage();
+});
 chrome.runtime.onStartup.addListener(() => void bootstrap());
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -320,7 +336,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     // page also reports our id, but its url is the page's, never ours.
     if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return;
     if (!ws.isConnected()) {
-      reply({ ok: false, error: 'not connected to the chrome-mcp server' });
+      reply({ ok: false, error: 'not connected to the MCP Browser Extension server' });
       return;
     }
     const frame: SiteGrantFrame = { type: 'site_grant', v: PROTOCOL_VERSION, host: msg.host, allow: msg.allow !== false };
@@ -337,12 +353,34 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
 });
 
+/**
+ * Refetch the pairing from the native helper without a click, once the person
+ * has granted it: after a token rotation, or when nothing is configured yet.
+ * Only writes when something changed, so a reject can't loop.
+ */
+async function healFromHelper(): Promise<boolean> {
+  try {
+    if (!(await chrome.permissions.contains({ permissions: ['nativeMessaging'] }))) return false;
+    const reply = await fetchPairing();
+    if (!reply.ok) return false;
+    const { wsPort, token } = await chrome.storage.local.get(['wsPort', 'token']);
+    if (wsPort === reply.port && token === reply.token) return false;
+    await applyPairing(reply);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrap(): Promise<void> {
   await chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
   await reloadIfFilesChanged();
   // Zero-paste pairing: if this folder carries the server's pairing.json, adopt
   // it. When that writes storage, onChanged reconnects; otherwise connect now.
-  if (!(await adoptBundledPairing())) await ensureConnected();
+  if (await adoptBundledPairing()) return; // storage changed: onChanged reconnects
+  // Nothing configured but one-click pairing was granted before: fetch it.
+  if (!(await getConfig()) && (await healFromHelper())) return;
+  await ensureConnected();
 }
 
 // Eager attempt on worker spin-up (covers wakes not covered by the events above).

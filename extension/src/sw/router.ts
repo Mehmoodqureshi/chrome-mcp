@@ -68,7 +68,7 @@ export class CommandRouter {
       if (!policy && cmd.method !== 'ping_probe') {
         throw new CmdError(
           'POLICY_DENIED',
-          'no policy has arrived from the chrome-mcp server yet, so this extension is refusing every command',
+          'no policy has arrived from the MCP Browser Extension server yet, so this extension is refusing every command',
         );
       }
       // One tab lookup serves the gate, the executor and the result frame.
@@ -79,7 +79,7 @@ export class CommandRouter {
         // must never read or drive them, whatever the allowlist says, or it
         // could approve a site for itself.
         if (url && isOwnExtensionPage(url)) {
-          throw new CmdError('POLICY_DENIED', "chrome-mcp never acts on the extension's own pages");
+          throw new CmdError('POLICY_DENIED', "MCP Browser Extension never acts on its own pages");
         }
         const verdict = evaluatePolicy(url, cmd.method, policy);
         if (!verdict.ok) throw new CmdError('POLICY_DENIED', verdict.reason);

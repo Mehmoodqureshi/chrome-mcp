@@ -78,3 +78,24 @@ test('extensionInstallDir: defaults to ~/chrome-mcp-extension; CHROME_MCP_EXTENS
     else process.env.CHROME_MCP_EXTENSION_DIR = prev;
   }
 });
+
+test('the mirror never puts an older extension over a newer one', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { syncExtension, compareVersions } = await import('../src/extension-install');
+  const from = mkdtempSync(join(tmpdir(), 'cmcp-old-'));
+  const to = mkdtempSync(join(tmpdir(), 'cmcp-new-'));
+  writeFileSync(join(from, 'manifest.json'), '{"manifest_version":3,"name":"t","version":"0.9.15"}');
+  writeFileSync(join(from, 'background.js'), 'old');
+  writeFileSync(join(to, 'manifest.json'), '{"manifest_version":3,"name":"t","version":"0.9.19"}');
+  writeFileSync(join(to, 'background.js'), 'new');
+  const r = syncExtension(from, to);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.copied, []);
+  assert.equal(readFileSync(join(to, 'background.js'), 'utf8'), 'new');
+  // ...and a newer one still replaces an older one.
+  const r2 = syncExtension(to, from);
+  assert.ok(r2.copied.includes('background.js'));
+  assert.ok(compareVersions('0.10.0', '0.9.19') > 0);
+});

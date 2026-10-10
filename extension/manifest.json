@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MCP Browser Extension",
   "version": "0.9.19",
-  "description": "Lets a local chrome-mcp server drive this browser. Pair it with the server's handshake token.",
+  "description": "Lets your AI agent (Claude, Cursor, Codex) use the Chrome you are signed into, through a local MCP server. Deny-all by default.",
   "homepage_url": "https://mcp-browser-extension.vercel.app",
   "minimum_chrome_version": "116",
   "icons": {
@@ -37,5 +37,8 @@
       "128": "icon128.png"
     },
     "default_popup": "popup.html"
-  }
+  },
+  "optional_permissions": [
+    "nativeMessaging"
+  ]
 }

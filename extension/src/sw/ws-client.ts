@@ -28,6 +28,8 @@ export interface WsClientDeps {
   onProfile?: (profile: string) => void;
   /** Receives the sites allowed at runtime from Options (null: the server can't take grants). */
   onGranted?: (granted: string[] | null) => void;
+  /** The extension version bundled with the server (null: an older server that does not say). */
+  onLatestExtension?: (version: string | null) => void;
   /** The server refused a call because `host` is not on the allowlist. */
   onBlocked?: (host: string, method: string) => void;
   log: (message: string) => void;
@@ -48,7 +50,7 @@ export class WsClient {
     return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN;
   }
 
-  connect(port: number, token: string, profile?: string, installId?: string): void {
+  connect(port: number, token: string, profile?: string, installId?: string, install?: string): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -70,6 +72,7 @@ export class WsClient {
         ext: { id: chrome.runtime.id, version: chrome.runtime.getManifest().version, chrome: chromeVersion() },
         profile: profile && profile.trim() ? profile.trim() : undefined,
         installId,
+        ...(install ? { install } : {}),
         // This build gates fail-closed and reports tab URLs on results, so the
         // server may skip its pre-flight tabs_list. An older build omits this and
         // the server keeps fetching the URL itself.
@@ -90,6 +93,7 @@ export class WsClient {
           this.deps.onPolicy(frame.policy);
           if (typeof frame.profile === 'string') this.deps.onProfile?.(frame.profile);
           this.deps.onGranted?.(Array.isArray(frame.granted) ? frame.granted : null);
+          this.deps.onLatestExtension?.(typeof frame.latestExtension === 'string' ? frame.latestExtension : null);
           this.setState('connected');
           this.deps.log('paired with server');
           break;

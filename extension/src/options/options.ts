@@ -5,6 +5,7 @@
  */
 
 import { DEFAULT_WS_PORT } from '../../../shared/protocol';
+import { connectWithOneClick } from '../connect';
 
 const portEl = document.getElementById('port') as HTMLInputElement;
 const tokenEl = document.getElementById('token') as HTMLInputElement;
@@ -40,7 +41,7 @@ async function loadExisting(): Promise<void> {
         ? 'Paired by hand. Saved values take precedence over the bundled pairing.json.'
         : typeof wsPort === 'number' && wsPort > 0 && connState !== 'idle'
           ? 'Paired with values saved by an earlier version. Saving here keeps them manual.'
-          : 'Not paired yet. If you loaded this extension from the chrome-mcp package folder, start the server once and it pairs itself; otherwise paste the values below.';
+          : 'Not paired yet. If you loaded this extension from the MCP Browser Extension package folder, start the server once and it pairs itself; otherwise paste the values below.';
   // Prefill a real value (not just the placeholder) so an empty Save can never
   // store port 0 → ws://127.0.0.1:0 → ERR_UNSAFE_PORT. Defaults to the server's port.
   portEl.value = typeof wsPort === 'number' && wsPort > 0 ? String(wsPort) : String(DEFAULT_WS_PORT);
@@ -48,7 +49,24 @@ async function loadExisting(): Promise<void> {
   render(typeof connState === 'string' ? connState : 'idle');
 }
 
+const quickEl = document.getElementById('quick') as HTMLDivElement;
+const connectEl = document.getElementById('connect') as HTMLButtonElement;
+const connectMsgEl = document.getElementById('connect-msg') as HTMLParagraphElement;
+
+connectEl.addEventListener('click', async () => {
+  connectEl.disabled = true;
+  connectEl.textContent = 'Connecting…';
+  const res = await connectWithOneClick();
+  connectEl.disabled = false;
+  connectEl.textContent = 'Connect';
+  connectMsgEl.className = res.ok ? 'hint' : 'hint error';
+  connectMsgEl.textContent = res.ok ? 'Connecting…' : (res.message ?? 'Could not connect.');
+});
+
 function render(state: string): void {
+  // Always offered: "Connect" while unpaired, "Connect again" to re-pair on purpose.
+  quickEl.hidden = false;
+  if (!connectEl.disabled) connectEl.textContent = state === 'connected' ? 'Connect again' : 'Connect';
   const labels: Record<string, string> = {
     connected: '✅ connected',
     connecting: '… connecting',
@@ -97,7 +115,7 @@ async function grant(host: string, allow: boolean): Promise<void> {
     | null;
   sitesNoteEl.textContent = res?.ok
     ? ''
-    : `Could not reach the chrome-mcp server${res?.error ? ` (${res.error})` : ''}. Is a Claude session running?`;
+    : `Could not reach the MCP Browser Extension server${res?.error ? ` (${res.error})` : ''}. Is your AI client running?`;
 }
 
 function button(label: string, onClick: () => void): HTMLButtonElement {
@@ -155,10 +173,10 @@ async function renderSites(): Promise<void> {
     ),
   );
   if (connState !== 'connected') {
-    sitesNoteEl.textContent = 'Connect to the chrome-mcp server to see and change the allowed sites.';
+    sitesNoteEl.textContent = 'Connect to the MCP Browser Extension server to see and change the allowed sites.';
   } else if (granted === null) {
     sitesNoteEl.textContent =
-      'This chrome-mcp server does not take sites from here (it is older, or runs with --no-site-grants). Use --allow-domain instead.';
+      'This MCP Browser Extension server does not take sites from here (it is older, or runs with --no-site-grants). Use --allow-domain instead.';
   } else if (allowed.length === 0) {
     sitesNoteEl.textContent = 'No sites are allowed yet.';
   } else {

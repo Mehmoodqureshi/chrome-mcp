@@ -395,3 +395,28 @@ test("calls without a tabId go to the agent's own tab, opened in the background"
   resetWorkTab();
   resetManagerForTesting();
 });
+
+test('an unpacked extension is reported with a tip to move to the store; the store copy is not', async () => {
+  const { STORE_EXTENSION_ID } = await import('../shared/protocol');
+  const bridge = new BridgeServer({ token: TOKEN, serverVersion: '0.9.20', port: 0, heartbeatMs: 0, latestExtensionVersion: '0.9.21' });
+  const port = await bridge.start();
+  try {
+    const open = async (id: string, version: string, profile: string): Promise<Ext> => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+      await once(ws, 'open');
+      const ext = new Ext(ws);
+      ext.send({ type: 'hello', token: TOKEN, ext: { id, version, chrome: '1' }, profile });
+      const welcome = await ext.next('welcome');
+      assert.equal(welcome.latestExtension, '0.9.21');
+      return ext;
+    };
+    await open('abcdefghijklmnopabcdefghijklmnop', '0.9.15', 'dev');
+    await open(STORE_EXTENSION_ID, '0.9.19', 'store');
+    assert.deepEqual(bridge.extensionInfo('dev'), { version: '0.9.15', source: 'unpacked' });
+    assert.match(String(bridge.extensionUpdateTip('dev')), /0\.9\.15; the current one is 0\.9\.21.*Chrome Web Store/);
+    assert.deepEqual(bridge.extensionInfo('store'), { version: '0.9.19', source: 'store' });
+    assert.equal(bridge.extensionUpdateTip('store'), null, 'Chrome updates the store copy itself');
+  } finally {
+    await bridge.stop();
+  }
+});

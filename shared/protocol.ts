@@ -26,6 +26,15 @@ export type ProtocolVersion = typeof PROTOCOL_VERSION;
  */
 export const DEFAULT_WS_PORT = 38017 as const;
 
+/**
+ * The Chrome Web Store copy of the extension. Chrome updates that copy on its
+ * own; any other id is an unpacked (or self-packed) copy, which only changes
+ * when someone replaces its files, so both ends nudge those users to the store.
+ */
+export const STORE_EXTENSION_ID = 'jelfhdlkhbfmlpbghoeaepijllcnplgh' as const;
+export const STORE_EXTENSION_URL =
+  'https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh' as const;
+
 /** Loopback host. Never bind 0.0.0.0. */
 export const BRIDGE_HOST = '127.0.0.1' as const;
 
@@ -205,6 +214,10 @@ export interface HelloFrame extends BaseFrame {
    *  Chrome profile. With no `profile` label, the server names the browser from it
    *  ("default", "profile-2", ...) so two blank-profile browsers never collide. */
   installId?: string;
+  /** How Chrome installed this copy (`chrome.management` installType):
+   *  "normal" for the store, "development" for unpacked. Unpacked builds carry
+   *  the store key, so the id alone cannot tell them apart. */
+  install?: string;
   /** Optional capability advertisements (see `WIRE_CAP_TAB_URL`). An extension
    *  that sends none gets the conservative path, so old builds stay correct. */
   caps?: string[];
@@ -243,6 +256,9 @@ export interface WelcomeFrame extends BaseFrame {
   /** The profile name this browser was paired as (shown in the Options page).
    *  Optional so an older server's welcome still parses. */
   profile?: string;
+  /** The extension version bundled with this server: an unpacked copy older
+   *  than this is out of date. Absent from older servers. */
+  latestExtension?: string;
   /** Sites allowed at runtime from this Options page (a subset of
    *  `policy.allowDomains`; the rest came from the server's flags and can only be
    *  changed there). Absent from a server too old to take runtime grants. */

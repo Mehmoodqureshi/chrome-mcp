@@ -84,6 +84,11 @@
       #allowed { max-height: 150px; overflow-y: auto; scrollbar-width: thin; }
       .blocked { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); background: linear-gradient(180deg, var(--warn-soft), var(--card) 70%); }
       .blocked h2 { color: var(--warn); }
+      .update { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--card)), var(--card) 75%); }
+      .update h2 { color: var(--accent); }
+      .update .note { margin: 0 0 10px; color: var(--fg); }
+      .actions { display: flex; gap: 8px; }
+      .actions .primary { flex: 1; }
       .blocked .row:hover { background: color-mix(in srgb, var(--warn-soft) 70%, transparent); }
 
       /* -- buttons -- */
@@ -110,11 +115,17 @@
       ol { margin: 2px 0 12px; padding-left: 18px; color: var(--muted); }
       ol li { margin: 3px 0; }
       code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); }
-      #pair { width: 100%; }
+      .connect .note { margin: 0 0 10px; color: var(--fg); }
+      #connect { width: 100%; padding: 10px 12px; font-size: 13.5px; font-weight: 600; }
+      #connect.secondary { background: var(--panel); color: var(--fg); border-color: var(--line); box-shadow: none; padding: 7px 12px; font-size: 12.5px; font-weight: 500; }
+      .connect .error { margin: 8px 0 0; color: var(--warn); }
+      .connect.done { padding: 10px 12px; }
+      .connect.done .note { display: none; }
 
       footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px 12px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
       footer a { display: inline-flex; align-items: center; gap: 5px; color: var(--fg); font-weight: 500; text-decoration: none; cursor: pointer; padding: 4px 8px; border-radius: 8px; transition: background 0.15s; }
       footer a:hover { background: var(--panel); }
+
       [hidden] { display: none !important; }
     </style>
   </head>
@@ -123,19 +134,25 @@
       <div class="logo"><img src="icon48.png" alt="" /></div>
       <div class="title">
         <b>MCP Browser Extension</b>
-        <span id="paired-as">chrome-mcp</span>
+        <span id="paired-as">Lets your AI agent use this Chrome</span>
       </div>
       <span class="pill" id="state"><span class="dot"></span><span id="state-text">…</span></span>
     </header>
 
     <main>
-      <section class="card" id="unpaired" hidden>
-        <h2>Connect your AI client</h2>
-        <ol>
-          <li>Start chrome-mcp from Claude Code, Cursor or another MCP client.</li>
-          <li>Paste the port and token from <code>~/.chrome-mcp/handshake.json</code> in Settings.</li>
-        </ol>
-        <button class="primary" id="pair">Open Settings to pair</button>
+      <section class="card update" id="update" hidden>
+        <h2 id="update-title">Get automatic updates</h2>
+        <p class="note" id="update-text"></p>
+        <div class="actions">
+          <button class="primary" id="update-store">Install from Chrome Web Store</button>
+          <button class="ghost" id="update-dismiss">Not now</button>
+        </div>
+      </section>
+
+      <section class="card connect" id="connect-card">
+        <p class="note" id="connect-text">One click: fetches the port and token from your AI client's server and connects.</p>
+        <button class="primary" id="connect">Connect</button>
+        <p class="note error" id="connect-msg"></p>
       </section>
 
       <section class="card" id="this-site" hidden>

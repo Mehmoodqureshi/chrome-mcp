@@ -48,7 +48,7 @@ const SEND_TIMEOUT_MS = 3_000;
 const STATE_FILE = 'telemetry.json';
 
 export const TELEMETRY_NOTICE =
-  'chrome-mcp collects anonymous usage statistics (version, OS, tool call and error counts; never URLs, ' +
+  'MCP Browser Extension collects anonymous usage statistics (version, OS, tool call and error counts; never URLs, ' +
   'page content or arguments) to see how it is used. Turn it off with CHROME_MCP_TELEMETRY=0 or DO_NOT_TRACK=1. ' +
   'Details: https://github.com/Mehmoodqureshi/chrome-mcp#telemetry';
 
@@ -196,7 +196,7 @@ class Telemetry {
     return {
       $mcp_source: 'posthog_mcp_analytics',
       $session_id: this.sessionId,
-      $mcp_server_name: 'chrome-mcp',
+      $mcp_server_name: 'mcp-browser-extension',
       $mcp_server_version: this.opts.version,
       ...(client?.name ? { $mcp_client_name: client.name } : {}),
       ...(client?.version ? { $mcp_client_version: client.version } : {}),

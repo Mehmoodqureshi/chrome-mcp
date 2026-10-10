@@ -207,13 +207,13 @@ export class HubLink {
 
   private request(frame: RelayFrame | PeerRenameFrame, timeoutMs: number): Promise<unknown> {
     if (!this.isOpen()) {
-      return Promise.reject(new ExecutorError('EXTENSION_DISCONNECTED', 'the shared chrome-mcp hub is not reachable'));
+      return Promise.reject(new ExecutorError('EXTENSION_DISCONNECTED', 'the shared MCP Browser Extension server is not reachable'));
     }
     const id = String(++this.seq);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new ExecutorError('TIMEOUT', `the shared chrome-mcp hub did not answer ${frame.type} within ${timeoutMs} ms`));
+        reject(new ExecutorError('TIMEOUT', `the shared MCP Browser Extension server did not answer ${frame.type} within ${timeoutMs} ms`));
       }, timeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -254,7 +254,7 @@ export class HubLink {
       clearTimeout(p.timer);
       // Retryable: the dispatcher re-runs idempotent calls once, by which time a
       // surviving server has usually taken the port over.
-      p.reject(new ExecutorError('EXTENSION_DISCONNECTED', 'the shared chrome-mcp hub went away mid-call'));
+      p.reject(new ExecutorError('EXTENSION_DISCONNECTED', 'the shared MCP Browser Extension server went away mid-call'));
     }
     this.pending.clear();
     this.onClose();

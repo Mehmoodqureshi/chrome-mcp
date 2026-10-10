@@ -138,7 +138,7 @@ test('an extension without an installId still pairs as "default"', async () => {
   try {
     const old = await Fake.open(port, 'OLD');
     assert.equal(old.pairedAs, 'default');
-    assert.deepEqual(bridge.pairedProfiles(), [{ name: 'default', naming: 'legacy' }]);
+    assert.deepEqual(bridge.pairedProfiles(), [{ name: 'default', naming: 'legacy', extVersion: '1', extSource: 'unpacked' }]);
   } finally {
     await bridge.stop();
   }

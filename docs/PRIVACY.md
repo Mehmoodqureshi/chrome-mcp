@@ -2,13 +2,14 @@
 
 Last updated: 2026-10-10
 
-MCP Browser Extension is the browser half of chrome-mcp, an open-source tool
+MCP Browser Extension is an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
 running on your own computer drive the Chrome you already use.
 
 ## What the extension does
 
-It opens a WebSocket connection to a chrome-mcp server running on the same
+It opens a WebSocket connection to the MCP Browser Extension server (npm
+package `@mehmoodqureshi/chrome-mcp`) running on the same
 machine, at `127.0.0.1` only, and carries out the commands that server sends:
 listing and opening tabs, navigating, clicking, typing, reading page text and
 HTML, taking screenshots, reading cookies and site storage, and saving
@@ -35,6 +36,16 @@ client (for example Claude Code or Claude Desktop).
   with an Allow button. They stay in local storage until you allow or dismiss
   them. When you click Allow or Remove, that host name is sent to the local
   server only.
+
+## One-click Connect
+
+The Connect button uses Chrome's native messaging. The MCP Browser Extension
+server registers a small helper with your browsers each time it starts; when you
+click Connect (and allow the optional "communicate with cooperating native
+applications" permission), the extension asks that helper for the port and token
+from `~/.chrome-mcp/handshake.json` and saves them like a manual pairing would.
+It all happens on your computer. Chrome allows only this extension to start the
+helper, and the helper answers nothing but the pairing.
 
 ## What it does not do
 
@@ -63,15 +74,17 @@ can clear them by removing the extension. Anything the server saves
 Options page, in `allowed-sites.json`) lives in `~/.chrome-mcp` on your own
 machine under your control.
 
-## The chrome-mcp server (separate from the extension)
+## The MCP Browser Extension server (separate from the extension)
 
-This policy covers the extension, which sends nothing anywhere. The chrome-mcp
+This policy covers the extension, which sends nothing anywhere. The MCP Browser Extension
 server, the npm package you run from your MCP client, makes two kinds of
 outside requests:
 
 - **Anonymous usage statistics**, to PostHog: a random install id (not the
   extension's), its version, OS, CPU architecture, Node version, whether the
-  session owns or shares the bridge port, how many browsers are paired and, when
+  session owns or shares the bridge port, how many browsers are paired, the
+  paired extension's version and whether it is the store or an unpacked copy,
+  and, when
   none is, which of a few fixed reasons applies (`no_extension`,
   `token_mismatch`, `version_mismatch`, `profile_mismatch`), counts of tool
   calls and error codes, and for each tool call its name and group, duration,

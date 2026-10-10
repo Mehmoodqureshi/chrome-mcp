@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>MCP Browser Extension — Pairing</title>
+    <title>MCP Browser Extension — Settings</title>
     <style>
       body { font: 14px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
       h1 { font-size: 1.2rem; }
@@ -23,10 +23,20 @@
       .blocked li { background: #fff7ed; padding-left: 0.5rem; }
       .row { display: flex; gap: 0.5rem; }
       .row button { margin-top: 0; }
+      .quick { margin: 1rem 0 1.25rem; padding: 1rem; border-radius: 0.6rem; background: #eef4ff; border: 1px solid #c9dafc; }
+      .quick button.primary { margin-top: 0; width: 100%; padding: 0.7rem; font-weight: 600; color: #fff; border: 0; border-radius: 0.5rem; background: linear-gradient(135deg, #2563eb, #7c3aed); }
+      .quick .hint { margin: 0.5rem 0 0; }
+      .quick .hint.error { color: #b45309; }
     </style>
   </head>
   <body>
-    <h1>Pair with chrome-mcp</h1>
+    <h1>MCP Browser Extension</h1>
+    <p class="hint">Pair this browser with the MCP Browser Extension server your AI client runs.</p>
+    <div class="quick" id="quick">
+      <button id="connect" class="primary">Connect</button>
+      <p class="hint" id="connect-msg">One click fetches the port and token from the server. Chrome asks once for permission.</p>
+    </div>
+    <p class="hint" id="manual-intro">Or pair by hand:</p>
     <p class="hint" id="source">Checking pairing source…</p>
     <p class="hint">
       Manual pairing: run <code>npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing</code>,
@@ -46,7 +56,7 @@
       <code>profile_use</code>. Type a name here only to pin one yourself.
     </p>
     <p class="hint" id="paired-as"></p>
-    <label class="check"><input id="tab-border" type="checkbox" checked /> Outline the tabs chrome-mcp is working in</label>
+    <label class="check"><input id="tab-border" type="checkbox" checked /> Outline the tabs the agent is working in</label>
     <p class="hint">
       A border in the page's theme colour (blue when the site has none) marks every tab the
       agent is driving. It never shows in screenshots or PDFs, and is removed when the server disconnects.
@@ -57,8 +67,8 @@
     <section id="sites-section">
       <h2>Allowed sites</h2>
       <p class="hint">
-        chrome-mcp only reads or acts on sites you allow. Allowing one here applies at once to every
-        Claude session, with no restart, and is remembered.
+        MCP Browser Extension only reads or acts on sites you allow. Allowing one here applies at once to every
+        AI session, with no restart, and is remembered.
       </p>
       <div id="blocked-wrap" hidden>
         <p><strong>Recently blocked</strong></p>

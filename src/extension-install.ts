@@ -49,6 +49,27 @@ export interface SyncResult {
   error?: string;
 }
 
+/** The `version` of a manifest.json, or null when absent or unreadable. */
+function manifestVersion(path: string): string | null {
+  try {
+    const v = (JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }).version;
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Compare dotted versions numerically: >0 when a is newer, <0 when older, 0 when equal. */
+export function compareVersions(a: string, b: string): number {
+  const x = a.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const y = b.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 function sameBytes(a: Buffer, b: Buffer): boolean {
   return a.length === b.length && a.equals(b);
 }
@@ -70,6 +91,13 @@ export function syncExtension(from: string = bundledExtensionDir(), to: string =
       statSync(to);
     } catch {
       created = true;
+    }
+    // Never downgrade: an older server (a session left running for days) must
+    // not put its stale build over a newer one another session already wrote.
+    const srcVersion = manifestVersion(join(from, 'manifest.json'));
+    const dstVersion = created ? null : manifestVersion(join(to, 'manifest.json'));
+    if (srcVersion && dstVersion && compareVersions(dstVersion, srcVersion) > 0) {
+      return { dir: to, copied, created, ok: true };
     }
     mkdirSync(to, { recursive: true });
     for (const e of entries) {

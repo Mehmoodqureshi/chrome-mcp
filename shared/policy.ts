@@ -205,7 +205,7 @@ export function blockedDomainMessage(method: string, host: string, policy: WireP
     `To allow ${host} right now, ask the user to click the MCP Browser Extension's toolbar icon in Chrome ` +
     `and click Allow next to ${host}: it applies at once, no restart. ` +
     `You cannot approve a site yourself. ` +
-    `Or add --allow-domain "${host}" (or "*.${host}" to include subdomains) to the chrome-mcp settings and restart. ` +
+    `Or add --allow-domain "${host}" (or "*.${host}" to include subdomains) to the MCP Browser Extension server settings (its entry in your MCP config) and restart. ` +
     `To allow every site (less safe), use --unsafe-all-domains.`
   );
 }

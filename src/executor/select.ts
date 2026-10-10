@@ -98,7 +98,7 @@ export function createSelector(deps: SelectorDeps): () => Promise<Executor> {
     const reason = ext.unavailableReason?.();
     throw new ExecutorError(
       'NO_BACKEND',
-      reason ?? 'No Chrome available: pair the chrome-mcp extension (Options: Port, token, Profile).',
+      reason ?? 'No Chrome available: pair the MCP Browser Extension (its Settings: Port, token, Profile).',
     );
   };
 }

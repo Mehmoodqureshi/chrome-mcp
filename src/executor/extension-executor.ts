@@ -132,7 +132,7 @@ export class ExtensionExecutor implements Executor {
     if (!this.bridge.hasConnection(profile)) return this.bridge.noPairMessage(profile);
     return (
       `The browser paired for profile "${profile}" is not responding. Open that Chrome, ` +
-      `or reload the chrome-mcp extension in chrome://extensions, then retry.`
+      `or reload the MCP Browser Extension in chrome://extensions, then retry.`
     );
   }
 

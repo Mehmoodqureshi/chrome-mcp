@@ -108,7 +108,7 @@ export async function maybeHandOff(opts: HandOffOptions): Promise<number | null>
   // back to an older copy.
   const args = ['-y', `${PACKAGE_NAME}@${latest}`, ...opts.argv];
   const spawn = opts.spawn ?? nodeSpawn;
-  opts.log?.(`chrome-mcp ${latest} is available (this copy is ${opts.current}) — starting it now`);
+  opts.log?.(`MCP Browser Extension server ${latest} is available (this copy is ${opts.current}) — starting it now`);
 
   let child: ChildProcess;
   try {
@@ -117,7 +117,7 @@ export async function maybeHandOff(opts: HandOffOptions): Promise<number | null>
         spawn('npx.cmd', args.map(winQuote), { stdio: 'inherit', env: { ...env, [HANDOFF_ENV]: opts.current }, shell: true })
       : spawn('npx', args, { stdio: 'inherit', env: { ...env, [HANDOFF_ENV]: opts.current } });
   } catch (err) {
-    opts.log?.(`could not start chrome-mcp ${latest} (${err instanceof Error ? err.message : String(err)}); running ${opts.current}`);
+    opts.log?.(`could not start MCP Browser Extension server ${latest} (${err instanceof Error ? err.message : String(err)}); running ${opts.current}`);
     return null;
   }
 
@@ -143,7 +143,7 @@ export async function maybeHandOff(opts: HandOffOptions): Promise<number | null>
       // npx missing or not runnable: nothing has touched stdin yet, so this copy
       // can still serve the session.
       if (!started) {
-        opts.log?.(`could not start chrome-mcp ${latest} (${err.message}); running ${opts.current}`);
+        opts.log?.(`could not start MCP Browser Extension server ${latest} (${err.message}); running ${opts.current}`);
         resolve(null);
       } else {
         resolve(1);

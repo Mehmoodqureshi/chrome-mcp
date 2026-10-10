@@ -10,7 +10,8 @@
  */
 
 import { isDomainAllowed } from '../../../shared/policy';
-import type { WirePolicy } from '../../../shared/protocol';
+import { STORE_EXTENSION_URL, type WirePolicy } from '../../../shared/protocol';
+import { connectWithOneClick } from '../connect';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -25,7 +26,7 @@ async function grant(host: string, allow: boolean): Promise<void> {
   const res = (await chrome.runtime.sendMessage({ type: 'site_grant', host, allow }).catch(() => null)) as
     | { ok: boolean; error?: string }
     | null;
-  $('allowed-note').textContent = res?.ok ? '' : 'Could not reach the chrome-mcp server. Is your AI client running?';
+  $('allowed-note').textContent = res?.ok ? '' : 'Could not reach the MCP Browser Extension server. Is your AI client running?';
 }
 
 function button(label: string, onClick: () => void, kind: 'primary' | 'ghost' | '' = ''): HTMLButtonElement {
@@ -91,6 +92,8 @@ async function render(): Promise<void> {
     'grantedSites',
     'blockedSites',
     'tabBorder',
+    'latestExtension',
+    'updateDismissedFor',
   ]);
   const state = typeof s.connState === 'string' ? s.connState : 'idle';
   const connected = state === 'connected';
@@ -114,7 +117,18 @@ async function render(): Promise<void> {
   $('paired-as').textContent =
     connected && typeof s.pairedProfile === 'string' ? `Paired as ${s.pairedProfile}` : 'Lets your AI agent use this Chrome';
   $('version').textContent = `v${chrome.runtime.getManifest().version}`;
-  $('unpaired').hidden = connected || state === 'connecting';
+  // The Connect button is always here: the main action while not connected,
+  // a quiet "Reconnect" once connected (to re-pair after a server change).
+  const btn = $('connect') as HTMLButtonElement;
+  if (!btn.disabled) {
+    btn.textContent = connected ? 'Reconnect' : state === 'unauthorized' ? 'Connect again' : 'Connect';
+    btn.className = connected ? 'secondary' : 'primary';
+  }
+  $('connect-card').className = connected ? 'card connect done' : 'card connect';
+  $('connect-text').textContent =
+    state === 'unauthorized'
+      ? 'The server has a new token. One click fetches it and reconnects.'
+      : "One click: fetches the port and token from your AI client's server and connects.";
 
   // -- this site --
   const host = connected ? await currentHost() : null;
@@ -161,17 +175,62 @@ async function render(): Promise<void> {
   else if (connected && granted === null) $('allowed-note').textContent = 'This server takes sites only from its flags.';
 
   ($('tab-border') as HTMLInputElement).checked = s.tabBorder !== false;
+  void renderUpdate(typeof s.latestExtension === 'string' ? s.latestExtension : null, s.updateDismissedFor);
 }
+
+/** Compare dotted versions numerically: >0 when a is newer. */
+function compareVersions(a: string, b: string): number {
+  const x = a.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const y = b.split('.').map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * An unpacked copy never updates through Chrome. Point it at the store copy,
+ * which does, saying so more firmly when it is already behind the server's.
+ * "Not now" hides it until the next version comes out.
+ */
+async function renderUpdate(latest: string | null, dismissedFor: unknown): Promise<void> {
+  const mine = chrome.runtime.getManifest().version;
+  // Unpacked builds carry the store key, so ask Chrome how this copy was installed.
+  const unpacked = await chrome.management
+    .getSelf()
+    .then((me) => me.installType === 'development')
+    .catch(() => false);
+  const behind = latest !== null && compareVersions(latest, mine) > 0;
+  const key = latest ?? mine;
+  $('update').hidden = !unpacked || dismissedFor === key;
+  $('update-title').textContent = behind ? `Update available: ${latest}` : 'Get automatic updates';
+  $('update-text').textContent = behind
+    ? `You have ${mine}. This copy was loaded by hand and does not update itself. The Chrome Web Store copy updates automatically.`
+    : 'This copy was loaded by hand and does not update itself. Install the Chrome Web Store copy to get every update automatically, then remove this one.';
+  $('update-dismiss').onclick = () => void chrome.storage.local.set({ updateDismissedFor: key }).then(render);
+}
+
+$('update-store').addEventListener('click', () => void chrome.tabs.create({ url: STORE_EXTENSION_URL }));
 
 $('tab-border').addEventListener('change', (e) => {
   void chrome.storage.local.set({ tabBorder: (e.target as HTMLInputElement).checked });
 });
 $('settings').addEventListener('click', () => void chrome.runtime.openOptionsPage());
-$('pair').addEventListener('click', () => void chrome.runtime.openOptionsPage());
+$('connect').addEventListener('click', async () => {
+  const btn = $('connect') as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  $('connect-msg').textContent = '';
+  const res = await connectWithOneClick();
+  btn.disabled = false;
+  if (!res.ok) $('connect-msg').textContent = res.message ?? 'Could not connect.';
+  void render();
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.connState || changes.allowedSites || changes.grantedSites || changes.blockedSites || changes.pairedProfile) {
+  if (changes.connState || changes.allowedSites || changes.grantedSites || changes.blockedSites || changes.pairedProfile || changes.latestExtension) {
     void render();
   }
 });
