@@ -61,8 +61,9 @@ for one), so the question is what you get on top of the session:
   keys and JWTs out of page reads.
 - **An audit trail**: every call is logged with the URL, the allow/deny
   verdict, duration and bytes returned.
-- **Background tabs and `batch`**: open pages with `active: false` and read many
-  at once in one call, without stealing focus from the tab you are working in.
+- **It stays out of your tab**: the agent opens its own tabs in the background
+  and works there, so the page you are on is never navigated, clicked or pulled
+  out of focus. `batch` reads many of them at once in one call.
 - **Several Chrome profiles**: load the extension in your work and personal
   profiles and switch between them with `profile_use`.
 - **`auth_check`**: when a session does expire, the agent gets an
@@ -319,10 +320,13 @@ In `parallel` mode, tab-scoped ops **must** pass an explicit `tabId` — the
 active-tab default is unsafe under concurrency, so it's rejected rather than
 silently mis-routed. (`tab_new`, `tabs_list`, `chrome_status` are exempt.)
 
-> **`tab_new` focuses the new tab by default** (so "open X" behaves like opening
-> a link, instead of replacing your current page — use `tab_new`, not
-> `navigate`, to open without losing the current tab). Pass `active: false` to
-> open in the background; parallel batches do this automatically.
+> **The agent works in its own tab, not yours.** `tab_new` opens in the
+> background and that tab becomes the agent's tab: calls without a `tabId` go
+> there. `navigate` with no tab of its own yet opens one rather than replacing
+> your page, and `tab_new` only reuses blank tabs it opened itself, never a New
+> Tab page of yours. Before the agent opens anything, reads see your active tab,
+> so "summarize this page" still works; to act on your page, the agent passes its
+> `tabId` from `tabs_list`. Pass `active: true` to bring a tab to the front.
 
 ### Reaching into iframes and shadow roots
 

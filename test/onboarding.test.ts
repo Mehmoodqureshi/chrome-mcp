@@ -330,3 +330,68 @@ test('a call right after a background tab_new waits for the tab to get its URL',
   assert.equal(lists, 1);
   resetManagerForTesting();
 });
+
+// -- F. the agent works in its own tab, never the one the person is on -------------
+
+test("calls without a tabId go to the agent's own tab, opened in the background", async () => {
+  const { dispatchToolCall, resetRateLimiter, resetWorkTab } = await import('../src/mcp/tools');
+  const { configureManager, resetManagerForTesting } = await import('../src/executor/manager');
+  const { StubExecutor } = await import('../src/executor/stub-executor');
+  const { resolvePolicy } = await import('../src/security/policy');
+  resetManagerForTesting();
+  resetRateLimiter();
+  resetWorkTab();
+  const USER = 'ext:x:1';
+  const AGENT = 'ext:x:2';
+  const calls: Array<[string, unknown]> = [];
+  let agentOpen = false;
+  const ex = new StubExecutor({ activeUrl: 'https://example.com' });
+  Object.assign(ex, {
+    tabsList: async () => [
+      { tabId: USER, url: 'https://mail.example.com', title: 'yours', active: true, index: 0 },
+      ...(agentOpen ? [{ tabId: AGENT, url: 'https://example.com', title: 'agent', active: false, index: 1 }] : []),
+    ],
+    tabNew: async (url: string | undefined, opts: { active?: boolean }) => {
+      calls.push(['tabNew', { url, active: opts?.active }]);
+      agentOpen = true;
+      return { tabId: AGENT, url: '', title: '', active: false, index: 1 };
+    },
+    navigate: async (a: { url: string; tabId?: string }) => {
+      calls.push(['navigate', a.tabId]);
+      return { url: a.url, title: 't' };
+    },
+    getText: async (_t: unknown, o: { tabId?: string }) => {
+      calls.push(['getText', o?.tabId]);
+      return { text: 'x' };
+    },
+    tabClose: async (id: string) => {
+      agentOpen = false;
+      return { closed: true, tabId: id };
+    },
+  });
+  configureManager({ policy: resolvePolicy({ allowDomains: ['*'], enableMutations: true }), makeExecutor: () => ex });
+
+  // Before the agent has a tab, a read sees the person's page ("look at this").
+  await dispatchToolCall('get_text', {});
+  assert.deepEqual(calls.pop(), ['getText', undefined]);
+
+  // navigate with no tab of its own opens one in the background instead of replacing theirs.
+  const nav = await dispatchToolCall('navigate', { url: 'https://example.com' });
+  assert.deepEqual(calls.splice(0), [['tabNew', { url: undefined, active: false }], ['navigate', AGENT]]);
+  assert.match(JSON.stringify(nav.content), /openedNewTab/);
+
+  // From then on, calls without a tabId go to the agent's tab.
+  await dispatchToolCall('get_text', {});
+  assert.deepEqual(calls.pop(), ['getText', AGENT]);
+
+  // tab_new opens in the background unless asked.
+  await dispatchToolCall('tab_new', { url: 'https://example.com' });
+  assert.deepEqual(calls.pop(), ['tabNew', { url: 'https://example.com', active: false }]);
+
+  // Once the agent's tab is closed, the default falls back to the active tab.
+  await dispatchToolCall('tab_close', { tabId: AGENT });
+  await dispatchToolCall('get_text', {});
+  assert.deepEqual(calls.pop(), ['getText', undefined]);
+  resetWorkTab();
+  resetManagerForTesting();
+});

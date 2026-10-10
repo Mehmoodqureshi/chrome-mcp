@@ -1,3 +1,21 @@
+## 0.9.18 - 2026-10-10
+
+The agent stops touching the tab you are working in. The extension moves to
+0.9.18.
+
+- feat: **the agent works in its own tab.** Each session keeps an agent's tab:
+  the one it last opened or picked. Calls without a `tabId` go there instead of
+  to whatever tab you are looking at. `tab_new` now opens in the background by
+  default (`active: true` brings it forward), and `navigate` with no tab of its
+  own opens one instead of replacing your page. Before the agent opens a tab,
+  reads still see your active tab, so "look at this page" works; to act on your
+  page it passes that tab's id. If you close the agent's tab, calls fall back to
+  the active tab. `chrome_status` reports `agentTab`, and the server
+  instructions tell the agent all this.
+- fix (extension): **`tab_new` only reuses blank tabs chrome-mcp opened.** It
+  used to take over any blank tab, including a New Tab page you had just opened
+  to type into. The tabs it opened are remembered in session storage.
+
 ## 0.9.17 - 2026-10-10
 
 A server-only fix; the extension stays at 0.9.16.

@@ -126,7 +126,7 @@ const LOCATOR_PROPS = {
   ...FRAME_PROPS,
 } as const;
 
-const tabIdField = z.string().describe('Tab id (default: active tab)').optional();
+const tabIdField = z.string().describe("Tab id (default: agent's tab)").optional();
 const authWallField = z.boolean().describe('Error with [AUTH_REQUIRED] if this lands on a sign-in wall (expired session)').optional();
 
 const snapshotAfterField = z
@@ -142,10 +142,10 @@ const waitUntilField = z.enum(['load', 'domcontentloaded', 'networkidle']).descr
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'tabs_list', description: 'List open browser tabs.', inputSchema: {} },
   { name: 'tab_select', description: 'Make a tab active by tabId.', inputSchema: { tabId: z.string() } },
-  { name: 'tab_new', description: 'Open a NEW tab (optionally at a URL) and focus it. Prefer this over `navigate` when the user says "open"/"go to" a site — `navigate` REPLACES the current tab. Pass active:false to open in the background (used by parallel batches).', inputSchema: { url: z.string().optional(), active: z.boolean().optional() } },
+  { name: 'tab_new', description: "Open a NEW tab (optionally at a URL) in the background, leaving the user's tab alone; it becomes the agent's tab, where calls without tabId go. Pass active:true to show it to the user.", inputSchema: { url: z.string().optional(), active: z.boolean().optional() } },
   { name: 'tab_close', description: 'Close a tab by tabId.', inputSchema: { tabId: z.string() } },
 
-  { name: 'navigate', description: 'Navigate a tab to a URL, REPLACING its current page. Acts on the active tab unless tabId is given — to open a site without losing the current page, use `tab_new` instead.', inputSchema: { url: z.string(), tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
+  { name: 'navigate', description: "Navigate the agent's tab to a URL, replacing its page. With no agent's tab yet it opens one in the background: the user's own tab is only navigated when you pass its tabId.", inputSchema: { url: z.string(), tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
   { name: 'back', description: 'Go back in history.', inputSchema: { tabId: tabIdField, failOnAuthWall: authWallField } },
   { name: 'forward', description: 'Go forward in history.', inputSchema: { tabId: tabIdField, failOnAuthWall: authWallField } },
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
@@ -526,6 +526,12 @@ async function gatedUrl(ex: Executor, tabId?: string): Promise<string> {
   if (tabs.length === 0) {
     throw new ExecutorError('TAB_NOT_FOUND', `${GATE_CONTEXT}: the browser reports no open tabs`);
   }
+  // The agent's tab was closed (by the person, say) and this call only reached
+  // it by default: forget it, and act on the active tab as before.
+  if (tabId && tabId === workTab && !tabs.some((t) => t.tabId === tabId)) {
+    workTab = null;
+    tabId = undefined;
+  }
   const target = tabId ? tabs.find((t) => t.tabId === tabId) : tabs.find((t) => t.active);
   if (!target) {
     throw new ExecutorError(
@@ -577,7 +583,22 @@ async function gate(ctx: ToolCtx, method: WireMethod, opts: { url?: string; tabI
   noteGate(url, true);
 }
 
-const tabId = (args: Record<string, unknown>): string | undefined => optionalString(args, 'tabId');
+/**
+ * The agent's tab: the one this session last opened (tab_new, or navigate
+ * with no tab of its own yet) or picked (tab_select). Calls without a tabId go
+ * there, not to whatever tab the person happens to be looking at, so working in
+ * the background never disturbs the page they are on. Null until the agent opens
+ * one; until then, reads still see the person's active tab ("look at this page").
+ */
+let workTab: string | null = null;
+
+/** Test seam, and what a profile switch does: forget the agent's tab. */
+export function resetWorkTab(): void {
+  workTab = null;
+}
+
+/** The tab a call acts on: the one it names, else the agent's tab, else (undefined) the active tab. */
+const tabId = (args: Record<string, unknown>): string | undefined => optionalString(args, 'tabId') ?? workTab ?? undefined;
 
 /** Frame targeting pulled off the raw args. */
 const frameOpts = (args: Record<string, unknown>): FrameOpts => ({
@@ -799,21 +820,40 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   tab_select: async (a, ctx) => {
     await gate(ctx, 'tab_select');
-    return jsonResult(await ctx.ex.tabSelect(requireString(a, 'tabId')));
+    const tab = await ctx.ex.tabSelect(requireString(a, 'tabId'));
+    workTab = tab.tabId; // an explicit pick: later calls follow it
+    return jsonResult(tab);
   },
   tab_new: async (a, ctx) => {
     await gate(ctx, 'tab_new');
-    return jsonResult(await ctx.ex.tabNew(optionalString(a, 'url'), { active: optionalBoolean(a, 'active') }));
+    // Background unless asked: focusing it would pull the person off their tab.
+    const tab = await ctx.ex.tabNew(optionalString(a, 'url'), { active: optionalBoolean(a, 'active') ?? false });
+    workTab = tab.tabId;
+    return jsonResult(tab);
   },
   tab_close: async (a, ctx) => {
     await gate(ctx, 'tab_close');
-    return jsonResult(await ctx.ex.tabClose(requireString(a, 'tabId')));
+    const id = requireString(a, 'tabId');
+    const res = await ctx.ex.tabClose(id);
+    if (workTab === id) workTab = null;
+    return jsonResult(res);
   },
 
   navigate: async (a, ctx) => {
     const url = requireString(a, 'url');
     await gate(ctx, 'navigate', { url });
-    const nav = await ctx.ex.navigate({ url, tabId: tabId(a), waitUntil: waitUntil(a) });
+    // No tab named and none of our own yet: open one in the background rather
+    // than replace the page the person is looking at.
+    let opened = false;
+    if (!tabId(a)) {
+      await gate(ctx, 'tab_new');
+      workTab = (await ctx.ex.tabNew(undefined, { active: false })).tabId;
+      opened = true;
+    }
+    const nav = {
+      ...(await ctx.ex.navigate({ url, tabId: tabId(a), waitUntil: waitUntil(a) })),
+      ...(opened ? { tabId: workTab, openedNewTab: true } : {}),
+    };
     if (!authGuardOn(a, ctx.policy)) return jsonResult(nav);
     // Guard on: the check costs one snapshot round-trip after the navigation.
     const snap = await ctx.ex.snapshot({ tabId: tabId(a), interactiveOnly: true, max: 200 });
@@ -1224,9 +1264,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       ? { pairState: profileBridge.pairState(active), ...(steps.length > 0 ? { setup: steps } : {}) }
       : {};
     const sites = profileBridge ? { sitesAllowedFromOptions: profileBridge.grantedSites() } : {};
+    const agentTab = { agentTab: workTab };
     try {
       const ex = await getManager().ensureReady();
-      return jsonResult({ ...ex.status(), ...profiles, ...pairing, ...sites, ...capabilities });
+      return jsonResult({ ...ex.status(), ...agentTab, ...profiles, ...pairing, ...sites, ...capabilities });
     } catch (err) {
       return jsonResult({
         ready: false,
@@ -1259,6 +1300,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     // different browser entirely — keeping the old tree would diff a page
     // against one from another machine.
     resetSnapshots();
+    workTab = null; // a tab id from another browser means nothing here
     return jsonResult(workspaceView(switchWorkspace({ profile: requireString(a, 'name') })));
   },
   profile_rename: async (a) => {

@@ -26,6 +26,9 @@ client (for example Claude Code or Claude Desktop).
   so it can tell two Chrome profiles apart and keep each one's name.
 - The connection state, the profile name you chose or were given, and your
   "Outline the tabs" setting, also in local storage.
+- The ids of the tabs it opened itself (numbers only, in session storage that
+  Chrome clears when it closes), so it reuses only its own blank tabs and never
+  one of yours.
 - The list of sites the local server currently allows, and up to ten site
   names (host names only, such as `example.com`; never full addresses or page
   content) that the server recently refused, so the Options page can show them

@@ -32,7 +32,9 @@ export const SERVER_INSTRUCTIONS =
   'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), do not retry: ' +
   'give the user the steps in its `setup` field, which name what went wrong and how to fix it. ' +
   'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it on the extension\'s ' +
-  'Options page (click its toolbar icon). It applies at once, with no restart. You cannot approve a site yourself.';
+  'Options page (click its toolbar icon). It applies at once, with no restart. You cannot approve a site yourself. ' +
+  "Work in your own tab: tab_new opens one in the background, and calls without a tabId go to it, never to the tab the user is on. " +
+  "To act on the user's current page, pass its tabId from tabs_list.";
 
 /** Default version reported when no explicit version is passed in (legacy callers/tests). */
 const DEFAULT_VERSION = SERVER_VERSION;

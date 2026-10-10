@@ -112,6 +112,29 @@ function parseTabId(wire: string): number {
   return id;
 }
 
+/**
+ * Tabs chrome-mcp created, so tab_new can reuse its own blank tabs without ever
+ * touching one of the person's. Kept in session storage: it survives the service
+ * worker being evicted, and is cleared when the browser closes (tab ids are
+ * per-session anyway).
+ */
+async function openedByUs(): Promise<Set<number>> {
+  try {
+    const { agentTabs } = await chrome.storage.session.get('agentTabs');
+    return new Set(Array.isArray(agentTabs) ? (agentTabs as number[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+async function rememberOpenedByUs(id: number, present: Set<number>): Promise<void> {
+  const ours = await openedByUs();
+  ours.add(id);
+  // Drop tabs that have since closed, so the list stays small.
+  const live = [...ours].filter((t) => t === id || present.has(t));
+  await chrome.storage.session.set({ agentTabs: live }).catch(() => undefined);
+}
+
 async function currentTabId(): Promise<number> {
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (active?.id !== undefined) return active.id;
@@ -730,9 +753,14 @@ export class ChromeExecutor {
           const present = new Set(tabs.map((t) => t.id).filter((id): id is number => id !== undefined));
           for (const id of claimedTabs) if (!present.has(id)) claimedTabs.delete(id);
 
+          // Only a blank tab chrome-mcp opened itself may be reused. A New Tab
+          // page the person opened is theirs, often the one they are about to
+          // type into, and must never be taken over.
+          const ours = await openedByUs();
           const blank = tabs.find(
             (t) =>
               t.id !== undefined &&
+              ours.has(t.id) &&
               !claimedTabs.has(t.id) &&
               (BLANK.test(t.url ?? '') || (t.url ?? '') === '' || t.pendingUrl === 'about:blank'),
           );
@@ -744,6 +772,7 @@ export class ChromeExecutor {
           const created = await chrome.tabs.create({ url, active: false });
           if (created.id === undefined) throw new CmdError('TARGET_GONE', 'failed to create a tab');
           claimedTabs.add(created.id);
+          await rememberOpenedByUs(created.id, present);
           return { id: created.id, reused: false, needsNav: false };
         });
 
