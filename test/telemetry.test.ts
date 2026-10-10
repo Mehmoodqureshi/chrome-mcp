@@ -163,3 +163,58 @@ test('each call becomes a $mcp_tool_call for MCP Analytics, with no arguments, r
   for (const k of ['$mcp_parameters', '$mcp_response', '$mcp_error_message']) assert.ok(!wire.includes(k));
   await stopTelemetry();
 });
+
+test('MCP Analytics: handshake, advertised tools, category, model and idle session rotation', async () => {
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { createServer } = await import('../src/mcp/server');
+  resetTelemetryForTesting();
+  const sent: Sent[] = [];
+  initTelemetry({
+    dataDir: mkdtempSync(join(tmpdir(), 'cmcp-tel-')),
+    version: '9.9.9',
+    env: {},
+    key: 'phc_test',
+    send: async (batch) => void sent.push(...(batch as Sent[])),
+    client: () => ({ name: 'codex', version: '1.0.0' }),
+    delaysMs: { mcpFlush: 10 },
+  });
+
+  const srv = createServer('9.9.9');
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await srv.connect(a);
+  const client = new Client({ name: 'codex', version: '1.0.0' });
+  await client.connect(b);
+  // A call carrying Codex's own turn metadata (no extra tool argument).
+  await client.callTool({ name: 'chrome_status', arguments: {}, _meta: { 'x-codex-turn-metadata': { model: 'gpt-5-codex' } } });
+  await new Promise((r) => setTimeout(r, 50));
+
+  const init = sent.find((e) => e.event === '$mcp_initialize');
+  assert.ok(init, 'handshake recorded');
+  assert.match(String(init.properties.$mcp_protocol_version), /^\d{4}-\d{2}-\d{2}$/);
+  const list = sent.find((e) => e.event === '$mcp_tools_list');
+  assert.ok(Array.isArray(list?.properties.$mcp_listed_tool_names));
+  assert.ok((list!.properties.$mcp_listed_tool_names as string[]).includes('navigate'));
+  assert.equal(list!.properties.$mcp_response, undefined, 'names only, not the schemas');
+  const call = sent.find((e) => e.event === '$mcp_tool_call')!.properties;
+  assert.equal(call.$mcp_tool_category, 'session');
+  assert.equal(call.$mcp_llm_model, 'gpt-5-codex');
+  assert.equal(call.$mcp_llm_model_source, 'client_metadata');
+  assert.equal(call.$mcp_protocol_version, init.properties.$mcp_protocol_version);
+  assert.equal(call.$session_id, init.properties.$session_id);
+
+  // After 30 idle minutes the next call starts a new session.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 31 * 60_000;
+  try {
+    noteToolCall('get_text', true, undefined, 5);
+  } finally {
+    Date.now = realNow;
+  }
+  await new Promise((r) => setTimeout(r, 50));
+  const calls = sent.filter((e) => e.event === '$mcp_tool_call');
+  assert.notEqual(calls.at(-1)!.properties.$session_id, call.$session_id);
+
+  await client.close();
+  await stopTelemetry();
+});

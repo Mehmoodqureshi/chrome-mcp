@@ -12,6 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { logErr } from './log';
 import { registerTools } from './tools';
+import { noteMcpInitialize } from '../telemetry';
 import type { Policy } from '../security/policy';
 
 // Re-exported so existing callers (and the CLI) keep importing the logger from
@@ -55,12 +56,34 @@ export function createServer(version: string = DEFAULT_VERSION, policy?: Policy)
     { name: SERVER_NAME, version },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
-  registerTools(srv, policy);
+  const advertised = registerTools(srv, policy);
+  watchInitialize(srv, advertised);
   // `McpServer` wraps the low-level `Server`, which owns the `onerror` hook.
   srv.server.onerror = (err: unknown): void => {
     logErr(`server error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   };
   return srv;
+}
+
+/**
+ * Report the handshake to MCP Analytics: the client, the negotiated protocol
+ * revision, and the tools we advertised. The SDK does not expose the revision
+ * it negotiates, so we read it off the initialize result. If a future SDK
+ * renames that internal method, this quietly does nothing.
+ */
+function watchInitialize(srv: McpServer, advertised: string[]): void {
+  const inner = srv.server as unknown as { _oninitialize?: (req: unknown) => Promise<{ protocolVersion?: string }> };
+  const original = inner._oninitialize;
+  if (typeof original !== 'function') return;
+  inner._oninitialize = async (req: unknown) => {
+    const res = await original.call(srv.server, req);
+    try {
+      noteMcpInitialize(res?.protocolVersion, advertised);
+    } catch {
+      /* analytics must never break a handshake */
+    }
+    return res;
+  };
 }
 
 /** Start over stdio. Idempotent. */

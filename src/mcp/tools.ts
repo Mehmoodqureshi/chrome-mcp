@@ -42,7 +42,7 @@ import { describeAuthWall, detectAuthWall, type AuthWall } from '../../shared/au
 import { noteBytes, noteGate, noteRedactions, withAudit, type CallAudit } from './audit';
 import { logDebug, logErr } from './log';
 import { listTasks } from '../bridge/tasks';
-import { noteToolCall } from '../telemetry';
+import { noteMcpModel, noteToolCall } from '../telemetry';
 import type { BridgeServer } from '../bridge/server';
 import { resolveProfileDir, sanitizeName } from '../config';
 import {
@@ -1529,7 +1529,19 @@ export function assertNoDrift(): void {
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerTools(server: McpServer, policy?: Policy): void {
+/**
+ * The model a client names in request metadata it sends anyway (no extra tool
+ * argument): Codex's turn metadata, or the MCP `aiInvocation` hint.
+ */
+function modelFromMeta(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== 'object') return undefined;
+  const m = meta as Record<string, { model?: unknown } | undefined>;
+  const model = m['x-codex-turn-metadata']?.model ?? m['io.modelcontextprotocol/aiInvocation']?.model;
+  return typeof model === 'string' ? model : undefined;
+}
+
+/** Register the tool surface; returns the names actually advertised. */
+export function registerTools(server: McpServer, policy?: Policy): string[] {
   assertNoDrift();
 
   // Register each tool with its zod `inputSchema`. The SDK advertises it in
@@ -1537,6 +1549,7 @@ export function registerTools(server: McpServer, policy?: Policy): void {
   // just routes back through `dispatchToolCall` — our never-throw firewall that
   // applies the rate limit, executor readiness, policy gate, and history log.
   const policyDropped: string[] = [];
+  const registered: string[] = [];
   for (const d of TOOL_DEFINITIONS) {
     if (!isToolEnabled(d.name)) continue;
     // A tool the policy has switched off can only ever answer POLICY_DENIED.
@@ -1548,8 +1561,12 @@ export function registerTools(server: McpServer, policy?: Policy): void {
     server.registerTool(
       d.name,
       { description: d.description, inputSchema: d.inputSchema },
-      async (args: Record<string, unknown>) => dispatchToolCall(d.name, args),
+      async (args: Record<string, unknown>, extra?: { _meta?: unknown }) => {
+        noteMcpModel(modelFromMeta(extra?._meta));
+        return dispatchToolCall(d.name, args);
+      },
     );
+    registered.push(d.name);
   }
 
   const advertised = enabledToolNames();
@@ -1562,4 +1579,5 @@ export function registerTools(server: McpServer, policy?: Policy): void {
         `(${policyDropped.join(', ')}) — enable them with the matching flag to get them back.`,
     );
   }
+  return registered;
 }

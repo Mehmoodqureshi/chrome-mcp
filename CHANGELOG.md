@@ -1,3 +1,18 @@
+## 0.9.20 - 2026-10-10
+
+Server-only; the extension stays at 0.9.19.
+
+- feat: **fuller PostHog MCP Analytics, still nothing about what agents do.**
+  Sessions now end after 30 idle minutes (PostHog's own rule), so the Sessions
+  view shows real stretches of work. A connecting client is recorded as
+  `$mcp_initialize` (client, server, protocol revision) with a `$mcp_tools_list`
+  of the tool names offered, which shows tools agents never call. Each
+  `$mcp_tool_call` adds the protocol revision, the tool's group
+  (`$mcp_tool_category`), and the model when the client names it in its own
+  request metadata (Codex does). Intent, missing-capability reports,
+  conversation ids, arguments, results, messages and exceptions stay off: they
+  would carry agent text, URLs or file paths, or add fields to every tool.
+
 ## 0.9.19 - 2026-10-10
 
 A popup on the toolbar icon, and PostHog MCP Analytics. The extension moves to

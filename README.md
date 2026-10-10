@@ -616,9 +616,14 @@ session owns the bridge port or shares it, how many browsers are paired, and
 per-tool call and error **counts** with error codes. The first batch goes out a
 minute after the first tool call, then every 10 minutes. For PostHog's MCP
 Analytics view, each tool call is also sent as one `$mcp_tool_call` event
-carrying only the tool name, its duration, whether it failed and the error
-**code**, the MCP client's name and version (such as `claude-code`), and a
-random per-session id; these are batched every 15 seconds. One `pair_check` event
+carrying only the tool name and its group (reading, navigation...), its
+duration, whether it failed and the error **code**, the MCP client's name and
+version (such as `claude-code`), the MCP protocol revision, the AI model when the
+client names it in its own request metadata (Codex does), and a random session
+id that changes after 30 idle minutes. When a client connects, one event records
+that handshake and the names of the tools offered. Nothing an agent sends or
+reads: no arguments, results, error messages or intents. Batched every 15
+seconds. One `pair_check` event
 a minute after startup says whether a browser paired and, if not, which of a few
 fixed reasons applies (`no_extension`, `token_mismatch`, `version_mismatch`,
 `profile_mismatch`), so setup problems can be fixed where they happen.

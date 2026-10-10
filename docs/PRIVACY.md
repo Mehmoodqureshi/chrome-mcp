@@ -74,9 +74,11 @@ outside requests:
   session owns or shares the bridge port, how many browsers are paired and, when
   none is, which of a few fixed reasons applies (`no_extension`,
   `token_mismatch`, `version_mismatch`, `profile_mismatch`), counts of tool
-  calls and error codes, and for each tool call its name, duration, whether it
-  failed and the error code, the AI client's name and version (such as
-  `claude-code`), and a random per-session id. It never sends URLs, site names, page content, tool
+  calls and error codes, and for each tool call its name and group, duration,
+  whether it failed and the error code, the AI client's name and version (such
+  as `claude-code`), the MCP protocol revision, the AI model name when the client
+  includes it in its own request metadata, and a random session id. When a
+  client connects, its name and version and the list of tool names offered. It never sends URLs, site names, page content, tool
   arguments, cookies, profile names or anything the extension reads. Events are
   personless and GeoIP lookup is disabled. Turn it off with
   `CHROME_MCP_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `--no-telemetry`. Details:

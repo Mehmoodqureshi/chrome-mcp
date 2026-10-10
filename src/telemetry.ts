@@ -21,6 +21,8 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { join } from 'node:path';
 
+import { TOOL_CATEGORY } from './mcp/tool-categories';
+
 /** PostHog project key. Public by design: it can only WRITE events, never read them. */
 export const POSTHOG_KEY = 'phc_CG5QX5JEkRokfUN87rZQnPa3URdLWePCZnfqW6MCyCdU';
 export const POSTHOG_HOST = 'https://us.i.posthog.com';
@@ -39,6 +41,8 @@ const PAIR_CHECK_MS = 60_000;
 const MCP_FLUSH_MS = 15_000;
 /** Upper bound on buffered per-call events between flushes; extra calls are only counted. */
 const MCP_BUFFER_MAX = 500;
+/** An MCP Analytics session ends after this long without a tool call, as PostHog's SDK does. */
+const MCP_SESSION_IDLE_MS = 30 * 60_000;
 /** A send never holds up the process longer than this. */
 const SEND_TIMEOUT_MS = 3_000;
 const STATE_FILE = 'telemetry.json';
@@ -100,8 +104,13 @@ class Telemetry {
   /** PostHog MCP Analytics: one `$mcp_tool_call` per call, buffered between flushes. */
   private mcpEvents: Event[] = [];
   private mcpTimer: NodeJS.Timeout | null = null;
-  /** A random id for this server session, in the shape MCP Analytics expects. */
-  private readonly sessionId = `ses_${randomBytes(16).toString('hex')}`;
+  /** A random id for the current MCP Analytics session, in the shape it expects. */
+  private sessionId = newSessionId();
+  private lastCallAt = 0;
+  /** From the initialize handshake: the negotiated MCP revision. */
+  private protocolVersion: string | undefined;
+  /** The model the client says is calling, from request metadata it sends on its own. */
+  private llmModel: string | undefined;
   private readonly base: Record<string, unknown>;
   /** Sends still on the wire, so a quick exit doesn't cut session_started off. */
   private readonly inflight = new Set<Promise<void>>();
@@ -161,23 +170,60 @@ class Telemetry {
    * would hold URLs, selectors and page text.
    */
   private noteMcpCall(tool: string, ok: boolean, error: string | undefined, ms: number | undefined): void {
-    if (this.mcpEvents.length >= MCP_BUFFER_MAX) return;
-    const client = this.opts.client?.();
-    this.mcpEvents.push(
+    // A long pause is a new piece of work: start a new session, so the
+    // Sessions view shows real stretches of use rather than one endless one.
+    const now = Date.now();
+    if (this.lastCallAt && now - this.lastCallAt > MCP_SESSION_IDLE_MS) this.sessionId = newSessionId();
+    this.lastCallAt = now;
+    const category = TOOL_CATEGORY[tool];
+    this.queueMcp(
       this.event('$mcp_tool_call', {
-        $mcp_source: 'posthog_mcp_analytics',
-        $session_id: this.sessionId,
+        ...this.mcpContext(),
         $mcp_tool_name: tool,
         $mcp_resource_name: tool,
-        $mcp_server_name: 'chrome-mcp',
-        $mcp_server_version: this.opts.version,
-        ...(client?.name ? { $mcp_client_name: client.name } : {}),
-        ...(client?.version ? { $mcp_client_version: client.version } : {}),
+        ...(category ? { $mcp_tool_category: category } : {}),
+        ...(this.llmModel ? { $mcp_llm_model: this.llmModel, $mcp_llm_model_source: 'client_metadata' } : {}),
         ...(typeof ms === 'number' ? { $mcp_duration_ms: ms } : {}),
         $mcp_is_error: !ok,
         ...(ok ? {} : { $mcp_error_type: errorCodeOf(error) }),
       }),
     );
+  }
+
+  /** The fields every MCP Analytics event carries: which session, server and client. */
+  private mcpContext(): Record<string, unknown> {
+    const client = this.opts.client?.();
+    return {
+      $mcp_source: 'posthog_mcp_analytics',
+      $session_id: this.sessionId,
+      $mcp_server_name: 'chrome-mcp',
+      $mcp_server_version: this.opts.version,
+      ...(client?.name ? { $mcp_client_name: client.name } : {}),
+      ...(client?.version ? { $mcp_client_version: client.version } : {}),
+      ...(this.protocolVersion ? { $mcp_protocol_version: this.protocolVersion } : {}),
+    };
+  }
+
+  /**
+   * The client connected: record the handshake (`$mcp_initialize`) and the
+   * tools we offered it (`$mcp_tools_list`, names only), so the dashboard can
+   * show clients and protocol revisions, and which tools agents never call.
+   */
+  noteInitialize(protocolVersion: string | undefined, toolNames: string[]): void {
+    this.protocolVersion = protocolVersion;
+    this.queueMcp(this.event('$mcp_initialize', this.mcpContext()));
+    this.queueMcp(this.event('$mcp_tools_list', { ...this.mcpContext(), $mcp_listed_tool_names: toolNames }));
+  }
+
+  /** The client named the model calling us in its request metadata. */
+  noteModel(model: string | undefined): void {
+    const m = typeof model === 'string' ? model.trim().slice(0, 100) : '';
+    if (m && m.toLowerCase() !== 'unknown') this.llmModel = m;
+  }
+
+  private queueMcp(event: Event): void {
+    if (this.mcpEvents.length >= MCP_BUFFER_MAX) return;
+    this.mcpEvents.push(event);
     if (!this.mcpTimer) {
       this.mcpTimer = setTimeout(() => {
         this.mcpTimer = null;
@@ -293,6 +339,10 @@ class Telemetry {
   }
 }
 
+function newSessionId(): string {
+  return `ses_${randomBytes(16).toString('hex')}`;
+}
+
 let active: Telemetry | null = null;
 
 /** Start telemetry for this server process, unless turned off or unconfigured. */
@@ -302,6 +352,16 @@ export function initTelemetry(opts: TelemetryOptions): boolean {
   active = new Telemetry({ ...opts, key });
   active.start();
   return true;
+}
+
+/** Record the MCP handshake and the advertised tool names. A no-op when telemetry is off. */
+export function noteMcpInitialize(protocolVersion: string | undefined, toolNames: string[]): void {
+  active?.noteInitialize(protocolVersion, toolNames);
+}
+
+/** Record the model a client named in its request metadata. A no-op when telemetry is off. */
+export function noteMcpModel(model: string | undefined): void {
+  active?.noteModel(model);
 }
 
 /** Count one tool call. A no-op when telemetry is off. */
