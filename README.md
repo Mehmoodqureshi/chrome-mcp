@@ -4,10 +4,10 @@
 [![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
 [![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
 
-**Website and docs:** [mcp-browser-extension.vercel.app](https://mcp-browser-extension.vercel.app) ·
-[Quickstart](https://mcp-browser-extension.vercel.app/docs/quickstart) ·
-[All 40 tools](https://mcp-browser-extension.vercel.app/docs/tools) ·
-[Install the extension from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+**Website and docs:** [mcp-browser-extension.com](https://mcp-browser-extension.com) ·
+[Quickstart](https://mcp-browser-extension.com/docs/quickstart) ·
+[All 40 tools](https://mcp-browser-extension.com/docs/tools) ·
+[Install the extension from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 
 **Let Claude use the Chrome you are already logged into.** Not a fresh
 automated browser that greets every site as a stranger — *your* Chrome, with
@@ -25,7 +25,7 @@ MCP Browser Extension has two parts: the extension, and a small MCP server you r
 with `npx` (npm package `@mehmoodqureshi/chrome-mcp`, command `chrome-mcp`; the
 names predate the rename and stay so existing setups keep working). The extension
 comes from the
-[Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+[Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 or loaded unpacked.
 
 > **This build is extension-only.** It never launches or attaches a Chromium of
@@ -75,7 +75,7 @@ for one), so the question is what you get on top of the session:
   you.
 
 Setup is two pieces: the MCP server (`npx`, below) and the extension, which you
-can **[install from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**
+can **[install from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)**
 or load from the folder the server unpacks.
 
 ## Quickstart
@@ -283,6 +283,41 @@ OS dialog (requires `--enable-uploads`).
 
 `click`/`type` accept `trusted: true` for real OS-level input (works on
 React/Vue controlled inputs); interactions auto-wait for the target to appear.
+
+### Use it from anywhere — `--tunnel`
+
+Drive the Chrome on your computer from claude.ai, the Claude mobile app, ChatGPT,
+Claude Code on another machine, or an agent running on a server.
+
+```sh
+brew install cloudflared            # once (Windows: winget install --id Cloudflare.cloudflared)
+npx -y @mehmoodqureshi/chrome-mcp@latest --tunnel --allow-domain example.com --enable-mutations
+```
+
+It prints a connector URL like `https://<random>.trycloudflare.com/mcp/<key>`:
+
+- **claude.ai / Claude mobile:** Settings > Connectors > Add custom connector, paste the URL.
+- **ChatGPT (web):** Plugins > Add > Add custom MCP server. Choose Server URL,
+  paste the complete connector URL (including `/mcp/<key>`), and choose No
+  authentication. Create and install the personal plugin, then select it with
+  `@` in a new chat. Keep the tunnel running.
+- **Claude Code elsewhere / agents:** use `<url>/mcp` with `Authorization: Bearer <key>`;
+  the exact `claude mcp add` line is printed too.
+
+The key (32 random bytes, kept in `~/.chrome-mcp/remote-key`) guards every
+request; a wrong or missing key gets a bare 404. Anyone holding the URL can drive
+your browser within the allowed sites, so keep it private and keep the allowlist
+tight. `--rotate-remote-key` cuts every client off. The quick-tunnel URL changes on
+each start; `--http` alone serves on `127.0.0.1:38018` (`--http-port`) for your
+own tunnel (ngrok, Tailscale Funnel, a reverse proxy). The server runs until Ctrl-C.
+
+### Proxy per Chrome profile — `proxy_status`
+
+Chrome applies a proxy to a whole profile, never one tab, so keep a Chrome profile
+per IP: set the proxy on the extension's Settings page in that profile, name the
+profile there, and switch with `profile_use`. A dead proxy fails pages rather than
+falling back to your real IP. `proxy_status` reports the exit IP and country; the
+agent cannot change the proxy or read its password.
 
 ### Driving several tabs at once — `batch`
 
@@ -637,13 +672,13 @@ DO_NOT_TRACK=1
 ## Learn more
 
 The full documentation, setup guides for each MCP client and the security model
-live on the website: **[MCP Browser Extension docs](https://mcp-browser-extension.vercel.app/docs)**.
+live on the website: **[MCP Browser Extension docs](https://mcp-browser-extension.com/docs)**.
 
-- [What an MCP browser extension is, and when you need one](https://mcp-browser-extension.vercel.app/blog/what-is-an-mcp-browser-extension)
-- [Use Claude in your signed-in Chrome](https://mcp-browser-extension.vercel.app/logged-in-chrome)
-- [Give Claude Code browser access](https://mcp-browser-extension.vercel.app/blog/claude-code-browser)
-- [Give Cursor a real browser with MCP](https://mcp-browser-extension.vercel.app/blog/cursor-browser-mcp)
-- [How it compares with other browser MCP servers](https://mcp-browser-extension.vercel.app/docs/compare)
+- [What an MCP browser extension is, and when you need one](https://mcp-browser-extension.com/blog/what-is-an-mcp-browser-extension)
+- [Use Claude in your signed-in Chrome](https://mcp-browser-extension.com/logged-in-chrome)
+- [Give Claude Code browser access](https://mcp-browser-extension.com/blog/claude-code-browser)
+- [Give Cursor a real browser with MCP](https://mcp-browser-extension.com/blog/cursor-browser-mcp)
+- [How it compares with other browser MCP servers](https://mcp-browser-extension.com/docs/compare)
 
 ## Develop
 
@@ -659,7 +694,7 @@ RUN_EXT_SMOKE=1 node --test dist/test/extension-smoke.test.js   # live, headed
 ## The extension
 
 Published on the Chrome Web Store as
-**[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
+**[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)**.
 Extension versions move only when `extension/` changes, so the listed build can
 sit a release behind the npm package; the two negotiate capabilities on
 connect, so an older extension loses features rather than breaking.

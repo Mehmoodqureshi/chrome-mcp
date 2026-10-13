@@ -8,8 +8,10 @@
  */
 
 import {
+  CLOSE_SUPERSEDED,
   PROTOCOL_VERSION,
   WIRE_CAP_FILL_FORM,
+  WIRE_CAP_PROXY,
   WIRE_CAP_TAB_URL,
   type CommandFrame,
   type HelloFrame,
@@ -17,7 +19,10 @@ import {
   type WirePolicy,
 } from '../../../shared/protocol';
 
-export type ConnState = 'idle' | 'connecting' | 'connected' | 'unauthorized';
+/** `superseded`: another browser paired under the same profile name and the
+ *  server handed it this slot. Sticky like `unauthorized`: redialling would just
+ *  kick the other browser off in turn, and the two would swap forever. */
+export type ConnState = 'idle' | 'connecting' | 'connected' | 'unauthorized' | 'superseded';
 
 export interface WsClientDeps {
   onCommand: (cmd: CommandFrame) => void;
@@ -76,7 +81,7 @@ export class WsClient {
         // This build gates fail-closed and reports tab URLs on results, so the
         // server may skip its pre-flight tabs_list. An older build omits this and
         // the server keeps fetching the URL itself.
-        caps: [WIRE_CAP_TAB_URL, WIRE_CAP_FILL_FORM],
+        caps: [WIRE_CAP_TAB_URL, WIRE_CAP_FILL_FORM, WIRE_CAP_PROXY],
       };
       ws.send(JSON.stringify(hello));
     };
@@ -118,9 +123,15 @@ export class WsClient {
       }
     };
 
-    ws.onclose = (): void => {
-      if (this.ws === ws) this.ws = null;
-      if (this.state !== 'unauthorized') this.setState('idle');
+    ws.onclose = (ev): void => {
+      const current = this.ws === ws;
+      if (current) this.ws = null;
+      if (current && ev.code === CLOSE_SUPERSEDED) {
+        this.setState('superseded');
+        this.deps.log('another browser paired under the same profile name took this connection');
+      } else if (this.state !== 'unauthorized' && this.state !== 'superseded') {
+        this.setState('idle');
+      }
     };
     ws.onerror = (): void => {
       // 'close' will follow; nothing to do.

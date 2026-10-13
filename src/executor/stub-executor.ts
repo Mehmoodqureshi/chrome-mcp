@@ -8,6 +8,7 @@
  *      values (and a couple of forced-failure switches).
  */
 
+import type { ProxyWireStatus } from '../../shared/protocol';
 import {
   ExecutorError,
   type ActionOk,
@@ -89,6 +90,8 @@ export interface StubOptions {
   /** What the in-page observers return. Absent = the hook is not installed,
    *  which is the case the tools must report clearly rather than as an empty list. */
   observers?: ObserverReadResult;
+  /** What `proxy_status` reports. Absent = a backend without proxy support. */
+  proxy?: ProxyWireStatus;
 }
 
 const ok: ActionOk = { ok: true };
@@ -140,7 +143,13 @@ export class StubExecutor implements Executor {
     this.snapshotNodes = opts.snapshotNodes ?? [{ ref: 'e1', role: 'link', name: 'Example', tag: 'a' }];
     this.frames = opts.frames ?? [{ frameId: 0, top: true, url: opts.activeUrl ?? 'about:blank', title: 'Stub Page' }];
     this.observerState = opts.observers;
+    if (opts.proxy) {
+      const status = opts.proxy;
+      this.proxyStatus = async () => status;
+    }
   }
+
+  proxyStatus?: () => Promise<ProxyWireStatus>;
 
   /** Fail this read if a scripted disconnect is still pending, then consume it. */
   private maybeDisconnect(): void {

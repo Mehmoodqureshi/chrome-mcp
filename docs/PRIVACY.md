@@ -1,6 +1,6 @@
 # Privacy policy — MCP Browser Extension
 
-Last updated: 2026-10-10
+Last updated: 2026-10-13
 
 MCP Browser Extension is an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
@@ -47,10 +47,27 @@ from `~/.chrome-mcp/handshake.json` and saves them like a manual pairing would.
 It all happens on your computer. Chrome allows only this extension to start the
 helper, and the helper answers nothing but the pairing.
 
+## Proxy (optional, off by default)
+
+On the Options page you can route that Chrome profile through a proxy you
+choose. The proxy address, username and password are stored in the
+extension's local storage in that profile only. They are never sent to the
+local server or to the AI agent, which can only read whether the proxy is on,
+its address, and the IP sites see. The extension answers your proxy's login
+prompt with the saved credentials and nothing else.
+
+To show which IP sites see, the extension requests `https://ipinfo.io/json`
+(or `https://api.ipify.org` if that fails) when you click Check IP or the
+agent calls `proxy_status`. That request carries nothing but itself; those
+services see the IP it comes from, which is the point of the check. With the
+optional WebRTC setting ticked, the extension also limits WebRTC to proxied
+connections while the proxy is on.
+
 ## What it does not do
 
 - It never sends any data to the extension author or to any remote server.
-  The only network endpoint it connects to is `127.0.0.1`.
+  Apart from the IP check described under Proxy, the only network endpoint it
+  connects to is `127.0.0.1`.
 - It does not collect analytics, telemetry, or crash reports.
 - It does not run remote code. All code is in the package you install.
 - It does nothing until you pair it with a local server, and it acts only on
@@ -76,9 +93,15 @@ machine under your control.
 
 ## The MCP Browser Extension server (separate from the extension)
 
-This policy covers the extension, which sends nothing anywhere. The MCP Browser Extension
-server, the npm package you run from your MCP client, makes two kinds of
-outside requests:
+This policy covers the extension, which sends browser results to your local
+server and makes the optional proxy IP checks described above. The server
+forwards results to your configured MCP client. If you enable `--http` or
+`--tunnel`, clients with your remote access key can request browser actions and
+receive results within your allowed sites. `--tunnel` uses Cloudflare to expose
+the local HTTP endpoint; its URL includes the access key and must stay private.
+Restart with `--rotate-remote-key` to revoke access.
+
+The MCP Browser Extension server also makes these outside requests:
 
 - **Anonymous usage statistics**, to PostHog: a random install id (not the
   extension's), its version, OS, CPU architecture, Node version, whether the

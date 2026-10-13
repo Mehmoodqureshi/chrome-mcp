@@ -109,6 +109,7 @@ async function render(): Promise<void> {
     connected: ['Connected', 'ok'],
     connecting: ['Connecting…', 'warn'],
     unauthorized: ['Token rejected', 'bad'],
+    superseded: ['Name taken', 'bad'],
     idle: ['Not connected', ''],
   };
   const [text, cls] = labels[state] ?? [state, ''];
@@ -121,14 +122,16 @@ async function render(): Promise<void> {
   // a quiet "Reconnect" once connected (to re-pair after a server change).
   const btn = $('connect') as HTMLButtonElement;
   if (!btn.disabled) {
-    btn.textContent = connected ? 'Reconnect' : state === 'unauthorized' ? 'Connect again' : 'Connect';
+    btn.textContent = connected ? 'Reconnect' : state === 'unauthorized' || state === 'superseded' ? 'Connect again' : 'Connect';
     btn.className = connected ? 'secondary' : 'primary';
   }
   $('connect-card').className = connected ? 'card connect done' : 'card connect';
   $('connect-text').textContent =
     state === 'unauthorized'
       ? 'The server has a new token. One click fetches it and reconnects.'
-      : "One click: fetches the port and token from your AI client's server and connects.";
+      : state === 'superseded'
+        ? `Another browser connected as "${typeof s.pairedProfile === 'string' ? s.pairedProfile : 'this profile'}", so this one stepped aside. Give it its own Profile name in Settings.`
+        : "One click: fetches the port and token from your AI client's server and connects.";
 
   // -- this site --
   const host = connected ? await currentHost() : null;

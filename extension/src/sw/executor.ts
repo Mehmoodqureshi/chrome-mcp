@@ -34,6 +34,7 @@ import {
   type ScreenshotFormat,
 } from '../../../shared/screenshot';
 import { KeyedMutex } from '../../../shared/mutex';
+import { proxyStatus } from './proxy';
 
 /** A command failure carrying a wire error code. */
 export class CmdError extends Error {
@@ -149,7 +150,7 @@ async function targetTab(cmd: CommandFrame): Promise<number> {
 
 /** Methods that act on no particular tab (or create one), so there is nothing
  *  to resolve up front. */
-const TABLESS: ReadonlySet<WireMethod> = new Set<WireMethod>(['tabs_list', 'tab_new', 'ping_probe', 'download_file']);
+const TABLESS: ReadonlySet<WireMethod> = new Set<WireMethod>(['tabs_list', 'tab_new', 'ping_probe', 'download_file', 'proxy_status']);
 
 /**
  * Resolve the Chrome tab a command operates on ONCE, up front. The router
@@ -647,7 +648,7 @@ export const HANDLED: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'screenshot', 'get_text', 'get_html', 'snapshot',
   'select_option', 'get_cookies', 'storage', 'eval', 'wait_for',
   'download_file', 'upload_file', 'ping_probe',
-  'frames_list', 'observers', 'print_pdf', 'fill_form',
+  'frames_list', 'observers', 'print_pdf', 'fill_form', 'proxy_status',
 ]);
 
 export class ChromeExecutor {
@@ -723,6 +724,9 @@ export class ChromeExecutor {
     switch (cmd.method) {
       case 'ping_probe':
         return {};
+
+      case 'proxy_status':
+        return proxyStatus();
 
       // -- tabs --
       case 'tabs_list': {

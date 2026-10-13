@@ -22,6 +22,7 @@ import { TabBorder } from './tab-border';
 import { PROTOCOL_VERSION, type SiteGrantFrame, type WirePolicy } from '../../../shared/protocol';
 import { isDomainAllowed } from '../../../shared/policy';
 import { applyPairing, fetchPairing } from '../connect';
+import { PROXY_STORAGE_KEY, applyProxy, onProxyAuth, proxyStatus } from './proxy';
 
 interface PairConfig {
   wsPort: number;
@@ -84,7 +85,7 @@ const ws = new WsClient({
     // 'idle' after a dial = the socket closed or the dial failed: redial soon.
     else if (state === 'idle') scheduleReconnect();
     // No server, no agent at work: take the borders down.
-    if (state === 'idle' || state === 'unauthorized') void border.clearAll();
+    if (state === 'idle' || state === 'unauthorized' || state === 'superseded') void border.clearAll();
     // A reject with an auto-adopted token usually means the server rotated it
     // (no --persist-token) and rewrote pairing.json — re-read and retry once.
     // With one-click pairing granted, fetch the new token from the helper too.
@@ -246,6 +247,11 @@ const BADGE: Record<ConnState, { text: string; color: string; title: string }> =
   connecting: { text: '…', color: '#ca8a04', title: 'MCP Browser Extension — connecting' },
   unauthorized: { text: '!', color: '#dc2626', title: 'MCP Browser Extension — rejected (bad/stale token; re-pair)' },
   idle: { text: '○', color: '#6b7280', title: 'MCP Browser Extension — not connected (open options to pair)' },
+  superseded: {
+    text: '!',
+    color: '#dc2626',
+    title: 'MCP Browser Extension — another browser took this profile name; give this one its own name in Settings',
+  },
 };
 
 function reflectBadge(state: ConnState): void {
@@ -276,7 +282,7 @@ async function installType(): Promise<string | undefined> {
 
 /** Connect if we have config and aren't already connected (and weren't rejected). */
 async function ensureConnected(): Promise<void> {
-  if (ws.isConnected() || ws.state === 'unauthorized') return;
+  if (ws.isConnected() || ws.state === 'unauthorized' || ws.state === 'superseded') return;
   const cfg = await getConfig();
   if (!cfg) return;
   ws.connect(cfg.wsPort, cfg.token, cfg.profile, cfg.installId, await installType());
@@ -310,12 +316,20 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.tabs.onRemoved.addListener((tabId) => void border.closed(tabId));
 
+// Logs in to the proxy set on the Options page. 'asyncBlocking' because the
+// credentials are read from storage; needs the webRequestAuthProvider permission.
+// (The bundled @types/chrome predates 'asyncBlocking', hence the cast.)
+chrome.webRequest.onAuthRequired.addListener(onProxyAuth, { urls: ['<all_urls>'] }, [
+  'asyncBlocking',
+] as unknown as string[]);
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.tabBorder?.newValue === false) void border.clearAll();
+  if (area === 'local' && changes[PROXY_STORAGE_KEY]) void syncProxy();
   if (area === 'local' && (changes.wsPort || changes.token || changes.profile)) {
     // New pairing config (e.g. from the options page) → clear any prior reject and
     // reconnect so a changed profile re-pairs under the new routing label.
-    if (ws.state === 'unauthorized') ws.state = 'idle';
+    if (ws.state === 'unauthorized' || ws.state === 'superseded') ws.state = 'idle';
     if (changes.profile) ws.close(); // force a fresh hello with the new profile
     clearReconnect();
     void ensureConnected();
@@ -342,6 +356,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     const frame: SiteGrantFrame = { type: 'site_grant', v: PROTOCOL_VERSION, host: msg.host, allow: msg.allow !== false };
     ws.send(frame);
     reply({ ok: true });
+  }
+  // Options page: re-apply after a permission change, and its Check IP button.
+  const fromOwnPage = sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
+  if (msg?.type === 'proxy_apply' && fromOwnPage) void syncProxy();
+  if (msg?.type === 'proxy_status' && fromOwnPage) {
+    void proxyStatus().then(reply, () => reply(null));
+    return true; // reply comes later
   }
   if (msg?.type === 'dismiss_blocked' && typeof msg.host === 'string') {
     void chrome.storage.local.get('blockedSites').then(async ({ blockedSites }) => {
@@ -372,8 +393,18 @@ async function healFromHelper(): Promise<boolean> {
   }
 }
 
+/** Apply the Options page's proxy setting; a failure is logged, never fatal. */
+async function syncProxy(): Promise<void> {
+  try {
+    await applyProxy((m) => console.debug('[chrome-mcp]', m));
+  } catch (err) {
+    console.warn('[chrome-mcp] could not apply the proxy setting', err);
+  }
+}
+
 async function bootstrap(): Promise<void> {
   await chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+  await syncProxy();
   await reloadIfFilesChanged();
   // Zero-paste pairing: if this folder carries the server's pairing.json, adopt
   // it. When that writes storage, onChanged reconnects; otherwise connect now.

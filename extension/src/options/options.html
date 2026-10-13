@@ -27,6 +27,10 @@
       .quick button.primary { margin-top: 0; width: 100%; padding: 0.7rem; font-weight: 600; color: #fff; border: 0; border-radius: 0.5rem; background: linear-gradient(135deg, #2563eb, #7c3aed); }
       .quick .hint { margin: 0.5rem 0 0; }
       .quick .hint.error { color: #b45309; }
+      select { width: 100%; padding: 0.5rem; font: inherit; }
+      .grid { display: grid; grid-template-columns: 1fr 7rem; gap: 0 0.5rem; }
+      .proxy-on { background: #ecfdf5; }
+      .proxy-err { background: #fff7ed; }
     </style>
   </head>
   <body>
@@ -81,6 +85,42 @@
         <input id="new-site" type="text" placeholder="example.com or *.example.com" />
         <button id="add-site">Allow</button>
       </div>
+    </section>
+    <section id="proxy-section">
+      <h2>Proxy</h2>
+      <p class="hint">
+        Send this Chrome profile's traffic through a proxy, so the sites the agent opens see the proxy's IP.
+        Chrome applies a proxy to the whole profile, never one tab, so set it in a Chrome profile you keep for
+        agent work (one profile per IP), not the one you browse in. If the proxy goes down, pages fail to load
+        rather than fall back to your real IP. The agent can check the proxy with <code>proxy_status</code> but
+        cannot change it or see the password.
+      </p>
+      <label class="check"><input id="proxy-enabled" type="checkbox" /> Use a proxy in this Chrome profile</label>
+      <label for="proxy-scheme">Type</label>
+      <select id="proxy-scheme">
+        <option value="http">HTTP</option>
+        <option value="https">HTTPS</option>
+        <option value="socks5">SOCKS5</option>
+        <option value="socks4">SOCKS4</option>
+      </select>
+      <div class="grid">
+        <label for="proxy-host">Host</label>
+        <label for="proxy-port">Port</label>
+        <input id="proxy-host" type="text" placeholder="proxy.example.com or host:port:user:pass" />
+        <input id="proxy-port" type="number" inputmode="numeric" placeholder="8080" />
+      </div>
+      <label for="proxy-user">Username</label>
+      <input id="proxy-user" type="text" autocomplete="off" placeholder="optional" />
+      <label for="proxy-pass">Password</label>
+      <input id="proxy-pass" type="password" autocomplete="new-password" placeholder="leave blank to keep the current password" />
+      <p class="hint">Chrome cannot log in to a SOCKS proxy, so use HTTP or HTTPS when your proxy needs a username.</p>
+      <label class="check"><input id="proxy-webrtc" type="checkbox" /> Stop WebRTC from revealing the real IP</label>
+      <p class="hint">Video-call features can reach the internet around the proxy. Chrome asks once to let this extension change that privacy setting.</p>
+      <div class="row">
+        <button id="proxy-save">Save proxy</button>
+        <button id="proxy-check">Check IP</button>
+      </div>
+      <div class="status" id="proxy-status">Proxy: off</div>
     </section>
     <script src="options.js"></script>
   </body>

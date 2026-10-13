@@ -62,6 +62,35 @@ export const WIRE_CAP_TAB_URL = 'tab-url' as const;
  */
 export const WIRE_CAP_FILL_FORM = 'fill-form' as const;
 
+/**
+ * `proxy`: this extension handles the `proxy_status` wire method. The proxy
+ * itself is set by a person on the extension's Options page and lives only in
+ * that Chrome profile; the agent can read whether it is on and the exit IP,
+ * never change it, and never sees the password.
+ */
+export const WIRE_CAP_PROXY = 'proxy' as const;
+
+/** `proxy_status` result. Credentials never travel on the wire. */
+export interface ProxyWireStatus {
+  /** The person switched the proxy on in this profile's Options page. */
+  enabled: boolean;
+  /** `scheme://host:port` of the configured proxy, or null when none is set. */
+  server: string | null;
+  /** Whether a username is set (the name itself stays in the extension). */
+  auth: boolean;
+  /** Chrome's `levelOfControl`: anything but "controlled_by_this_extension"
+   *  while enabled means another extension or a policy overrides ours. */
+  control: string;
+  /** Whether WebRTC is limited to the proxy (needs the optional `privacy` permission). */
+  webrtcProtected: boolean;
+  /** What sites see, fetched through the profile's network stack. Null when the lookup failed. */
+  exitIp: string | null;
+  country?: string;
+  city?: string;
+  /** Why `exitIp` is null (e.g. the proxy refused the connection). */
+  error?: string;
+}
+
 /** One field write inside a `fill_form` command: set a value, or click to toggle. */
 export interface FillFieldOp {
   selector: string;
@@ -134,6 +163,7 @@ export type WireMethod =
   | 'observers'
   | 'print_pdf'
   | 'fill_form'
+  | 'proxy_status'
   | 'ping_probe';
 
 /** Runtime list of every WireMethod, for boot-time drift assertions on both ends. */
@@ -166,6 +196,7 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'observers',
   'print_pdf',
   'fill_form',
+  'proxy_status',
   'ping_probe',
 ] as const;
 

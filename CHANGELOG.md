@@ -1,3 +1,33 @@
+## 0.9.22 - 2026-10-13
+
+Remote tunnels and proxies per Chrome profile.
+
+- feat: **use it from anywhere (`--tunnel`).** `--http` serves MCP over
+  Streamable HTTP on 127.0.0.1:38018 (`--http-port`); `--tunnel` adds a
+  Cloudflare quick tunnel and prints a connector URL for claude.ai, the Claude
+  app, ChatGPT, Claude Code elsewhere and server agents. Every request needs the
+  remote key (in the path or as a Bearer header; `--rotate-remote-key` revokes
+  it). Each client gets its own MCP session over the shared browser bridge.
+- fix: **two browsers under one profile name no longer swap forever.** The one
+  that is replaced now stays off (red `!`, "Name taken") until it gets its own
+  name, instead of reconnecting every second and kicking the other off.
+- fix: `proxy_status` works from a second session sharing the browser (it no
+  longer trusts capability info a relaying server cannot see).
+
+- feat: **a proxy per Chrome profile.** The Options page gets a Proxy section
+  (HTTP, HTTPS, SOCKS4/5; paste `host:port:user:pass` and it splits itself).
+  Chrome applies a proxy to a whole profile, never one tab, so the intended use
+  is one Chrome profile per IP, switched with `profile_use`. It fails closed: a
+  dead proxy shows an error page instead of falling back to the real IP, and the
+  MCP server's loopback socket is always bypassed. Proxy logins are answered from
+  the saved credentials, which never leave the extension. An optional `privacy`
+  permission keeps WebRTC on the proxy.
+- feat: **`proxy_status` tool.** Read-only: whether the active profile's browser
+  has a proxy, its address, who controls it, and the exit IP / country / city.
+  The agent cannot set or change the proxy.
+- The extension adds `proxy`, `webRequest` and `webRequestAuthProvider`; none
+  add a new install warning beyond the existing all-sites access.
+
 ## 0.9.21 - 2026-10-10
 
 One-click Connect, store-first install, and the MCP Browser Extension name.

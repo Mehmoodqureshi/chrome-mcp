@@ -14,6 +14,9 @@ import { readFileSync } from 'node:fs';
 import { DEFAULT_WS_PORT } from '../shared/protocol';
 import { type Policy, resolvePolicy } from './security/policy';
 
+/** Local port for `--http` (one above the bridge's). */
+export const DEFAULT_HTTP_PORT = 38018;
+
 export type LogLevel = 'silent' | 'info' | 'debug';
 export type BackendPreference = 'extension' | 'cdp';
 
@@ -51,6 +54,14 @@ export interface CliConfig {
   noAutoUpdate: boolean;
   /** `--no-native-host`: don't register the one-click pairing helper with Chrome. */
   noNativeHost: boolean;
+  /** `--http`: serve MCP over HTTP on 127.0.0.1 (for remote clients) instead of stdio. */
+  http: boolean;
+  /** `--http-port`: the local HTTP port (default 38018). */
+  httpPort: number;
+  /** `--tunnel`: also open a Cloudflare quick tunnel to the HTTP port. Implies `--http`. */
+  tunnel: boolean;
+  /** `--rotate-remote-key`: replace the remote key, cutting off every remote client. */
+  rotateRemoteKey: boolean;
   /**
    * `--tools`: advertise only these tools. `undefined` = the whole catalog.
    * Names are validated against the catalog by `setToolAllowlist` at startup —
@@ -131,6 +142,10 @@ export function parseArgs(argv: string[]): CliConfig {
   let noSiteGrants = false;
   let noAutoUpdate = false;
   let noNativeHost = false;
+  let http = false;
+  let httpPort = envInt('CHROME_MCP_HTTP_PORT') ?? DEFAULT_HTTP_PORT;
+  let tunnel = false;
+  let rotateRemoteKey = false;
   let showHelp = false;
   let showVersion = false;
   let showExtensionPath = false;
@@ -245,6 +260,19 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--no-native-host':
         noNativeHost = true;
         break;
+      case '--http':
+        http = true;
+        break;
+      case '--http-port':
+        httpPort = requireInt(argv[++i], '--http-port');
+        break;
+      case '--tunnel':
+        tunnel = true;
+        http = true;
+        break;
+      case '--rotate-remote-key':
+        rotateRemoteKey = true;
+        break;
       case '--tools':
         toolsFlagSeen = true;
         for (const name of splitList(requireValue(argv[++i], '--tools'))) tools.add(name);
@@ -309,6 +337,10 @@ export function parseArgs(argv: string[]): CliConfig {
     noSiteGrants,
     noAutoUpdate,
     noNativeHost,
+    http,
+    httpPort,
+    tunnel,
+    rotateRemoteKey,
     showHelp,
     showVersion,
     showExtensionPath,
@@ -388,6 +420,16 @@ Connection:
                          CHROME_MCP_TOKEN env, if set, pins the token explicitly.
   --no-native-host       Don't register the helper behind the extension's one-click
                          Connect button (pairing is then by pasting port and token)
+  --http                 Serve MCP over HTTP on 127.0.0.1 instead of stdio, so a
+                         client elsewhere can connect. Runs until Ctrl-C. Every
+                         request needs the remote key (kept in <data-dir>/remote-key):
+                         in the path, /mcp/<key>, or as Authorization: Bearer <key>.
+  --http-port <n>        Port for --http (default 38018; env CHROME_MCP_HTTP_PORT)
+  --tunnel               --http plus a Cloudflare quick tunnel, and print a public
+                         connector URL for claude.ai, ChatGPT or any MCP client.
+                         Needs cloudflared. The URL changes on every start.
+  --rotate-remote-key    Make a new remote key: every remote client is cut off and
+                         needs the new URL.
   --no-auto-update       Run this copy even when a newer chrome-mcp is published.
                          By default an installed copy (npx or global) checks npm at
                          startup and hands off to the latest release, so you never

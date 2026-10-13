@@ -4,8 +4,9 @@
  * to (re)connect. Also reflects the live connection state.
  */
 
-import { DEFAULT_WS_PORT } from '../../../shared/protocol';
+import { DEFAULT_WS_PORT, type ProxyWireStatus } from '../../../shared/protocol';
 import { connectWithOneClick } from '../connect';
+import { PROXY_STORAGE_KEY, parseProxyConfig, parseProxyLine } from '../../../shared/proxy';
 
 const portEl = document.getElementById('port') as HTMLInputElement;
 const tokenEl = document.getElementById('token') as HTMLInputElement;
@@ -71,6 +72,7 @@ function render(state: string): void {
     connected: '✅ connected',
     connecting: '… connecting',
     unauthorized: '⛔ rejected (bad/stale token — re-paste)',
+    superseded: '⛔ another browser connected under the same profile name. Type a different Profile name above and Save & connect.',
     idle: '○ not connected',
   };
   statusEl.textContent = `Status: ${labels[state] ?? state}`;
@@ -208,3 +210,101 @@ chrome.storage.onChanged.addListener((changes, area) => {
 void renderSites();
 
 void loadExisting();
+
+// -- proxy --------------------------------------------------------------------
+
+const proxyEnabledEl = document.getElementById('proxy-enabled') as HTMLInputElement;
+const proxySchemeEl = document.getElementById('proxy-scheme') as HTMLSelectElement;
+const proxyHostEl = document.getElementById('proxy-host') as HTMLInputElement;
+const proxyPortEl = document.getElementById('proxy-port') as HTMLInputElement;
+const proxyUserEl = document.getElementById('proxy-user') as HTMLInputElement;
+const proxyPassEl = document.getElementById('proxy-pass') as HTMLInputElement;
+const proxyWebrtcEl = document.getElementById('proxy-webrtc') as HTMLInputElement;
+const proxySaveEl = document.getElementById('proxy-save') as HTMLButtonElement;
+const proxyCheckEl = document.getElementById('proxy-check') as HTMLButtonElement;
+const proxyStatusEl = document.getElementById('proxy-status') as HTMLDivElement;
+
+function proxyNote(text: string, kind: '' | 'on' | 'err' = ''): void {
+  proxyStatusEl.textContent = text;
+  proxyStatusEl.className = kind ? `status proxy-${kind}` : 'status';
+}
+
+async function loadProxy(): Promise<void> {
+  const cfg = parseProxyConfig((await chrome.storage.local.get(PROXY_STORAGE_KEY))[PROXY_STORAGE_KEY]);
+  proxyWebrtcEl.checked = await chrome.permissions.contains({ permissions: ['privacy'] }).catch(() => false);
+  if (!cfg) return proxyNote('Proxy: off');
+  proxyEnabledEl.checked = cfg.enabled;
+  proxySchemeEl.value = cfg.scheme;
+  proxyHostEl.value = cfg.host;
+  proxyPortEl.value = String(cfg.port);
+  proxyUserEl.value = cfg.username;
+  proxyNote(cfg.enabled ? `Proxy: on (${cfg.scheme}://${cfg.host}:${cfg.port})` : 'Proxy: saved but off', cfg.enabled ? 'on' : '');
+}
+
+/** Providers often hand out "host:port" or "host:port:user:pass"; split it into the fields. */
+function splitPastedProxy(): void {
+  const p = parseProxyLine(proxyHostEl.value);
+  if (!p) return;
+  if (p.scheme) proxySchemeEl.value = p.scheme;
+  proxyHostEl.value = p.host;
+  proxyPortEl.value = String(p.port);
+  if (p.username !== undefined) {
+    proxyUserEl.value = p.username;
+    proxyPassEl.value = p.password ?? '';
+  }
+}
+proxyHostEl.addEventListener('change', splitPastedProxy);
+// Split right after a paste too, so the fields show what was understood before Save.
+proxyHostEl.addEventListener('paste', () => setTimeout(splitPastedProxy, 0));
+
+proxyWebrtcEl.addEventListener('change', async () => {
+  // Must run inside the click: Chrome only asks for a permission on a user gesture.
+  if (proxyWebrtcEl.checked) {
+    proxyWebrtcEl.checked = await chrome.permissions.request({ permissions: ['privacy'] }).catch(() => false);
+  } else {
+    // Hand the setting back to Chrome before the permission to touch it goes.
+    await new Promise<void>((done) => chrome.privacy.network.webRTCIPHandlingPolicy.clear({}, () => done()));
+    await chrome.permissions.remove({ permissions: ['privacy'] }).catch(() => false);
+  }
+  // Re-apply so a granted permission takes effect for a proxy that is already on.
+  await chrome.runtime.sendMessage({ type: 'proxy_apply' }).catch(() => undefined);
+});
+
+proxySaveEl.addEventListener('click', async () => {
+  splitPastedProxy();
+  const stored = parseProxyConfig((await chrome.storage.local.get(PROXY_STORAGE_KEY))[PROXY_STORAGE_KEY]);
+  const host = proxyHostEl.value.trim();
+  const port = Number(proxyPortEl.value);
+  const enabled = proxyEnabledEl.checked;
+  if (enabled && (!host || !Number.isInteger(port) || port <= 0 || port > 65535)) {
+    return proxyNote('Proxy: enter a host and a port (1-65535) first', 'err');
+  }
+  const username = proxyUserEl.value.trim();
+  // Never prefilled (a secret): blank keeps the saved password while the username stays.
+  const password = proxyPassEl.value || (stored && stored.username === username ? stored.password : '');
+  const scheme = proxySchemeEl.value;
+  if (enabled && username && scheme.startsWith('socks')) {
+    return proxyNote('Proxy: Chrome cannot log in to a SOCKS proxy. Pick HTTP or HTTPS, or use a proxy without a login.', 'err');
+  }
+  await chrome.storage.local.set({ [PROXY_STORAGE_KEY]: { enabled, scheme, host, port, username, password } });
+  proxyPassEl.value = '';
+  proxyNote(enabled ? `Proxy: on (${scheme}://${host}:${port}). Click Check IP to confirm.` : 'Proxy: off', enabled ? 'on' : '');
+});
+
+proxyCheckEl.addEventListener('click', async () => {
+  proxyCheckEl.disabled = true;
+  proxyNote('Proxy: checking…');
+  const res = (await chrome.runtime.sendMessage({ type: 'proxy_status' }).catch(() => null)) as ProxyWireStatus | null;
+  proxyCheckEl.disabled = false;
+  if (!res) return proxyNote('Proxy: could not reach the extension. Reload it and try again.', 'err');
+  const where = [res.city, res.country].filter(Boolean).join(', ');
+  const via = res.enabled ? `through ${res.server}` : 'with no proxy (your real IP)';
+  if (!res.exitIp) return proxyNote(`Proxy: ${res.error ?? 'IP lookup failed'}`, 'err');
+  const override =
+    res.enabled && res.control !== 'controlled_by_this_extension'
+      ? ' Another extension or a policy controls the proxy, so this one is not in use.'
+      : '';
+  proxyNote(`Sites see ${res.exitIp}${where ? ` (${where})` : ''}, ${via}.${override}`, override ? 'err' : res.enabled ? 'on' : '');
+});
+
+void loadProxy();

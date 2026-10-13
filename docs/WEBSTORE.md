@@ -23,7 +23,7 @@ must be higher than the last one uploaded; it tracks `package.json`.
 > so keep the word order exactly as above.
 
 **Summary (132 chars max):**
-Lets your AI agent (Claude, Cursor, Codex) use the Chrome you are signed into, through a local MCP server. Pairs with your own machine only. Deny-all by default.
+Connect your signed-in Chrome to MCP clients through a local server. Optional remote tunnels and profile proxies. Deny-all by default.
 
 **Description:**
 MCP Browser Extension is an open-source MCP server and extension (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
@@ -31,7 +31,7 @@ MCP Browser Extension is an open-source MCP server and extension (MIT) that lets
 How it works
 - You start the MCP Browser Extension server (npm package @mehmoodqureshi/chrome-mcp) from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
 - This extension connects to that server on 127.0.0.1 and carries out its commands: tabs, navigation, clicks, typing, page reads, screenshots, downloads.
-- Nothing leaves your machine. The only endpoint the extension ever talks to is localhost.
+- The extension sends browser results to your local server, which forwards them to your configured MCP client. An optional tunnel allows remote clients to connect using a private access key. Optional proxy IP checks contact ipinfo.io or api.ipify.org.
 
 Safety
 - The server is deny-all by default. You choose which domains the agent may touch; everything else is refused before a command runs.
@@ -41,13 +41,13 @@ Safety
 Setup
 1. Install and register the server: see https://github.com/Mehmoodqureshi/chrome-mcp
 2. Install this extension.
-3. Click the toolbar icon, open Settings, and paste the port and token from ~/.chrome-mcp/handshake.json. A green badge on the toolbar icon means connected.
+3. Click the toolbar icon, open Settings, and click Connect to pair with your local server. Manual port and token pairing is also available. A green badge means connected.
 
 Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Category:** Developer Tools
 **Language:** English
-**Homepage URL:** https://mcp-browser-extension.vercel.app
+**Homepage URL:** https://mcp-browser-extension.com
 **Support URL:** https://github.com/Mehmoodqureshi/chrome-mcp/issues
 
 ## 3. Graphic assets
@@ -70,13 +70,18 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 - `webNavigation`: know when a navigation the server triggered has committed or finished loading, so `navigate` / `reload` / `back` / `forward` return as soon as the page is ready instead of polling. Never used to observe browsing the server did not request.
 - `debugger`: trusted OS-level input on framework-controlled inputs and screenshots of a specific tab without focusing it. Attached only for those commands and detached afterwards.
 - `nativeMessaging` (optional, requested only when the user clicks Connect): fetch the port and token from the local MCP Browser Extension server's helper, so pairing is one click instead of copying a token. The helper runs on the user's computer, is registered by the server the user installed, and only answers the pairing.
+- `proxy`: route this Chrome profile through a proxy the user types on the Options page (off by default). Chrome applies a proxy to a whole profile, so users set it in a profile kept for agent work. Never set by the agent or the server; the agent can only read whether it is on.
+- `webRequest` + `webRequestAuthProvider`: answer the login prompt of that user-configured proxy with the username and password the user saved. Only proxy challenges (`isProxy`) from the configured proxy host are answered; every other request is left untouched.
+- `privacy` (optional, requested only when the user ticks "Stop WebRTC from revealing the real IP"): set WebRTC to proxied connections only while the proxy is on.
 - `host_permissions <all_urls>`: the server's domain allowlist decides which sites may be touched; the extension needs the broad grant so that allowlist can name any site. No command runs on a page that is not allowlisted.
 
 **Remote code:** No. All code is bundled.
 
-**Data usage:** check "Website content", "Authentication information" (cookies), "Web history" (from 0.9.16 the extension keeps up to ten recently refused host names locally for the Allow button), and "Personal communications" if the user's allowlist includes such sites. Certify: not sold, not used for unrelated purposes, not used for creditworthiness. All data is transferred only to a local server on the user's own machine.
+**Proxy (0.9.22):** the proxy host, port, username and password stay in the extension's local storage in that Chrome profile and are never sent to the server. To show which IP sites see, the extension fetches `https://ipinfo.io/json` (falling back to `https://api.ipify.org`) only when the user clicks Check IP or the agent calls `proxy_status`.
 
-**Privacy policy URL:** https://mcp-browser-extension.vercel.app/docs/privacy
+**Data usage:** check "Website content", "Authentication information" (cookies), "Web history" (from 0.9.16 the extension keeps up to ten recently refused host names locally for the Allow button), and "Personal communications" if the user's allowlist includes such sites. Certify: not sold, not used for unrelated purposes, not used for creditworthiness. Browser results go to the local server and then the configured MCP client, including remote clients when the user enables a tunnel. Proxy IP checks contact the services described above.
+
+**Privacy policy URL:** https://mcp-browser-extension.com/docs/privacy
 
 ## 5. Distribution
 

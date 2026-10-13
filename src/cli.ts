@@ -21,6 +21,9 @@ import { ensureDataDir, ensureWorkspace, handshakePath as handshakeFile, migrate
 import { peekActiveWorkspace, setActiveWorkspace } from './bridge/workspace';
 import { bundledPairingHeldByOther, removeHandshake, resolveToken, writeHandshake, writeBundledPairing } from './bridge/auth';
 import { logDebug, logErr, mcpClientInfo, setLogLevel, startMcpServer, stopMcpServer } from './mcp/server';
+import { startHttpMcp } from './remote/http';
+import { resolveRemoteKey } from './remote/key';
+import { startQuickTunnel, type Tunnel } from './remote/tunnel';
 import { TOOL_NAMES, setProfileBridge, setToolAllowlist } from './mcp/tools';
 import { initTelemetry, stopTelemetry } from './telemetry';
 import { maybeHandOff } from './auto-update';
@@ -417,6 +420,14 @@ async function main(): Promise<void> {
   });
   logErr(`backend: extension-if-paired else ${cfg.cdpFallback ? 'CDP fallback' : 'none'} (prefer: ${cfg.prefer})`);
 
+  if (cfg.http) {
+    await serveRemote(cfg, dataDir, () => {
+      cleanup();
+      return Promise.allSettled([stopTelemetry(), bridge.stop()]);
+    });
+    return;
+  }
+
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
@@ -457,6 +468,67 @@ async function main(): Promise<void> {
   // The resolved policy shapes the advertised catalog: a capability that is off
   // means its tools are never described to the model.
   await startMcpServer(version(), cfg.policy);
+}
+
+/**
+ * `--http` / `--tunnel`: a standalone server for clients on other machines.
+ * No stdin to watch and no parent to follow: it runs until Ctrl-C.
+ */
+async function serveRemote(
+  cfg: ReturnType<typeof parseArgs>,
+  dataDir: string,
+  stopBridge: () => Promise<unknown>,
+): Promise<void> {
+  const key = resolveRemoteKey(dataDir, { rotate: cfg.rotateRemoteKey });
+  if (cfg.rotateRemoteKey) logErr('remote key rotated: every earlier connector URL stops working.');
+  const http = await startHttpMcp({ port: cfg.httpPort, key, version: version(), policy: cfg.policy, log: (m) => logErr(m) });
+  let tunnel: Tunnel | null = null;
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    tunnel?.stop();
+    exitWithDeadline(Promise.allSettled([http.close(), stopBridge()]));
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  if (cfg.tunnel) {
+    try {
+      tunnel = await startQuickTunnel({
+        localPort: http.port,
+        log: (m) => logErr(m),
+        onExit: (code) => {
+          if (shuttingDown) return;
+          logErr(`the tunnel closed (cloudflared exit ${code}); remote clients are cut off. Restart to get a new URL.`);
+        },
+      });
+    } catch (err) {
+      await http.close();
+      throw err;
+    }
+  }
+
+  const base = tunnel ? tunnel.url : `http://127.0.0.1:${http.port}`;
+  const lines = [
+    '',
+    tunnel ? 'MCP Browser Extension is reachable from anywhere.' : `MCP Browser Extension is serving MCP over HTTP on 127.0.0.1:${http.port}.`,
+    '',
+    'Connector URL (paste into claude.ai > Settings > Connectors, ChatGPT, or any MCP client):',
+    `  ${base}/mcp/${key}`,
+    '',
+    'Or send the key as a header, e.g. for Claude Code on another computer:',
+    `  claude mcp add --transport http browser ${base}/mcp --header "Authorization: Bearer ${key}"`,
+    '',
+    'Anyone with this URL can drive this Chrome within the allowed sites. Keep it private.',
+    'Cut everyone off: restart with --rotate-remote-key.',
+    ...(tunnel ? ['The tunnel URL changes every time this starts.'] : []),
+    ...(cfg.policy.allowDomains.includes('*')
+      ? ['', 'WARNING: --unsafe-all-domains is on, so remote clients can reach every site you are signed in to.']
+      : []),
+    '',
+  ];
+  process.stdout.write(`${lines.join('\n')}\n`);
 }
 
 main().catch((err) => {

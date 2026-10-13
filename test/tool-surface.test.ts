@@ -126,9 +126,10 @@ test('tools/list stays within its byte budget', async () => {
   // 0.9.3 shipped 32747 B (~8.2k tokens) for 39 tools. This budget is a ratchet:
   // it is the cost paid on EVERY turn by every host with this server connected,
   // so a new tool or a wordier field description has to be worth its bytes.
+  // Raised from 28000 for proxy_status (0.9.22), kept to a one-line description.
   assert.ok(
-    bytes <= 28_000,
-    `tools/list is ${bytes} B for ${tools.length} tools, over the 28000 B budget`,
+    bytes <= 28_300,
+    `tools/list is ${bytes} B for ${tools.length} tools, over the 28300 B budget`,
   );
 });
 

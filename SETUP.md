@@ -113,7 +113,7 @@ You cannot do this step yourself. Give the human these exact instructions:
 Wait for the human to confirm before continuing.
 
 If the human would rather not enable Developer mode, they can install
-[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-extension-for-chrome/jelfhdlkhbfmlpbghoeaepijllcnplgh)
+[MCP Browser Extension](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 from the Chrome Web Store instead and skip steps 1–3. Prefer the unpacked
 folder when following this guide: it matches the package just installed, while
 the Web Store build passes review separately and can trail it by a version.

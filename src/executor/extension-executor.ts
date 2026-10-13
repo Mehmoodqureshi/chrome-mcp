@@ -39,7 +39,7 @@ import {
   type WaitResult,
   type WaitUntil,
 } from './types';
-import { WIRE_CAP_FILL_FORM, fillFormTimeoutMs, type FillFormWireResult } from '../../shared/protocol';
+import { WIRE_CAP_FILL_FORM, fillFormTimeoutMs, type FillFormWireResult, type ProxyWireStatus } from '../../shared/protocol';
 import type { BridgeServer } from '../bridge/server';
 import { mapWireErrorCode } from '../bridge/connection';
 import { captureDownload, peekActiveWorkspace } from '../bridge/workspace';
@@ -333,6 +333,23 @@ export class ExtensionExecutor implements Executor {
   }
 
   // -- optional capabilities ----------------------------------------------
+  async proxyStatus(): Promise<ProxyWireStatus> {
+    // No capability pre-check: a server relaying through another one (a second
+    // AI session) cannot see the extension's caps, so ask and read the answer.
+    // Up to two IP lookups of 8 s each run inside the extension.
+    try {
+      return (await this.send('proxy_status', {}, { timeoutMs: 25_000 })) as ProxyWireStatus;
+    } catch (err) {
+      if (err instanceof ExecutorError && /unhandled method/.test(err.message)) {
+        throw new ExecutorError(
+          'UNSUPPORTED',
+          'this browser runs an extension build without proxy support; update the MCP Browser Extension and reload it',
+        );
+      }
+      throw err;
+    }
+  }
+
   async framesList(opts?: { tabId?: TabId }): Promise<FrameInfo[]> {
     const res = (await this.send('frames_list', {}, { tabId: opts?.tabId })) as { frames?: FrameInfo[] };
     return res.frames ?? [];

@@ -236,6 +236,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 
+  {
+    name: 'proxy_status',
+    description:
+      "The active profile's proxy and the IP sites see. The user sets it per Chrome profile; for another IP, profile_use another profile.",
+    inputSchema: {},
+  },
   { name: 'chrome_status', description: 'Report backend/session status: paired browser profiles and how each was named, and flags for switched-off capabilities.', inputSchema: {} },
   { name: 'auth_check', description: 'Is the tab sitting on a sign-in wall? Reads the page (URL, title, password fields, sign-in controls) and returns { authRequired, confidence, signals }. Use it after a navigate, or whenever a step fails unexpectedly, to tell "the session expired" apart from "the agent got lost". Pass failOnAuthWall:true to get an [AUTH_REQUIRED] error instead of a verdict, so a harness can bucket the run as an auth failure.', inputSchema: { failOnAuthWall: authWallField, ...FRAME_PROPS, tabId: tabIdField } },
 
@@ -327,6 +333,7 @@ const TOOL_GATE: Readonly<Record<string, WireMethod | null>> = {
   // no gate — always usable
   tabs_list: null,
   chrome_status: null,
+  proxy_status: null,
   batch: null,
   profile_use: null,
   profile_rename: null,
@@ -778,7 +785,7 @@ const waitUntil = (args: Record<string, unknown>): WaitUntil | undefined =>
  *  the parallel-batch explicit-tabId requirement. Everything else falls back to
  *  the active tab when `tabId` is omitted, which races under concurrency. */
 const PARALLEL_TAB_EXEMPT = new Set([
-  'tabs_list', 'tab_new', 'chrome_status', 'batch',
+  'tabs_list', 'tab_new', 'chrome_status', 'proxy_status', 'batch',
   'profile_use', 'profile_rename', 'task_new', 'tasks_list', 'task_status',
 ]);
 
@@ -1165,6 +1172,19 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return jsonResult(await ctx.ex.uploadFile(t, files, { tabId: tabId(a) }));
   },
 
+  proxy_status: async (_a, ctx) => {
+    if (!ctx.ex.proxyStatus) throw new ExecutorError('UNSUPPORTED', 'this backend has no proxy setting');
+    const status = await ctx.ex.proxyStatus();
+    const hint = !status.enabled
+      ? { hint: 'no proxy in this profile: sites see the real IP. The user sets one on the extension Options page of the Chrome profile meant for it.' }
+      : status.control !== 'controlled_by_this_extension'
+        ? { hint: 'another extension or a policy overrides the proxy, so the configured one is not in use' }
+        : !status.exitIp
+          ? { hint: 'the proxy is on but unreachable: pages in this profile will fail to load until the user fixes it' }
+          : {};
+    return jsonResult({ ...status, ...hint });
+  },
+
   frames_list: async (a, ctx) => {
     await gate(ctx, 'frames_list', { tabId: tabId(a) });
     if (!ctx.ex.framesList) throw new ExecutorError('UNSUPPORTED', 'this backend cannot enumerate frames');
@@ -1453,7 +1473,7 @@ function recordHistory(
  * the same end state.
  */
 const RETRY_SAFE_TOOLS = new Set([
-  'tabs_list', 'chrome_status',
+  'tabs_list', 'chrome_status', 'proxy_status',
   'get_text', 'get_html', 'snapshot', 'get_cookies', 'auth_check',
   'extract_links', 'read_as_markdown', 'screenshot',
   'wait_for', 'navigate', 'reload',

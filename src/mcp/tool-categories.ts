@@ -40,6 +40,7 @@ export const TOOL_CATEGORY: Readonly<Record<string, string>> = Object.freeze({
   network_log: 'observers',
   dialogs: 'observers',
   chrome_status: 'session',
+  proxy_status: 'session',
   auth_check: 'session',
   profile_use: 'session',
   profile_rename: 'session',

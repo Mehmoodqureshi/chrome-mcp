@@ -11,7 +11,7 @@
  */
 
 import type { ObserverReadResult, DialogPolicy } from '../../shared/observers';
-import type { FillFieldOp } from '../../shared/protocol';
+import type { FillFieldOp, ProxyWireStatus } from '../../shared/protocol';
 
 export type { ObserverReadResult, DialogPolicy, FillFieldOp };
 
@@ -352,6 +352,8 @@ export interface Executor {
   framesList?(opts?: { tabId?: TabId }): Promise<FrameInfo[]>;
   /** Read (and configure) the in-page console / network / dialog observers. */
   observers?(args: ObserverArgs): Promise<ObserverReadResult>;
+  /** The proxy this profile's browser uses and the IP sites see (set on the Options page, read-only here). */
+  proxyStatus?(): Promise<ProxyWireStatus>;
   /** Render the page to PDF (Chrome's own print pipeline). */
   printPdf?(opts?: {
     tabId?: TabId;
