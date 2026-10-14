@@ -182,9 +182,14 @@ Windows; `CHROME_MCP_EXTENSION_DIR` moves it). `chrome://extensions` → enable
 boot (never with an older build) so it reloads itself within 30 seconds.
 
 An unpacked copy does not update through Chrome, so its popup suggests the store
-copy. Unpacked builds carry the store's public key and so have the same id: load
-one *or* the store copy in a Chrome profile, not both. Working from a git clone?
+copy. Fresh unpacked builds carry the store's public key and so have the same id:
+load one *or* the store copy in a Chrome profile, not both. Updates preserve the
+ID of an existing unpacked installation, including older copies without a
+manifest key; those continue to pair through the bundled `pairing.json`.
+Working from a git clone?
 `npm install && npm run build:ext` first; `extension-dist/` is gitignored.
+`npm run clean` clears server build output and keeps `extension-dist/`, whose
+manifest and pairing data may belong to an installation already loaded in Chrome.
 
 </details>
 
@@ -205,6 +210,40 @@ Manual fallback (the helper is turned off with `--no-native-host`, or Connect
 reports a problem): run `npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing`,
 open the extension's **Settings**, and paste the `port` + `token` from
 `~/.chrome-mcp/handshake.json`.
+
+### Extension missing after restarting Chrome
+
+Run the read-only diagnostic to see the actual installation type, missing files,
+Chrome disable reasons, and any conflicting extension registrations:
+
+```bash
+npx -y @mehmoodqureshi/chrome-mcp@latest extension doctor
+```
+
+Older unpacked copies could acquire a new ID when an update added the Web Store
+public key to their manifest. Chrome then retained both IDs for one folder and
+skipped that folder on its next startup. Updates now preserve existing IDs.
+For an installation already affected by this exact conflict:
+
+```bash
+npx -y @mehmoodqureshi/chrome-mcp@latest extension repair
+# Review the preview, fully quit Chrome and other Chromium browsers, then:
+npx -y @mehmoodqureshi/chrome-mcp@latest extension repair --apply
+```
+
+The repair backs up the original preferences under
+`~/.chrome-mcp/extension-repair-backups/`, removes only the confirmed obsolete
+registration, and preserves the current extension and its saved settings. It
+refuses to write while a Chromium browser is running. Reopen Chrome afterwards.
+Use `--user-data-dir <directory>` for a custom browser data location, or
+`extension doctor --json` for a diagnostic report. Reports contain extension
+paths and registration status, but no browsing history, cookies or pairing tokens.
+
+A Web Store installation with no matching stale-ID conflict is left unchanged.
+If the diagnostic finds missing files, a disabled Store copy, or no registration,
+that needs its own diagnosis; this command does not assume the cause or reset
+the browser profile. When moving from an unpacked copy to the Store version,
+remove the unpacked copy first, then install from the Store.
 
 ### Running more than one session
 
@@ -270,8 +309,12 @@ start. Wrap it in `cmd /c`:
 
 Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain example.com`
 
-Everything else is the same — load `%USERPROFILE%\chrome-mcp-extension` and pair
-as above.
+For normal use, install the extension from the Chrome Web Store as described
+above, then click **Connect**. Do not use **Load unpacked** as part of the normal
+Windows setup. The unpacked developer build has the same extension ID as the
+Store build, so loading it can replace the Store installation; Chrome may then
+disable the non-Store copy. If you are developing chrome-mcp, load
+`%USERPROFILE%\chrome-mcp-extension` in a separate Chrome profile.
 
 The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
 `scroll`/`select_option`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`),
@@ -698,6 +741,10 @@ Published on the Chrome Web Store as
 Extension versions move only when `extension/` changes, so the listed build can
 sit a release behind the npm package; the two negotiate capabilities on
 connect, so an older extension loses features rather than breaking.
+
+For normal use, install from the Chrome Web Store above. The following is only
+for local development; do not load this unpacked copy in the same Chrome profile
+as the Store extension. On Windows, Chrome may disable a non-Store build.
 
 `extension/` builds (esbuild) to `extension-dist/`, loaded via
 `chrome://extensions` → **Load unpacked** → select `~/chrome-mcp-extension`, the

@@ -394,6 +394,8 @@ function requireLogLevel(value: string | undefined): LogLevel {
 export const HELP_TEXT = `chrome-mcp — the MCP Browser Extension server: drive your real Chrome over MCP.
 
 Usage: chrome-mcp [options]
+       chrome-mcp extension doctor [--json] [--user-data-dir <browser directory>]
+       chrome-mcp extension repair [--apply] [--user-data-dir <browser directory>]
        chrome-mcp tasks list [--json]
        chrome-mcp tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>] [--dry-run]
 

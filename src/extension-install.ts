@@ -19,7 +19,8 @@
 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-file';
 
 /** Folder name under the home directory. */
 export const EXTENSION_DIR_NAME = 'chrome-mcp-extension';
@@ -49,14 +50,15 @@ export interface SyncResult {
   error?: string;
 }
 
-/** The `version` of a manifest.json, or null when absent or unreadable. */
-function manifestVersion(path: string): string | null {
-  try {
-    const v = (JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }).version;
-    return typeof v === 'string' ? v : null;
-  } catch {
-    return null;
+type Manifest = Record<string, unknown> & { version: string; key?: string };
+
+function readManifest(path: string): Manifest {
+  const value = JSON.parse(readFileSync(path, 'utf8')) as Manifest;
+  if (!value || Array.isArray(value) || typeof value.version !== 'string' ||
+      (value.key !== undefined && (typeof value.key !== 'string' || !value.key.trim()))) {
+    throw new Error(`invalid extension manifest at ${path}; existing files were not changed`);
   }
+  return value;
 }
 
 /** Compare dotted versions numerically: >0 when a is newer, <0 when older, 0 when equal. */
@@ -94,14 +96,29 @@ export function syncExtension(from: string = bundledExtensionDir(), to: string =
     }
     // Never downgrade: an older server (a session left running for days) must
     // not put its stale build over a newer one another session already wrote.
-    const srcVersion = manifestVersion(join(from, 'manifest.json'));
-    const dstVersion = created ? null : manifestVersion(join(to, 'manifest.json'));
-    if (srcVersion && dstVersion && compareVersions(dstVersion, srcVersion) > 0) {
+    const sourceManifest = readManifest(join(from, 'manifest.json'));
+    const targetManifestPath = join(to, 'manifest.json');
+    const targetManifest = existsSync(targetManifestPath) ? readManifest(targetManifestPath) : null;
+    if (targetManifest && compareVersions(targetManifest.version, sourceManifest.version) > 0) {
       return { dir: to, copied, created, ok: true };
     }
+    // A manifest key is the extension's identity, not an ordinary update field.
+    // Adding a key to an existing keyless install changes its path-derived ID.
+    // Chrome retains the old registration, then rejects the shared path on the
+    // next startup. Preserve both existing keys AND their absence.
+    let manifestBytes = readFileSync(join(from, 'manifest.json'));
+    if (targetManifest && targetManifest.key !== sourceManifest.key) {
+      const manifest = { ...sourceManifest };
+      if (targetManifest.key === undefined) delete manifest.key;
+      else manifest.key = targetManifest.key;
+      manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    }
     mkdirSync(to, { recursive: true });
+    // Publish the manifest/version last so the extension's reload check cannot
+    // observe a new version before its background/options files are ready.
+    entries.sort((a, b) => Number(a.name === 'manifest.json') - Number(b.name === 'manifest.json'));
     for (const e of entries) {
-      const src = readFileSync(join(from, e.name));
+      const src = e.name === 'manifest.json' ? manifestBytes : readFileSync(join(from, e.name));
       const dst = join(to, e.name);
       let current: Buffer | null = null;
       try {
@@ -110,7 +127,7 @@ export function syncExtension(from: string = bundledExtensionDir(), to: string =
         /* absent */
       }
       if (current && sameBytes(current, src)) continue;
-      writeFileSync(dst, src);
+      writeFileAtomic(dst, src);
       copied.push(e.name);
     }
     return { dir: to, copied, created, ok: true };

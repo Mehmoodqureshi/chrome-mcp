@@ -99,3 +99,45 @@ test('the mirror never puts an older extension over a newer one', async () => {
   assert.ok(r2.copied.includes('background.js'));
   assert.ok(compareVersions('0.10.0', '0.9.19') > 0);
 });
+
+test('updating a keyless unpacked install preserves its path-derived ID and pairing', () => {
+  const from = fakeBundle();
+  const to = join(mkdtempSync(join(tmpdir(), 'cmcp-legacy-')), EXTENSION_DIR_NAME);
+  syncExtension(from, to);
+  writeFileSync(join(to, 'pairing.json'), '{"port":38017,"token":"keep-this-pairing"}');
+  writeFileSync(join(from, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 't', version: '0.0.2', key: 'new-public-key' }));
+  writeFileSync(join(from, 'background.js'), 'updated-code');
+
+  const update = syncExtension(from, to);
+  assert.equal(update.ok, true);
+  assert.equal(JSON.parse(readFileSync(join(to, 'manifest.json'), 'utf8')).key, undefined);
+  assert.equal(JSON.parse(readFileSync(join(to, 'manifest.json'), 'utf8')).version, '0.0.2');
+  assert.equal(readFileSync(join(to, 'background.js'), 'utf8'), 'updated-code');
+  assert.equal(readFileSync(join(to, 'pairing.json'), 'utf8'), '{"port":38017,"token":"keep-this-pairing"}');
+  assert.equal(update.copied.at(-1), 'manifest.json', 'publish the version after the code');
+  assert.deepEqual(syncExtension(from, to).copied, [], 'preserving identity remains idempotent');
+});
+
+test('existing keyed installs keep their key; fresh installs get the bundled key', () => {
+  const from = fakeBundle();
+  writeFileSync(join(from, 'manifest.json'), '{"version":"1.0","key":"original-public-key"}');
+  const to = join(mkdtempSync(join(tmpdir(), 'cmcp-keyed-')), EXTENSION_DIR_NAME);
+  syncExtension(from, to);
+  assert.equal(JSON.parse(readFileSync(join(to, 'manifest.json'), 'utf8')).key, 'original-public-key');
+  writeFileSync(join(from, 'manifest.json'), '{"version":"2.0","key":"different-public-key"}');
+  syncExtension(from, to);
+  assert.deepEqual(JSON.parse(readFileSync(join(to, 'manifest.json'), 'utf8')), { version: '2.0', key: 'original-public-key' });
+  writeFileSync(join(from, 'manifest.json'), '{"version":"3.0"}');
+  syncExtension(from, to);
+  assert.deepEqual(JSON.parse(readFileSync(join(to, 'manifest.json'), 'utf8')), { version: '3.0', key: 'original-public-key' });
+});
+
+test('an unreadable existing manifest is not overwritten with a different identity', () => {
+  const from = fakeBundle();
+  const to = mkdtempSync(join(tmpdir(), 'cmcp-invalid-'));
+  writeFileSync(join(to, 'manifest.json'), '{broken');
+  writeFileSync(join(to, 'background.js'), 'keep-current-code');
+  assert.equal(syncExtension(from, to).ok, false);
+  assert.equal(readFileSync(join(to, 'manifest.json'), 'utf8'), '{broken');
+  assert.equal(readFileSync(join(to, 'background.js'), 'utf8'), 'keep-current-code');
+});

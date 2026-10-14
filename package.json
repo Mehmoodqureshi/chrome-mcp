@@ -1,7 +1,7 @@
 {
   "name": "@mehmoodqureshi/chrome-mcp",
   "mcpName": "io.github.Mehmoodqureshi/chrome-mcp",
-  "version": "0.9.22",
+  "version": "0.9.23",
   "description": "Drive your real Chrome browser over MCP \u2014 real logins, real cookies. A stdio MCP server (CLI) plus an MV3 extension, driving Chrome via chrome.scripting/chrome.tabs. Multi-tab batch automation, accessibility snapshots, deny-all security by default.",
   "author": "Mehmood Ur Rehman Qureshi",
   "license": "MIT",
@@ -55,7 +55,7 @@
     "pack:ext": "npm run build:ext && node extension/scripts/pack-ext.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:ext": "tsc -p tsconfig.ext.json",
-    "clean": "rimraf dist extension-dist",
+    "clean": "rimraf dist",
     "test": "npm run clean && npm run build && npm run build:ext && node --test dist/test/*.test.js",
     "test:hitl": "npm run build && node dist/hitl/index.js",
     "prepack": "npm run clean && npm run build && npm run build:ext"

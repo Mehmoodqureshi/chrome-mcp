@@ -1,3 +1,23 @@
+## 0.9.23 - 2026-10-14
+
+Preserve unpacked extension IDs across updates and diagnose missing installations.
+
+- fix: updates preserve an existing unpacked installation's manifest key, including
+  the absence of a key in older installations. This prevents an ID change that
+  could leave duplicate registrations and make the extension disappear after
+  Chrome restarts.
+- fix: extension updates replace files atomically and publish the manifest last.
+  Developer builds preserve installation identity and pairing data; `npm run clean`
+  now clears server output without removing the loaded extension folder.
+- feat: `extension doctor` reports installation type, missing files, disable reasons
+  and conflicting registrations without changing the browser profile.
+- feat: `extension repair` previews confirmed duplicate-ID conflicts. `--apply`
+  requires browsers to be closed, backs up preferences, removes only the obsolete
+  registration and preserves the current extension's saved settings.
+- docs: clarify Store-first installation and keeping unpacked development copies in
+  a separate Chrome profile. Store installations and other disappearance causes
+  require their own diagnosis; the repair does not reset profiles or guess a cause.
+
 ## 0.9.22 - 2026-10-13
 
 Remote tunnels and proxies per Chrome profile.

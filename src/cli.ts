@@ -29,6 +29,7 @@ import { initTelemetry, stopTelemetry } from './telemetry';
 import { maybeHandOff } from './auto-update';
 import { registerNativeHost, runNativeHost } from './native-host';
 import { bundledExtensionDir, syncExtension } from './extension-install';
+import { runExtensionCommand } from './extension-command';
 
 /** Hard deadline for clean shutdown before we force-exit (a stuck socket must not hang us). */
 const SHUTDOWN_DEADLINE_MS = 3000;
@@ -94,9 +95,14 @@ function installExtension(): string {
     return r.dir;
   }
   if (r.created) {
-    logErr(`extension installed at ${r.dir} — chrome://extensions -> Load unpacked -> pick that folder`);
+    logErr(
+      `developer extension files copied to ${r.dir}; this does not install the extension in Chrome. ` +
+        `For normal use, install MCP Browser Extension from the Chrome Web Store. ` +
+        `Only for local development: use chrome://extensions -> Developer mode -> Load unpacked. ` +
+        `Do not load the unpacked copy alongside the Store copy.`,
+    );
   } else if (r.copied.length > 0) {
-    logErr(`extension files updated at ${r.dir} — a loaded extension reloads itself within 30 s`);
+    logErr(`developer extension files updated at ${r.dir} — a loaded unpacked copy reloads itself within 30 s`);
   }
   return r.dir;
 }
@@ -223,6 +229,7 @@ async function main(): Promise<void> {
     return;
   }
   if (runTasksCommand(process.argv.slice(2))) return;
+  if (runExtensionCommand(process.argv.slice(2))) return;
 
   const cfg = parseArgs(process.argv.slice(2));
 
