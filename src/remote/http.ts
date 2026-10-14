@@ -19,6 +19,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import { createServer } from '../mcp/server';
+import { requireAccess } from '../access';
 import type { Policy } from '../security/policy';
 import { keyMatches } from './key';
 
@@ -31,6 +32,8 @@ export interface HttpMcpOptions {
   version: string;
   policy: Policy;
   log: (message: string) => void;
+  /** Test seam; production callers use the Firebase-backed gate by default. */
+  accessGuard?: typeof requireAccess;
 }
 
 export interface HttpMcp {
@@ -117,7 +120,7 @@ export async function startHttpMcp(opts: HttpMcpOptions): Promise<HttpMcp> {
       transport.onclose = () => {
         if (transport.sessionId) transports.delete(transport.sessionId);
       };
-      const server = createServer(opts.version, opts.policy);
+      const server = createServer(opts.version, opts.policy, opts.accessGuard ?? requireAccess);
       await server.connect(transport);
       return transport.handleRequest(req, res, body);
     }

@@ -198,6 +198,9 @@ export class ExtensionExecutor implements Executor {
   async click(t: Target, opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean } & FrameOpts): Promise<ActionOk> {
     return (await this.send('click', { ...targetParams(t), ...frameParams(opts), button: opts?.button, clickCount: opts?.clickCount, trusted: opts?.trusted }, { tabId: opts?.tabId })) as ActionOk;
   }
+  async draw(strokes: import('../../shared/protocol').DrawStroke[], opts?: { tabId?: TabId }): Promise<{ ok: true; strokes: number; points: number }> {
+    return (await this.send('draw', { strokes }, { tabId: opts?.tabId })) as { ok: true; strokes: number; points: number };
+  }
   async type(
     t: Target,
     text: string,

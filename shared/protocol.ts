@@ -125,6 +125,11 @@ export interface FillFormWireResult {
   error?: { selector: string; code: ExecutorErrorCode; message: string };
 }
 
+/** A freehand stroke in top-level viewport CSS coordinates. */
+export interface DrawStroke {
+  points: Array<{ x: number; y: number }>;
+}
+
 // ---------------------------------------------------------------------------
 // Methods
 // ---------------------------------------------------------------------------
@@ -144,6 +149,7 @@ export type WireMethod =
   | 'forward'
   | 'reload'
   | 'click'
+  | 'draw'
   | 'type'
   | 'press'
   | 'hover'
@@ -177,6 +183,7 @@ export const WIRE_METHODS: readonly WireMethod[] = [
   'forward',
   'reload',
   'click',
+  'draw',
   'type',
   'press',
   'hover',

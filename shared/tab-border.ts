@@ -88,14 +88,36 @@ export function pickBorderColor(theme: PageTheme): string {
   return contrast(tc, against) >= MIN_CONTRAST ? toHex(tc) : fallback;
 }
 
-/** The user stylesheet that draws the border. Only `color` varies, and it is
- *  always a `#rrggbb` from pickBorderColor or a constant above. */
+/** One uniform page-theme colour with a crisp rim and soft falloff.
+ *  The mask rounds the inner glow without cutting holes at the viewport corners.
+ *  One click-through layer keeps the colour continuous; the middle is transparent.
+ *  Colours are validated before interpolation into the user stylesheet. */
 export function borderCss(color: string): string {
   const c = /^#[0-9a-f]{6}$/i.test(color) ? color : BORDER_BLUE;
+  // A narrow solid rim, then a quick falloff: colour stays at the perimeter.
+  const falloff = '#000 0 2px,#000b 3px,#0004 10px,#0001 26px,transparent 56px';
+  const edges = ['bottom', 'left', 'top', 'right']
+    .map((direction) => `linear-gradient(to ${direction},${falloff})`);
+  // Round the inside of each corner in the same mask as the straight edges.
+  // Clipping the whole layer with border-radius exposes page-coloured wedges;
+  // covering them with another layer leaves a visible seam.
+  const corners = ['16px 16px', '0 16px', '0 0', '16px 0']
+    .map((center) => `radial-gradient(circle at ${center},transparent 14px,#000 16px)`);
+  const mask = [...edges, ...corners].join(',');
   return (
     'html::after{content:"" !important;display:block !important;position:fixed !important;' +
-    'inset:0 !important;box-sizing:border-box !important;' +
-    `border:3px solid ${c} !important;box-shadow:inset 0 0 12px ${c}66 !important;` +
-    'pointer-events:none !important;z-index:2147483647 !important;}'
+    'inset:0 !important;box-sizing:border-box !important;margin:0 !important;padding:0 !important;' +
+    'width:auto !important;height:auto !important;min-width:0 !important;min-height:0 !important;' +
+    'max-width:none !important;max-height:none !important;border:0 !important;border-radius:0 !important;' +
+    'clip-path:none !important;outline:none !important;opacity:1 !important;' +
+    'pointer-events:none !important;z-index:2147483647 !important;' +
+    'transform:none !important;filter:none !important;mix-blend-mode:normal !important;' +
+    `background:${c}99 !important;` +
+    `-webkit-mask-image:${mask} !important;mask-image:${mask} !important;` +
+    'mask-size:100% 100%,100% 100%,100% 100%,100% 100%,16px 16px,16px 16px,16px 16px,16px 16px !important;' +
+    'mask-position:0 0,0 0,0 0,0 0,left top,right top,right bottom,left bottom !important;' +
+    'mask-repeat:no-repeat !important;mask-composite:add !important;' +
+    'box-shadow:none !important;animation:none !important;}' +
+    '@media print{html::after{display:none !important;}}'
   );
 }

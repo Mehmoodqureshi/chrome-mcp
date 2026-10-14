@@ -164,7 +164,7 @@ export async function registerNativeHost(opts: RegisterOptions): Promise<string[
 /** What the host answers: the pairing, or why there is none. */
 export type NativeReply =
   | { ok: true; port: number; token: string; profile?: string }
-  | { ok: false; error: 'not_running' | 'bad_request'; message: string };
+  | { ok: false; error: 'not_running' | 'needs_verification' | 'bad_request'; message: string };
 
 /** Build the reply from the data dir: the live handshake, if a server is up. */
 export function pairingReply(dataDir: string, profile?: string): NativeReply {
@@ -178,6 +178,18 @@ export function pairingReply(dataDir: string, profile?: string): NativeReply {
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ESRCH') throw new Error('stale');
       }
+    }
+    let verified = false;
+    try {
+      const access = JSON.parse(readFileSync(join(dataDir, 'access.json'), 'utf8')) as { verified?: unknown };
+      verified = access.verified === true;
+    } catch { /* no account grant yet */ }
+    if (!verified) {
+      return {
+        ok: false,
+        error: 'needs_verification',
+        message: 'Verify your email first. After opening the sign-in link, wait a few seconds for activation to sync, then click Connect again. If still blocked, retry a browser tool in your AI client first.',
+      };
     }
     return { ok: true, port: h.port, token: h.token, ...(profile ? { profile } : {}) };
   } catch {

@@ -128,8 +128,8 @@ test('tools/list stays within its byte budget', async () => {
   // so a new tool or a wordier field description has to be worth its bytes.
   // Raised from 28000 for proxy_status (0.9.22), kept to a one-line description.
   assert.ok(
-    bytes <= 28_300,
-    `tools/list is ${bytes} B for ${tools.length} tools, over the 28300 B budget`,
+    bytes <= 29_100,
+    `tools/list is ${bytes} B for ${tools.length} tools, over the 29100 B budget`,
   );
 });
 
@@ -178,7 +178,7 @@ test('turning a capability on brings its tools back', async () => {
 test('mutations off drops the acting tools but keeps the reads', async () => {
   const readOnly = resolvePolicy({ allowDomains: ['*'] });
   const names = (await listTools(readOnly)).map((t) => t.name);
-  for (const n of ['click', 'type', 'navigate', 'tab_new', 'fill_form', 'scroll']) {
+  for (const n of ['click', 'draw', 'type', 'navigate', 'tab_new', 'fill_form', 'scroll']) {
     assert.equal(names.includes(n), false, `${n} is mutating and should be hidden`);
   }
   for (const n of ['get_text', 'get_html', 'snapshot', 'tabs_list', 'chrome_status']) {
@@ -228,7 +228,7 @@ test('disabledCapabilities: default policy names every flag and the tools it hid
   assert.deepEqual([...byCap.keys()], ['mutations', 'eval', 'downloads', 'uploads', 'observers']);
   const mutations = byCap.get('mutations')!;
   assert.equal(mutations.flag, '--enable-mutations');
-  for (const n of ['navigate', 'click', 'type', 'fill_form', 'tab_new']) {
+  for (const n of ['navigate', 'click', 'draw', 'type', 'fill_form', 'tab_new']) {
     assert.equal(mutations.hiddenTools.includes(n), true, `${n} should be listed under mutations`);
   }
   assert.deepEqual(byCap.get('observers')!.hiddenTools, ['console_logs', 'network_log', 'dialogs']);

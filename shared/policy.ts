@@ -32,6 +32,7 @@ const READ_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
 /** Content-mutating actions — URL-gated AND mutation-gated. */
 const MUTATE_CONTENT: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'click',
+  'draw',
   'type',
   'press',
   'hover',

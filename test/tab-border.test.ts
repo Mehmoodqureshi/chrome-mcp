@@ -56,9 +56,8 @@ test('parseColor reads hex and rgb(a)', () => {
 test('borderCss draws a click-through fixed border and never interpolates a non-hex value', () => {
   const css = borderCss('#dc2626');
   assert.match(css, /^html::after\{/);
-  assert.match(css, /border:3px solid #dc2626 !important/);
+  assert.match(css, /background:#dc262699 !important/);
   assert.match(css, /pointer-events:none !important/);
   assert.match(css, /position:fixed !important/);
-  assert.ok(!borderCss('red;}body{display:none').includes('display:none'));
-  assert.match(borderCss('red;}body{display:none'), new RegExp(BORDER_BLUE));
+  assert.equal(borderCss('red;}body{display:none'), borderCss(BORDER_BLUE));
 });

@@ -644,7 +644,7 @@ async function tabInfo(tab: chrome.tabs.Tab, index = 0): Promise<Record<string, 
 export const HANDLED: ReadonlySet<WireMethod> = new Set<WireMethod>([
   'tabs_list', 'tab_select', 'tab_new', 'tab_close',
   'navigate', 'back', 'forward', 'reload',
-  'click', 'type', 'press', 'hover', 'scroll',
+  'click', 'draw', 'type', 'press', 'hover', 'scroll',
   'screenshot', 'get_text', 'get_html', 'snapshot',
   'select_option', 'get_cookies', 'storage', 'eval', 'wait_for',
   'download_file', 'upload_file', 'ping_probe',
@@ -956,6 +956,51 @@ export class ChromeExecutor {
         const out = await execOp(id, withWait({ op: 'click', selector: sel }), frameIds);
         if (!out.found) throw notFound(sel, out);
         return { ok: true, frameId: out.frameId, ...(cmd.params.trusted === true ? { trusted: false } : {}) };
+      }
+      case 'draw': {
+        const id = await targetTab(cmd);
+        const raw = cmd.params.strokes;
+        if (!Array.isArray(raw) || raw.length < 1 || raw.length > 100) {
+          throw new CmdError('BAD_ARGS', 'draw needs 1 to 100 strokes');
+        }
+        const strokes = raw.map((stroke: unknown) => {
+          if (!stroke || typeof stroke !== 'object' || !Array.isArray((stroke as { points?: unknown }).points)) {
+            throw new CmdError('BAD_ARGS', 'each stroke needs a points array');
+          }
+          const points = (stroke as { points: unknown[] }).points;
+          if (points.length < 2 || points.length > 1000) throw new CmdError('BAD_ARGS', 'each stroke needs 2 to 1000 points');
+          return points.map((point) => {
+            if (!point || typeof point !== 'object') throw new CmdError('BAD_ARGS', 'each point needs numeric x and y');
+            const { x, y } = point as { x?: unknown; y?: unknown };
+            if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+              throw new CmdError('BAD_ARGS', 'each point needs finite numeric x and y');
+            }
+            return { x, y };
+          });
+        });
+        const pointCount = strokes.reduce((sum, stroke) => sum + stroke.length, 0);
+        if (pointCount > 5000) throw new CmdError('BAD_ARGS', 'draw is limited to 5000 total points per call');
+        await withDebugger(id, async (t) => {
+          for (const stroke of strokes) {
+            const first = stroke[0];
+            await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', {
+              type: 'mouseMoved', x: first.x, y: first.y, buttons: 0,
+            });
+            await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', {
+              type: 'mousePressed', x: first.x, y: first.y, button: 'left', buttons: 1, clickCount: 1,
+            });
+            for (const point of stroke.slice(1)) {
+              await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', {
+                type: 'mouseMoved', x: point.x, y: point.y, button: 'left', buttons: 1,
+              });
+            }
+            const last = stroke[stroke.length - 1];
+            await chrome.debugger.sendCommand(t, 'Input.dispatchMouseEvent', {
+              type: 'mouseReleased', x: last.x, y: last.y, button: 'left', buttons: 0, clickCount: 1,
+            });
+          }
+        });
+        return { ok: true, strokes: strokes.length, points: pointCount };
       }
       case 'type': {
         const id = await targetTab(cmd);

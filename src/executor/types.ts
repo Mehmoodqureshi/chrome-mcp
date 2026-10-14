@@ -11,9 +11,9 @@
  */
 
 import type { ObserverReadResult, DialogPolicy } from '../../shared/observers';
-import type { FillFieldOp, ProxyWireStatus } from '../../shared/protocol';
+import type { DrawStroke, FillFieldOp, ProxyWireStatus } from '../../shared/protocol';
 
-export type { ObserverReadResult, DialogPolicy, FillFieldOp };
+export type { ObserverReadResult, DialogPolicy, DrawStroke, FillFieldOp };
 
 export type BackendKind = 'extension' | 'cdp';
 export type WaitUntil = 'load' | 'domcontentloaded' | 'networkidle';
@@ -297,6 +297,8 @@ export interface Executor {
     t: Target,
     opts?: { tabId?: TabId; button?: MouseButton; clickCount?: number; trusted?: boolean } & FrameOpts,
   ): Promise<ActionOk>;
+  /** Send trusted pointer strokes in viewport CSS coordinates. */
+  draw(strokes: DrawStroke[], opts?: { tabId?: TabId }): Promise<{ ok: true; strokes: number; points: number }>;
   type(
     t: Target,
     text: string,

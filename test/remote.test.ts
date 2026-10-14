@@ -99,7 +99,7 @@ test('a client with the key can list and call tools; without it, it gets nothing
   const policy = resolvePolicy({ allowDomains: ['example.com'] });
   configureManager({ policy, makeExecutor: () => ex });
   const key = 'k'.repeat(43);
-  const server = await startHttpMcp({ port: 0, key, version: 'test', policy, log: () => undefined });
+  const server = await startHttpMcp({ port: 0, key, version: 'test', policy, log: () => undefined, accessGuard: async () => null });
   const base = `http://127.0.0.1:${server.port}`;
   try {
     const viaPath = await connect(`${base}/mcp/${key}`);

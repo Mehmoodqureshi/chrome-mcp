@@ -53,7 +53,9 @@ test('on Windows it registers through the registry', async () => {
 
 test('the reply is the live handshake, and a dead server is not a pairing', () => {
   const dir = tmp();
-  assert.equal(pairingReply(dir).ok, false, 'no handshake: not running');
+  assert.equal(pairingReply(dir).ok, false, 'not verified: pairing stays gated');
+  writeFileSync(join(dir, 'access.json'), JSON.stringify({ verified: true }));
+  assert.equal(pairingReply(dir).ok, false, 'verified but no handshake: not running');
   writeFileSync(join(dir, 'handshake.json'), JSON.stringify({ v: 1, port: 38017, token: 't0k', pid: process.pid }));
   assert.deepEqual(pairingReply(dir, 'work'), { ok: true, port: 38017, token: 't0k', profile: 'work' });
   writeFileSync(join(dir, 'handshake.json'), JSON.stringify({ v: 1, port: 38017, token: 't0k', pid: 2 ** 22 + 12345 }));
@@ -63,6 +65,7 @@ test('the reply is the live handshake, and a dead server is not a pairing', () =
 test('chrome-mcp --native-host answers one framed request, as Chrome starts it', () => {
   const dir = tmp();
   writeFileSync(join(dir, 'handshake.json'), JSON.stringify({ v: 1, port: 40000, token: 'abc', pid: process.pid }));
+  writeFileSync(join(dir, 'access.json'), JSON.stringify({ verified: true }));
   const cli = join(__dirname, '..', 'src', 'cli.js');
   const out = execFileSync(
     process.execPath,

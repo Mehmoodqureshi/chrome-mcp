@@ -391,6 +391,21 @@ export class CdpExecutor implements Executor {
       return this.ok;
     });
   }
+  async draw(strokes: import('../../shared/protocol').DrawStroke[], opts?: { tabId?: TabId }): Promise<{ ok: true; strokes: number; points: number }> {
+    return this.guard(async () => {
+      const p = await this.resolveTab(opts?.tabId);
+      let points = 0;
+      for (const stroke of strokes) {
+        const [first, ...rest] = stroke.points;
+        await p.mouse.move(first.x, first.y);
+        await p.mouse.down();
+        for (const point of rest) await p.mouse.move(point.x, point.y);
+        await p.mouse.up();
+        points += stroke.points.length;
+      }
+      return { ok: true, strokes: strokes.length, points };
+    });
+  }
   async type(t: Target, text: string, opts?: { tabId?: TabId; clear?: boolean; pressEnter?: boolean; keyEvents?: boolean; trusted?: boolean }): Promise<ActionOk> {
     return this.guard(async () => {
       const p = await this.resolveTab(opts?.tabId);

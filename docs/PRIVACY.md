@@ -1,6 +1,6 @@
 # Privacy policy — MCP Browser Extension
 
-Last updated: 2026-10-13
+Last updated: 2026-10-15
 
 MCP Browser Extension is an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
@@ -100,6 +100,18 @@ forwards results to your configured MCP client. If you enable `--http` or
 receive results within your allowed sites. `--tunnel` uses Cloudflare to expose
 the local HTTP endpoint; its URL includes the access key and must stay private.
 Restart with `--rotate-remote-key` to revoke access.
+
+The server also asks for an email the first time you use a browser tool. The
+website sends a Firebase email sign-in link; opening it verifies the address and
+grants access to that server installation. Firebase Authentication stores the
+email address. Firestore stores the Firebase user id, a hash of a random device
+secret, whether that device is active, and short-lived verification requests.
+The server stores the random device id and secret locally in
+`~/.chrome-mcp/access.json` with owner-only file permissions. The address is
+entered through the MCP client's input prompt and sent by the local server to
+the MCP Browser Extension website to request the sign-in email. The account
+can be disabled in Firebase Authentication, and an individual device grant can
+be revoked in Firestore.
 
 The MCP Browser Extension server also makes these outside requests:
 

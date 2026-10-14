@@ -111,7 +111,7 @@ test('navigating to about:blank is always allowed', () => {
 });
 
 test('isMutatingMethod classifies the mutating set', () => {
-  for (const m of ['click', 'type', 'navigate', 'tab_close'] as const) {
+  for (const m of ['click', 'draw', 'type', 'navigate', 'tab_close'] as const) {
     assert.ok(isMutatingMethod(m), `${m} should be mutating`);
   }
   for (const m of ['get_text', 'tabs_list', 'screenshot'] as const) {

@@ -8,7 +8,7 @@
  *      values (and a couple of forced-failure switches).
  */
 
-import type { ProxyWireStatus } from '../../shared/protocol';
+import type { DrawStroke, ProxyWireStatus } from '../../shared/protocol';
 import {
   ExecutorError,
   type ActionOk,
@@ -255,6 +255,10 @@ export class StubExecutor implements Executor {
   async click(): Promise<ActionOk> {
     this.landed();
     return ok;
+  }
+  async draw(strokes: DrawStroke[]): Promise<{ ok: true; strokes: number; points: number }> {
+    this.landed();
+    return { ok: true, strokes: strokes.length, points: strokes.reduce((n, stroke) => n + stroke.points.length, 0) };
   }
   async type(): Promise<ActionOk> {
     if (this.remainingWriteDisconnects > 0) {

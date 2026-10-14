@@ -1,3 +1,18 @@
+## 0.9.24 - 2026-10-15
+
+Email-verified access, freehand drawing, and extension polish.
+
+- feat: first-time browser tool use requests an email through MCP elicitation;
+  Firebase email-link verification grants access to that local installation.
+  Device credentials are stored locally with owner-only permissions, and revoked
+  grants fail closed. The existing Chrome pairing port and key remain separate.
+- feat: add the `draw` tool for freehand mouse strokes in the active Chrome tab.
+- fix: preserve the extension version in Store ZIP filenames independently of the
+  npm server version.
+- docs: explain email verification and disclose Firebase account/device data in
+  the privacy policy.
+- fix: improve tab border behavior and extension-side drawing dispatch.
+
 ## 0.9.23 - 2026-10-14
 
 Preserve unpacked extension IDs across updates and diagnose missing installations.

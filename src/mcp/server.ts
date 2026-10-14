@@ -12,6 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { logErr } from './log';
 import { registerTools } from './tools';
+import { requireAccess } from '../access';
 import { noteMcpInitialize } from '../telemetry';
 import type { Policy } from '../security/policy';
 
@@ -30,6 +31,7 @@ const SERVER_VERSION = '0.1.0';
  */
 export const SERVER_INSTRUCTIONS =
   "MCP Browser Extension drives the user's real, signed-in Chrome. " +
+  'On the first browser tool call, enter your email in the MCP input prompt and open the Firebase sign-in link sent to you. The local server detects verification automatically; then click Connect in the extension popup and retry the tool. ' +
   'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), do not retry: ' +
   'give the user the steps in its `setup` field, which name what went wrong and how to fix it. ' +
   'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it from the extension\'s ' +
@@ -51,12 +53,12 @@ let transport: StdioServerTransport | null = null;
  * POLICY_DENIED, and the catalog is re-sent on every turn). Omit it and the
  * full catalog is advertised, which is what the tests want.
  */
-export function createServer(version: string = DEFAULT_VERSION, policy?: Policy): McpServer {
+export function createServer(version: string = DEFAULT_VERSION, policy?: Policy, accessGuard: typeof requireAccess = requireAccess): McpServer {
   const srv = new McpServer(
     { name: SERVER_NAME, version },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
-  const advertised = registerTools(srv, policy);
+  const advertised = registerTools(srv, policy, accessGuard);
   watchInitialize(srv, advertised);
   // `McpServer` wraps the low-level `Server`, which owns the `onerror` hook.
   srv.server.onerror = (err: unknown): void => {

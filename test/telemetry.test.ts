@@ -180,7 +180,7 @@ test('MCP Analytics: handshake, advertised tools, category, model and idle sessi
     delaysMs: { mcpFlush: 10 },
   });
 
-  const srv = createServer('9.9.9');
+  const srv = createServer('9.9.9', undefined, async () => null);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await srv.connect(a);
   const client = new Client({ name: 'codex', version: '1.0.0' });

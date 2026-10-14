@@ -118,7 +118,24 @@ from the Chrome Web Store instead and skip steps 1–3. Prefer the unpacked
 folder when following this guide: it matches the package just installed, while
 the Web Store build passes review separately and can trail it by a version.
 
-## Step 5 — Pairing (automatic; verify it)
+## Step 5 — Verify email and pair Chrome
+
+The first browser tool call opens an email prompt in the MCP client. Ask the
+human to enter an email address. The website sends a Firebase sign-in link;
+the human opens it in their browser and returns to the MCP client. Do not ask
+them to copy or paste a verification code. The server detects the verified
+link automatically. Wait a few seconds, then click **Connect** in the
+extension if Chrome is not already paired. This requires the MCP client to
+support elicitation; clients that cannot show the prompt cannot activate
+through this flow.
+
+The server also writes a `pairing.json` file for Load unpacked installs, which
+may connect automatically. For the Chrome Web Store copy, or whenever Chrome
+is still unpaired, the human clicks **Connect** in the extension popup after
+email verification. If Chrome reports no paired browser, follow that step and
+retry the tool.
+
+## Step 6 — Check the pairing
 
 Pairing needs no paste. Every time the server boots it writes `pairing.json`
 (mode 0600) into the same `chrome-mcp-extension` folder the human loaded in step 4.
@@ -175,7 +192,7 @@ If you started a pairing-mode server in this step, stop it now with Ctrl-C. The
 client's own server takes the port over on its next boot, and with
 `--persist-token` the extension reconnects to it with no further pairing.
 
-## Step 6 — Prove the chain end-to-end
+## Step 7 — Prove the chain end-to-end
 
 From the restarted client session, call the MCP tools in this order and check
 each result:
@@ -192,7 +209,7 @@ each result:
 If `chrome_status` shows the extension disconnected, the pairing in step 5 did
 not stick. Re-check the port and token before anything else.
 
-## Step 7 — Report
+## Step 8 — Report
 
 Summarize for the human:
 

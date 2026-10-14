@@ -18,7 +18,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import type { WireMethod } from '../../shared/protocol';
+import type { DrawStroke, WireMethod } from '../../shared/protocol';
 import type { DialogPolicy, Executor, FrameOpts, TabInfo, Target, WaitUntil } from '../executor/types';
 import { ExecutorError } from '../executor/types';
 import { getManager } from '../executor/manager';
@@ -44,7 +44,8 @@ import { logDebug, logErr } from './log';
 import { listTasks } from '../bridge/tasks';
 import { noteMcpModel, noteToolCall } from '../telemetry';
 import type { BridgeServer } from '../bridge/server';
-import { resolveProfileDir, sanitizeName } from '../config';
+import { resolveDataDir, resolveProfileDir, sanitizeName } from '../config';
+import { requireAccess } from '../access';
 import {
   appendHistory,
   getActiveWorkspace,
@@ -151,6 +152,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   { name: 'reload', description: 'Reload the active (or given) tab.', inputSchema: { tabId: tabIdField, waitUntil: waitUntilField, failOnAuthWall: authWallField } },
 
   { name: 'click', description: 'Click an element. Target by selector, a snapshot ref, or role+name (e.g. role:"button", name:"Sign in") - the locator needs no snapshot first. trusted=true uses real OS-level input.', inputSchema: { ...LOCATOR_PROPS, tabId: tabIdField, button: z.enum(['left', 'right', 'middle']).optional(), clickCount: z.number().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
+  { name: 'draw', description: 'Draw freehand strokes with real mouse input. Points use CSS pixels from the top-left of the browser viewport; activate the site’s drawing tool first. Each stroke needs at least two points.', inputSchema: { strokes: z.array(z.object({ points: z.array(z.object({ x: z.number().finite(), y: z.number().finite() })).min(2).max(1000) })).min(1).max(100), tabId: tabIdField } },
   { name: 'type', description: 'Type text into an element (target by selector, ref, or role+name). trusted=true sends real keystrokes (works on React/Vue controlled inputs).', inputSchema: { ...LOCATOR_PROPS, text: z.string(), tabId: tabIdField, clear: z.boolean().optional(), pressEnter: z.boolean().optional(), keyEvents: z.boolean().optional(), trusted: z.boolean().optional(), snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
   { name: 'select_option', description: 'Select option(s) of a <select> by value or visible label.', inputSchema: { ...LOCATOR_PROPS, values: z.array(z.string()), tabId: tabIdField, snapshotAfter: snapshotAfterField, failOnAuthWall: authWallField } },
   { name: 'press', description: 'Press a key (with optional modifiers).', inputSchema: { key: z.string(), modifiers: z.array(z.string()).optional(), tabId: tabIdField, failOnAuthWall: authWallField } },
@@ -352,6 +354,7 @@ const TOOL_GATE: Readonly<Record<string, WireMethod | null>> = {
   reload: 'reload',
   // interaction (mutation-gated)
   click: 'click',
+  draw: 'draw',
   type: 'type',
   select_option: 'type',
   press: 'press',
@@ -896,6 +899,14 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       clickCount: optionalNumber(a, 'clickCount', { min: 1, max: 3 }),
       trusted: optionalBoolean(a, 'trusted'),
     });
+    return actionResult(ctx, a, res as unknown as Record<string, unknown>);
+  },
+  draw: async (a, ctx) => {
+    await gate(ctx, 'draw', { tabId: tabId(a) });
+    const strokes = a.strokes as DrawStroke[];
+    const pointCount = strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
+    if (pointCount > 5000) throw new McpToolError('draw is limited to 5000 total points per call');
+    const res = await ctx.ex.draw(strokes, { tabId: tabId(a) });
     return actionResult(ctx, a, res as unknown as Record<string, unknown>);
   },
   type: async (a, ctx) => {
@@ -1564,7 +1575,7 @@ function modelFromMeta(meta: unknown): string | undefined {
 }
 
 /** Register the tool surface; returns the names actually advertised. */
-export function registerTools(server: McpServer, policy?: Policy): string[] {
+export function registerTools(server: McpServer, policy?: Policy, accessGuard: typeof requireAccess = requireAccess): string[] {
   assertNoDrift();
 
   // Register each tool with its zod `inputSchema`. The SDK advertises it in
@@ -1586,6 +1597,8 @@ export function registerTools(server: McpServer, policy?: Policy): string[] {
       { description: d.description, inputSchema: d.inputSchema },
       async (args: Record<string, unknown>, extra?: { _meta?: unknown }) => {
         noteMcpModel(modelFromMeta(extra?._meta));
+        const accessError = await accessGuard(server.server, resolveDataDir());
+        if (accessError) return accessError;
         return dispatchToolCall(d.name, args);
       },
     );
