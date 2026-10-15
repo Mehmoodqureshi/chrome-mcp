@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requireAccess, setAccessPollIntervalForTesting } from '../src/access';
 
+/** Windows does not expose POSIX permission bits; the file inherits its parent ACL. */
+const POSIX = process.platform !== 'win32';
+
 test('email link activates one local MCP installation and revoked access fails closed', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'cmcp-access-'));
   let approved = false;
@@ -44,7 +47,7 @@ test('email link activates one local MCP installation and revoked access fails c
     const saved = JSON.parse(readFileSync(join(dataDir, 'access.json'), 'utf8')) as { verified?: boolean; challengeId?: string };
     assert.equal(saved.verified, true);
     assert.equal(saved.challengeId, undefined);
-    assert.equal(statSync(join(dataDir, 'access.json')).mode & 0o777, 0o600);
+    if (POSIX) assert.equal(statSync(join(dataDir, 'access.json')).mode & 0o777, 0o600);
 
     assert.equal(await requireAccess(fakeServer, dataDir), null, 'valid grant is cached briefly');
     assert.equal(validations, 1, 'background verification syncs the grant without another tool call');

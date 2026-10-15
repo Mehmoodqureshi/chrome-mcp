@@ -107,7 +107,9 @@ grants access to that server installation. Firebase Authentication stores the
 email address. Firestore stores the Firebase user id, a hash of a random device
 secret, whether that device is active, and short-lived verification requests.
 The server stores the random device id and secret locally in
-`~/.chrome-mcp/access.json` with owner-only file permissions. The address is
+`~/.chrome-mcp/access.json` with owner-only file permissions on POSIX systems.
+On Windows, the file inherits the ACL of the user's profile directory. The
+address is
 entered through the MCP client's input prompt and sent by the local server to
 the MCP Browser Extension website to request the sign-in email. The account
 can be disabled in Firebase Authentication, and an individual device grant can
