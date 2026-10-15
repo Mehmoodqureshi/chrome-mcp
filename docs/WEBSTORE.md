@@ -10,7 +10,7 @@ Google account that owns the listing (one-time 5 USD developer registration).
 npm run pack:ext
 ```
 
-Produces `chrome-mcp-extension-<version>.zip` at the repo root from a fresh
+Produces `mcp-browser-extension-<version>.zip` at the repo root from a fresh
 `extension-dist/` build, with `pairing.json` excluded. The manifest `version`
 must be higher than the last one uploaded. It comes from
 `extension/manifest.json` and changes when the extension changes.
@@ -30,7 +30,7 @@ Connect your signed-in Chrome to MCP clients through a local server. Optional re
 MCP Browser Extension is an open-source MCP server and extension (MIT) that lets an AI agent on your own computer use the Chrome you already have open: your sessions, your cookies, your logins, with no separate automated browser.
 
 How it works
-- You start the MCP Browser Extension server (npm package @mehmoodqureshi/chrome-mcp) from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
+- You start the MCP Browser Extension server (npm package mcp-browser-extension) from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
 - On first use, enter your email in the client's prompt and open the sign-in link. The server reports verification and continues the waiting browser action.
 - This extension connects to that server on 127.0.0.1 and carries out its commands: tabs, navigation, clicks, typing, page reads, screenshots, downloads.
 - The extension sends browser results to your local server, which forwards them to your configured MCP client. An optional tunnel allows remote clients to connect using a private access key. Optional proxy IP checks contact ipinfo.io or api.ipify.org.
@@ -47,13 +47,13 @@ Setup
 4. Click the toolbar icon, open Settings, and click Connect to pair with your local server if it is not already paired. Manual port and token pairing is also available. A green badge means connected.
 
 Website and docs: https://mcp-browser-extension.com
-Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
+Source, docs, and issues: https://github.com/Mehmoodqureshi/mcp-browser-extension
 
 **Category:** Developer Tools
 **Language:** English
 **Official URL:** https://mcp-browser-extension.com/ (select this verified site in Additional fields; changing the manifest does not update it)
 **Homepage URL:** https://mcp-browser-extension.com
-**Support URL:** https://github.com/Mehmoodqureshi/chrome-mcp/issues
+**Support URL:** https://github.com/Mehmoodqureshi/mcp-browser-extension/issues
 
 ## 3. Graphic assets
 
@@ -96,5 +96,5 @@ Start with **Unlisted**: anyone with the link can install, nothing shows in sear
 
 A store-installed extension lives in Chrome's own profile folder, which the
 server cannot write into, so the zero-paste pairing that works for
-`~/chrome-mcp-extension` does not apply. Store users pair once from the Options
+`~/mcp-browser-extension` does not apply. Store users pair once from the Options
 page. Keep `--persist-token` in the server config so they never do it again.

@@ -19,7 +19,7 @@ import { gcTasks, listTasks } from '../src/bridge/tasks';
 import { resolveTaskDir, sanitizeName } from '../src/config';
 
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), 'chrome-mcp-tasks-'));
+  return mkdtempSync(join(tmpdir(), 'mcp-browser-extension-tasks-'));
 }
 
 const DAY = 86_400_000;

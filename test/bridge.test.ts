@@ -142,7 +142,7 @@ test('auth: bundled pairing.json is written 0600 into the extension folder; miss
   assert.equal(writeBundledPairing(join(extDir, 'nope', 'deeper'), { port: 1, token }), null);
 });
 
-test('auth: pairing.json owned by another live chrome-mcp is not taken over; dead or own port is', async () => {
+test('auth: pairing.json owned by another live mcp-browser-extension is not taken over; dead or own port is', async () => {
   const extDir = mkdtempSync(join(tmpdir(), 'cmcp-ext-'));
   const token = generateToken();
   // No file yet → free to write.
@@ -357,8 +357,8 @@ test('the token never appears in any log line', async () => {
 });
 
 test('token persistence: --persist-token reuses one stable token at 0600', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
-  delete process.env.CHROME_MCP_TOKEN;
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-tok-'));
+  delete process.env.MCP_BROWSER_EXTENSION_TOKEN;
 
   // First boot with persistence: mints + saves a token.
   const first = resolveToken(dir, { persist: true });
@@ -377,26 +377,26 @@ test('token persistence: --persist-token reuses one stable token at 0600', () =>
   assert.notEqual(fresh, first, 'default must be a fresh per-boot token');
 });
 
-test('token persistence: CHROME_MCP_TOKEN env pins the token and is never written', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
-  process.env.CHROME_MCP_TOKEN = '  pinned-token-xyz  ';
+test('token persistence: MCP_BROWSER_EXTENSION_TOKEN env pins the token and is never written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-tok-'));
+  process.env.MCP_BROWSER_EXTENSION_TOKEN = '  pinned-token-xyz  ';
   try {
     assert.equal(resolveToken(dir, { persist: true }), 'pinned-token-xyz', 'env pin wins and is trimmed');
     assert.equal(readPersistedToken(dir), null, 'env-pinned token must not be persisted to disk');
   } finally {
-    delete process.env.CHROME_MCP_TOKEN;
+    delete process.env.MCP_BROWSER_EXTENSION_TOKEN;
   }
 });
 
 test('token persistence: a group/other-readable token file fails closed', { skip: POSIX ? false : 'POSIX-only: Windows has no group/other bits to loosen' }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-tok-'));
   writePersistedToken(dir, 'sometoken');
   chmodSync(tokenPath(dir), 0o644);
   assert.throws(() => readPersistedToken(dir), /group\/other-accessible/);
 });
 
 test('token persistence: a loose token file is REUSED on Windows (no mode bits to trust)', { skip: POSIX ? 'win32-only' : false }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chrome-mcp-tok-'));
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-tok-'));
   writePersistedToken(dir, 'sometoken');
   chmodSync(tokenPath(dir), 0o644);
   // Enforcing the POSIX check here would throw on every well-formed file and

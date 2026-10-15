@@ -3,13 +3,13 @@
 Last updated: 2026-10-15
 
 MCP Browser Extension is an open-source tool
-(MIT, https://github.com/Mehmoodqureshi/chrome-mcp) that lets an AI agent
+(MIT, https://github.com/Mehmoodqureshi/mcp-browser-extension) that lets an AI agent
 running on your own computer drive the Chrome you already use.
 
 ## What the extension does
 
 It opens a WebSocket connection to the MCP Browser Extension server (npm
-package `@mehmoodqureshi/chrome-mcp`) running on the same
+package `mcp-browser-extension`) running on the same
 machine, at `127.0.0.1` only, and carries out the commands that server sends:
 listing and opening tabs, navigating, clicking, typing, reading page text and
 HTML, taking screenshots, reading cookies and site storage, and saving
@@ -43,7 +43,7 @@ The Connect button uses Chrome's native messaging. The MCP Browser Extension
 server registers a small helper with your browsers each time it starts; when you
 click Connect (and allow the optional "communicate with cooperating native
 applications" permission), the extension asks that helper for the port and token
-from `~/.chrome-mcp/handshake.json` and saves them like a manual pairing would.
+from `~/.mcp-browser-extension/handshake.json` and saves them like a manual pairing would.
 It all happens on your computer. Chrome allows only this extension to start the
 helper, and the helper answers nothing but the pairing.
 
@@ -88,7 +88,7 @@ you can click Allow.
 Nothing is retained by the extension beyond the local-storage items above. You
 can clear them by removing the extension. Anything the server saves
 (screenshots, downloads, action history, and the sites you allowed from the
-Options page, in `allowed-sites.json`) lives in `~/.chrome-mcp` on your own
+Options page, in `allowed-sites.json`) lives in `~/.mcp-browser-extension` on your own
 machine under your control.
 
 ## The MCP Browser Extension server (separate from the extension)
@@ -107,7 +107,7 @@ grants access to that server installation. Firebase Authentication stores the
 email address. Firestore stores the Firebase user id, a hash of a random device
 secret, whether that device is active, and short-lived verification requests.
 The server stores the random device id and secret locally in
-`~/.chrome-mcp/access.json` with owner-only file permissions on POSIX systems.
+`~/.mcp-browser-extension/access.json` with owner-only file permissions on POSIX systems.
 On Windows, the file inherits the ACL of the user's profile directory. The
 address is
 entered through the MCP client's input prompt and sent by the local server to
@@ -131,15 +131,15 @@ The MCP Browser Extension server also makes these outside requests:
   client connects, its name and version and the list of tool names offered. It never sends URLs, site names, page content, tool
   arguments, cookies, profile names or anything the extension reads. Events are
   personless and GeoIP lookup is disabled. Turn it off with
-  `CHROME_MCP_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `--no-telemetry`. Details:
-  https://github.com/Mehmoodqureshi/chrome-mcp#telemetry
+  `MCP_BROWSER_EXTENSION_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `--no-telemetry`. Details:
+  https://github.com/Mehmoodqureshi/mcp-browser-extension#telemetry
 - **An update check**, to the npm registry (`registry.npmjs.org`), once at
   startup, asking only for the latest version number of
-  `@mehmoodqureshi/chrome-mcp`. It carries no install id or usage data; npm
+  `mcp-browser-extension`. It carries no install id or usage data; npm
   sees what any package download shows it (your IP address). When a newer
   version exists, the server starts it through `npx`, which downloads it from
-  npm. Turn it off with `CHROME_MCP_AUTO_UPDATE=0` or `--no-auto-update`.
+  npm. Turn it off with `MCP_BROWSER_EXTENSION_AUTO_UPDATE=0` or `--no-auto-update`.
 
 ## Contact
 
-Open an issue at https://github.com/Mehmoodqureshi/chrome-mcp/issues.
+Open an issue at https://github.com/Mehmoodqureshi/mcp-browser-extension/issues.

@@ -14,7 +14,7 @@
  *   - `registerNativeHost()`: the server writes the host's launcher script and
  *     its manifest into each installed browser's NativeMessagingHosts folder
  *     (the registry on Windows). Best-effort and idempotent.
- *   - `runNativeHost()`: what `chrome-mcp --native-host` runs when Chrome starts
+ *   - `runNativeHost()`: what `mcp-browser-extension --native-host` runs when Chrome starts
  *     the host: read one message, answer with the pairing, exit.
  */
 

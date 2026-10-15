@@ -1,3 +1,14 @@
+## 0.9.26 - 2026-10-15
+
+One package and command: MCP Browser Extension.
+
+- release: publish `mcp-browser-extension` directly from version tags using npm
+  trusted publishing, with Mehmood Ur Rehman Qureshi as the sole author.
+- fix: the automatic updater follows the new package, and the CLI, extension
+  Settings, setup examples, website links and registry entry use its name.
+- compatibility: reuse existing pairing data, settings and unpacked extension
+  files, and continue accepting previous environment variables internally.
+
 ## 0.9.25 - 2026-10-15
 
 Clear email verification feedback and consistent extension controls.

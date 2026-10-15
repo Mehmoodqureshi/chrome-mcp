@@ -1,6 +1,6 @@
 /**
  * src/bridge/datadir.ts — the Electron-free data dir (the LinkedIn repo resolved
- * this via `app.getPath`; we use `$CHROME_MCP_DATA` || `~/.chrome-mcp`). Holds
+ * this via `app.getPath`; we use `$MCP_BROWSER_EXTENSION_DATA` || `~/.mcp-browser-extension`). Holds
  * the 0600 handshake and, later, the CDP-fallback profile.
  */
 

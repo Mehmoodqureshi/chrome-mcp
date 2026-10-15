@@ -411,7 +411,7 @@ export type Frame = ServerFrame | ExtensionFrame;
 // Handshake file (written 0600 by the server; read by the extension trampoline)
 // ---------------------------------------------------------------------------
 
-/** Shape of `$CHROME_MCP_DATA/handshake.json`. The token is a secret. */
+/** Shape of `$MCP_BROWSER_EXTENSION_DATA/handshake.json`. The token is a secret. */
 export interface HandshakeFile {
   v: ProtocolVersion;
   port: number;

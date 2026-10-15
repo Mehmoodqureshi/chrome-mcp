@@ -1,7 +1,7 @@
 /**
- * src/auto-update.ts — keep every install on the latest chrome-mcp.
+ * src/auto-update.ts — keep every install on the latest mcp-browser-extension.
  *
- * Most people run chrome-mcp through `npx -y @mehmoodqureshi/chrome-mcp` in an
+ * Most people run mcp-browser-extension through `npx -y mcp-browser-extension` in an
  * MCP config. npx reuses whatever copy it cached first, so installs sat on old
  * versions for weeks (telemetry: three times as many sessions on 0.9.13 as on
  * the current 0.9.15) and never got the fixes. Nobody edits their MCP config to
@@ -9,7 +9,7 @@
  *
  * So at startup, before binding the port, the server asks the npm registry for
  * the latest version. If it is newer than this copy, it hands off: it runs
- * `npx -y @mehmoodqureshi/chrome-mcp@<latest>` with the same arguments, passes
+ * `npx -y mcp-browser-extension@<latest>` with the same arguments, passes
  * stdin/stdout/stderr straight through (the MCP host talks to the new version
  * directly), and exits when that does. The new copy's server also mirrors its
  * extension build into the unpacked folder, so the extension follows.
@@ -17,18 +17,19 @@
  * It never gets in the way: a dev checkout (not under node_modules) is left
  * alone, the check gives up after a short timeout when offline, a failed spawn
  * falls back to running this copy, and the child is marked so it never hands
- * off again. Off with CHROME_MCP_AUTO_UPDATE=0 or --no-auto-update.
+ * off again. Off with MCP_BROWSER_EXTENSION_AUTO_UPDATE=0 or --no-auto-update.
  */
 
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { sep } from 'node:path';
+import { runtimeEnv } from './compat';
 
-export const PACKAGE_NAME = '@mehmoodqureshi/chrome-mcp';
+export const PACKAGE_NAME = 'mcp-browser-extension';
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 /** The registry answers in well under this; offline must not delay startup more. */
 const CHECK_TIMEOUT_MS = 1_500;
 /** Set on the handed-off child: it is already the latest, never hand off again. */
-export const HANDOFF_ENV = 'CHROME_MCP_UPDATED_FROM';
+export const HANDOFF_ENV = 'MCP_BROWSER_EXTENSION_UPDATED_FROM';
 
 export interface HandOffOptions {
   current: string;
@@ -47,8 +48,8 @@ export interface HandOffOptions {
 
 /** Whether auto-update is off, by env, flag, or because this IS the handed-off copy. */
 export function autoUpdateDisabled(env: NodeJS.ProcessEnv, disabledByFlag = false): boolean {
-  if (disabledByFlag || env[HANDOFF_ENV]) return true;
-  const v = (env.CHROME_MCP_AUTO_UPDATE ?? '').trim().toLowerCase();
+  if (disabledByFlag || runtimeEnv('UPDATED_FROM', env)) return true;
+  const v = (runtimeEnv('AUTO_UPDATE', env) ?? '').trim().toLowerCase();
   return ['0', 'false', 'off', 'no'].includes(v);
 }
 

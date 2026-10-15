@@ -1,10 +1,10 @@
 /**
- * Port eviction — reclaiming a pinned port from a stale chrome-mcp.
+ * Port eviction — reclaiming a pinned port from a stale mcp-browser-extension.
  *
  * The kill is the dangerous part (a recycled pid could belong to anything), so
  * most of this file pins down when we must REFUSE: no handshake, a handshake for
  * a different port, our own pid, a dead pid, and — the important one — a live pid
- * whose command line isn't chrome-mcp. Plus the happy paths: SIGTERM, and the
+ * whose command line isn't mcp-browser-extension. Plus the happy paths: SIGTERM, and the
  * SIGKILL escalation when the owner ignores it.
  */
 
@@ -14,7 +14,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { evictPortOwner, looksLikeChromeMcp, type EvictDeps } from '../src/bridge/evict';
+import { evictPortOwner, looksLikeMcpBrowserExtension, type EvictDeps } from '../src/bridge/evict';
 import { writeHandshake } from '../src/bridge/auth';
 
 const PORT = 45_678;
@@ -45,7 +45,7 @@ function ownerDeps(opts: { cmdline?: string | null; diesAfter?: number }): {
       if (kills.length === 0) return true;
       return ++polls < diesAfter;
     },
-    commandLine: () => (opts.cmdline === undefined ? '/usr/bin/node /x/chrome-mcp/dist/src/cli.js' : opts.cmdline),
+    commandLine: () => (opts.cmdline === undefined ? '/usr/bin/node /x/mcp-browser-extension/dist/src/cli.js' : opts.cmdline),
     kill: (pid, signal) => {
       kills.push({ pid, signal });
     },
@@ -55,7 +55,7 @@ function ownerDeps(opts: { cmdline?: string | null; diesAfter?: number }): {
 
 const noLog = (): void => {};
 
-test('evicts a live chrome-mcp owning the pinned port', async () => {
+test('evicts a live mcp-browser-extension owning the pinned port', async () => {
   const dir = dirWithHandshake({ port: PORT, pid: OWNER });
   const { deps, kills } = ownerDeps({});
   assert.equal(await evictPortOwner(dir, PORT, noLog, deps), true);
@@ -68,7 +68,7 @@ test('escalates to SIGKILL when the owner ignores SIGTERM', async () => {
   const kills: Array<{ pid: number; signal: string }> = [];
   const deps: EvictDeps = {
     isAlive: () => !kills.some((k) => k.signal === 'SIGKILL'),
-    commandLine: () => 'node /opt/chrome-mcp/cli.js --port 45678',
+    commandLine: () => 'node /opt/mcp-browser-extension/cli.js --port 45678',
     kill: (pid, signal) => kills.push({ pid, signal }),
   };
   assert.equal(await evictPortOwner(dir, PORT, noLog, deps), true);
@@ -78,7 +78,7 @@ test('escalates to SIGKILL when the owner ignores SIGTERM', async () => {
   );
 });
 
-test('REFUSES to kill a live pid that is not chrome-mcp', async () => {
+test('REFUSES to kill a live pid that is not mcp-browser-extension', async () => {
   const dir = dirWithHandshake({ port: PORT, pid: OWNER });
   const { deps, kills } = ownerDeps({ cmdline: '/usr/bin/postgres -D /var/lib/pg' });
   assert.equal(await evictPortOwner(dir, PORT, noLog, deps), false);
@@ -111,7 +111,7 @@ test('REFUSES when the recorded owner is already dead', async () => {
   const kills: Array<{ pid: number; signal: string }> = [];
   const deps: EvictDeps = {
     isAlive: () => false,
-    commandLine: () => 'node chrome-mcp',
+    commandLine: () => 'node mcp-browser-extension',
     kill: (pid, signal) => kills.push({ pid, signal }),
   };
   assert.equal(await evictPortOwner(dir, PORT, noLog, deps), false);
@@ -124,15 +124,15 @@ test('returns false when there is no handshake at all', async () => {
   assert.equal(await evictPortOwner(dir, PORT, noLog, deps), false);
 });
 
-test('looksLikeChromeMcp matches real install layouts, not bystanders', () => {
+test('looksLikeMcpBrowserExtension matches real install layouts, not bystanders', () => {
   for (const cmd of [
-    '/usr/local/bin/node /Users/x/.npm/_npx/abc/node_modules/@mehmoodqureshi/chrome-mcp/dist/src/cli.js',
-    'node /opt/homebrew/lib/node_modules/@mehmoodqureshi/chrome-mcp/dist/src/cli.js --port 9222',
-    'C:\\Program Files\\nodejs\\node.exe C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\@mehmoodqureshi\\chrome-mcp\\dist\\src\\cli.js',
+    '/usr/local/bin/node /Users/x/.npm/_npx/abc/node_modules/mcp-browser-extension/dist/src/cli.js',
+    'node /opt/homebrew/lib/node_modules/mcp-browser-extension/dist/src/cli.js --port 9222',
+    'C:\\Program Files\\nodejs\\node.exe C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\@mehmoodqureshi\\mcp-browser-extension\\dist\\src\\cli.js',
   ]) {
-    assert.equal(looksLikeChromeMcp(cmd), true, cmd);
+    assert.equal(looksLikeMcpBrowserExtension(cmd), true, cmd);
   }
   for (const cmd of ['/usr/bin/postgres -D /var/lib/pg', 'node server.js', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']) {
-    assert.equal(looksLikeChromeMcp(cmd), false, cmd);
+    assert.equal(looksLikeMcpBrowserExtension(cmd), false, cmd);
   }
 });

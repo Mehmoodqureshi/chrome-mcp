@@ -10,7 +10,7 @@
  *   3. On success, send `welcome` and file the connection under its profile
  *      (superseding only that profile's prior one — a security-relevant
  *      displacement event).
- * Other chrome-mcp servers (one per Claude session) may join the same port as
+ * Other mcp-browser-extension servers (one per Claude session) may join the same port as
  * peers with `peer_hello` and relay their commands through us; see ./peer.
  */
 
@@ -157,7 +157,7 @@ export interface BridgeOptions {
   host?: string;
   heartbeatMs?: number;
   /** Data dir holding the handshake. Enables reclaiming a pinned port from a
-   *  stale chrome-mcp (see ./evict). Omit to disable eviction entirely. */
+   *  stale mcp-browser-extension (see ./evict). Omit to disable eviction entirely. */
   dataDir?: string;
   /** Diagnostics — MUST never receive the token (a test asserts this). */
   onLog?: (message: string) => void;
@@ -166,7 +166,7 @@ export interface BridgeOptions {
   /**
    * Called whenever this server takes a role on the port: 'hub' when it binds
    * it (publish the handshake + pairing files then), 'peer' when it joins the
-   * chrome-mcp already holding it. Fires again after a failover.
+   * mcp-browser-extension already holding it. Fires again after a failover.
    */
   onRole?: (role: BridgeRole, info: { port: number; token: string; hubPid?: number }) => void;
 }
@@ -192,7 +192,7 @@ export class BridgeServer {
   private token: string;
   /** Peer role: the link to the hub that owns the browsers. */
   private hub: HubLink | null = null;
-  /** Hub role: the other chrome-mcp servers relaying through us. */
+  /** Hub role: the other mcp-browser-extension servers relaying through us. */
   private readonly peers = new Set<WebSocket>();
   private stopped = false;
   /** The last extension hello this hub turned away, for telling a stale token
@@ -257,7 +257,7 @@ export class BridgeServer {
 
   /**
    * Bind and start listening, or — when a pinned port is held by another live
-   * chrome-mcp — join it as a peer. Returns the port (useful with port 0).
+   * mcp-browser-extension — join it as a peer. Returns the port (useful with port 0).
    */
   async start(): Promise<number> {
     if (this.wss || this.hub) return this.boundPort;
@@ -291,16 +291,16 @@ export class BridgeServer {
         const inUse = (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE';
         if (!inUse || port === 0) throw inUse ? new Error(portBusyMessage(host, port)) : err;
 
-        // Another Claude session's chrome-mcp owns the port: share it rather
+        // Another Claude session's mcp-browser-extension owns the port: share it rather
         // than kill it, so every session keeps working at once.
         if (!triedJoin) {
           triedJoin = true;
           if (await this.joinHub(host, port)) return this.boundPort;
         }
 
-        // Still busy after a failed join: an older chrome-mcp that can't share,
+        // Still busy after a failed join: an older mcp-browser-extension that can't share,
         // or a hung one. It will never release the port on its own, so take it
-        // over (once). Only a verified chrome-mcp is ever killed; anything else
+        // over (once). Only a verified mcp-browser-extension is ever killed; anything else
         // falls through to the wait-and-retry below.
         if (!evicted && this.opts.dataDir) {
           evicted = true;
@@ -316,7 +316,7 @@ export class BridgeServer {
   }
 
   /**
-   * Join the chrome-mcp holding `port` as a peer. Tries the token in the
+   * Join the mcp-browser-extension holding `port` as a peer. Tries the token in the
    * handshake it published first (sessions without --persist-token each mint
    * their own), then ours.
    */
@@ -341,7 +341,7 @@ export class BridgeServer {
       this.hub = link;
       this.token = token;
       this.boundPort = port;
-      this.log(`port ${host}:${port} is held by chrome-mcp pid ${link.hubPid || '?'} — sharing its browsers as a peer`);
+      this.log(`port ${host}:${port} is held by mcp-browser-extension pid ${link.hubPid || '?'} — sharing its browsers as a peer`);
       this.opts.onRole?.('peer', { port, token, hubPid: link.hubPid });
       return true;
     }
@@ -363,7 +363,7 @@ export class BridgeServer {
   private onHubLost(): void {
     this.hub = null;
     if (this.stopped) return;
-    this.log('the chrome-mcp sharing its browsers with us went away — taking over the port');
+    this.log('the mcp-browser-extension sharing its browsers with us went away — taking over the port');
     void this.failover();
   }
 
@@ -655,7 +655,7 @@ export class BridgeServer {
         return;
       }
       if ((frame.type as string) === 'peer_hello') {
-        // Another chrome-mcp (a second Claude session) joining to share our browsers.
+        // Another mcp-browser-extension (a second Claude session) joining to share our browsers.
         const peer = frame as unknown as Partial<PeerHelloFrame>;
         clearTimeout(helloTimer);
         if (peer.v !== PROTOCOL_VERSION) return this.reject(ws, 'bad_version');
@@ -726,7 +726,7 @@ export class BridgeServer {
   /** Hub side: serve a joined peer's relayed commands against our browsers. */
   private acceptPeer(ws: WebSocket, pid: number | undefined): void {
     this.peers.add(ws);
-    this.log(`chrome-mcp pid ${pid ?? '?'} joined as a peer (${this.peers.size} sharing these browsers)`);
+    this.log(`mcp-browser-extension pid ${pid ?? '?'} joined as a peer (${this.peers.size} sharing these browsers)`);
     this.sendPeer(ws, { type: 'peer_welcome', hubPid: process.pid });
     this.sendPeer(ws, { type: 'peer_state', profiles: this.pairedProfiles() });
     ws.on('message', (raw) => this.handlePeerFrame(ws, raw.toString()));

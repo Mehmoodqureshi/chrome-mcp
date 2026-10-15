@@ -1,7 +1,7 @@
 /**
- * src/telemetry.ts — anonymous usage statistics from the chrome-mcp SERVER.
+ * src/telemetry.ts — anonymous usage statistics from the mcp-browser-extension SERVER.
  *
- * What it sends, to PostHog: a random per-install id, the chrome-mcp version,
+ * What it sends, to PostHog: a random per-install id, the mcp-browser-extension version,
  * OS, CPU architecture and Node major version, whether this session owns the
  * port or shares it, how many browsers are paired (and, when none, which of a
  * few fixed reasons applies), per-tool call and error
@@ -12,7 +12,7 @@
  * The browser extension sends nothing; this lives only in the npm server.
  *
  * On by default with a one-time notice on first run. Off with
- * CHROME_MCP_TELEMETRY=0 (or false/off), DO_NOT_TRACK=1, or --no-telemetry.
+ * MCP_BROWSER_EXTENSION_TELEMETRY=0 (or false/off), DO_NOT_TRACK=1, or --no-telemetry.
  * Every failure is swallowed: telemetry can never break or slow a tool call.
  */
 
@@ -22,6 +22,7 @@ import { arch, platform } from 'node:os';
 import { join } from 'node:path';
 
 import { TOOL_CATEGORY } from './mcp/tool-categories';
+import { runtimeEnv } from './compat';
 
 /** PostHog project key. Public by design: it can only WRITE events, never read them. */
 export const POSTHOG_KEY = 'phc_CG5QX5JEkRokfUN87rZQnPa3URdLWePCZnfqW6MCyCdU';
@@ -49,8 +50,8 @@ const STATE_FILE = 'telemetry.json';
 
 export const TELEMETRY_NOTICE =
   'MCP Browser Extension collects anonymous usage statistics (version, OS, tool call and error counts; never URLs, ' +
-  'page content or arguments) to see how it is used. Turn it off with CHROME_MCP_TELEMETRY=0 or DO_NOT_TRACK=1. ' +
-  'Details: https://github.com/Mehmoodqureshi/chrome-mcp#telemetry';
+  'page content or arguments) to see how it is used. Turn it off with MCP_BROWSER_EXTENSION_TELEMETRY=0 or DO_NOT_TRACK=1. ' +
+  'Details: https://github.com/Mehmoodqureshi/mcp-browser-extension#telemetry';
 
 interface Event {
   event: string;
@@ -81,7 +82,7 @@ export interface TelemetryOptions {
 /** Whether the user has turned telemetry off, by env or flag. */
 export function telemetryDisabled(env: NodeJS.ProcessEnv, disabledByFlag = false): boolean {
   if (disabledByFlag) return true;
-  const own = (env.CHROME_MCP_TELEMETRY ?? '').trim().toLowerCase();
+  const own = (runtimeEnv('TELEMETRY', env) ?? '').trim().toLowerCase();
   if (['0', 'false', 'off', 'no'].includes(own)) return true;
   const dnt = (env.DO_NOT_TRACK ?? '').trim().toLowerCase();
   return dnt !== '' && dnt !== '0' && dnt !== 'false';

@@ -20,7 +20,7 @@ import { StubExecutor } from '../src/executor/stub-executor';
 import { resolvePolicy } from '../src/security/policy';
 import { parseArgs } from '../src/config';
 
-const tmp = (): string => mkdtempSync(join(tmpdir(), 'chrome-mcp-remote-'));
+const tmp = (): string => mkdtempSync(join(tmpdir(), 'mcp-browser-extension-remote-'));
 
 // ---------------------------------------------------------------------------
 // The key

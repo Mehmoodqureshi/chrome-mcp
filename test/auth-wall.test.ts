@@ -89,7 +89,7 @@ test('an identity-provider host is high even with an empty snapshot', () => {
 });
 
 test('github.com itself is not treated as an identity provider', () => {
-  const w = detectAuthWall({ url: 'https://github.com/Mehmoodqureshi/chrome-mcp', title: 'chrome-mcp', nodes: ORDINARY_PAGE });
+  const w = detectAuthWall({ url: 'https://github.com/Mehmoodqureshi/mcp-browser-extension', title: 'mcp-browser-extension', nodes: ORDINARY_PAGE });
   assert.equal(w, null);
 });
 

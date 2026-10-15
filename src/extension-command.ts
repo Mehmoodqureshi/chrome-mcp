@@ -2,10 +2,10 @@ import { join, resolve } from 'node:path';
 import { resolveDataDir } from './config';
 import { inspectExtensionProfiles, repairExtensionProfiles, type ExtensionScan } from './extension-repair';
 
-const HELP = `chrome-mcp extension — diagnose an extension missing after a browser restart.
+const HELP = `mcp-browser-extension extension — diagnose an extension missing after a browser restart.
 
-  chrome-mcp extension doctor [--json] [--user-data-dir <browser directory>]
-  chrome-mcp extension repair [--apply] [--json] [--user-data-dir <browser directory>]
+  mcp-browser-extension extension doctor [--json] [--user-data-dir <browser directory>]
+  mcp-browser-extension extension repair [--apply] [--json] [--user-data-dir <browser directory>]
                              [--data-dir <backup parent>]
 
 doctor is read-only and reports the actual Store/unpacked registration.

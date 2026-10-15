@@ -1,5 +1,5 @@
 /**
- * extension/src/sw/tab-border.ts — draws a border around every tab chrome-mcp
+ * extension/src/sw/tab-border.ts — draws a border around every tab mcp-browser-extension
  * is working in, so you can see at a glance which tabs the agent is driving.
  *
  * The border is a user stylesheet (`chrome.scripting.insertCSS` on

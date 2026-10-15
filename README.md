@@ -1,12 +1,12 @@
 # MCP Browser Extension
 
-[![CI](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mehmoodqureshi/chrome-mcp/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/%40mehmoodqureshi%2Fchrome-mcp?label=npm)](https://www.npmjs.com/package/@mehmoodqureshi/chrome-mcp)
-[![license](https://img.shields.io/npm/l/%40mehmoodqureshi%2Fchrome-mcp?label=license)](LICENSE)
+[![CI](https://github.com/Mehmoodqureshi/mcp-browser-extension/actions/workflows/ci.yml/badge.svg)](https://github.com/Mehmoodqureshi/mcp-browser-extension/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mcp-browser-extension?label=npm)](https://www.npmjs.com/package/mcp-browser-extension)
+[![license](https://img.shields.io/npm/l/mcp-browser-extension?label=license)](LICENSE)
 
 **Website and docs:** [mcp-browser-extension.com](https://mcp-browser-extension.com) ·
 [Quickstart](https://mcp-browser-extension.com/docs/quickstart) ·
-[All 40 tools](https://mcp-browser-extension.com/docs/tools) ·
+[All 42 tools](https://mcp-browser-extension.com/docs/tools) ·
 [Install the extension from the Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 
 **Let Claude use the Chrome you are already logged into.** Not a fresh
@@ -22,8 +22,7 @@ localhost WebSocket server and drives the browser you already have open, through
 other MCP host.
 
 MCP Browser Extension has two parts: the extension, and a small MCP server you run
-with `npx` (npm package `@mehmoodqureshi/chrome-mcp`, command `chrome-mcp`; the
-names predate the rename and stay so existing setups keep working). The extension
+with `npx` (npm package and command: `mcp-browser-extension`). The extension
 comes from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/mcp-browser-extension/jelfhdlkhbfmlpbghoeaepijllcnplgh)
 or loaded unpacked.
@@ -88,7 +87,7 @@ steps that must happen inside Chrome:
 
 ```text
 Set up MCP Browser Extension on this machine by fetching and following
-https://raw.githubusercontent.com/Mehmoodqureshi/chrome-mcp/main/SETUP.md
+https://raw.githubusercontent.com/Mehmoodqureshi/mcp-browser-extension/main/SETUP.md
 exactly, step by step. Work autonomously and verify each step.
 ```
 
@@ -101,8 +100,8 @@ is the exact file the agent follows. The manual steps are below.
 <summary><b>Claude Code (terminal)</b> — one command, no config file to find</summary>
 
 ```bash
-claude mcp add chrome-mcp -s user -- \
-  npx -y @mehmoodqureshi/chrome-mcp@latest \
+claude mcp add mcp-browser-extension -s user -- \
+  npx -y mcp-browser-extension@latest \
   --allow-domain example.com --enable-mutations --persist-token
 ```
 
@@ -125,9 +124,9 @@ with `/mcp` inside a session — no restart needed.
 ```jsonc
 {
   "mcpServers": {
-    "chrome-mcp": {
+    "mcp-browser-extension": {
       "command": "npx",
-      "args": ["-y", "@mehmoodqureshi/chrome-mcp@latest",
+      "args": ["-y", "mcp-browser-extension@latest",
                "--allow-domain", "example.com", "--enable-mutations",
                "--persist-token"]
     }
@@ -153,8 +152,8 @@ stricter default described next.
 
 Without `--persist-token` a fresh token is minted every boot (the secure
 default), which means re-pairing the extension on each restart. With it, the
-token is stored 0600 at `~/.chrome-mcp/token` and reused; the extension's
-keepalive auto-reconnects with no manual step. `CHROME_MCP_TOKEN` pins the token
+token is stored 0600 at `~/.mcp-browser-extension/token` and reused; the extension's
+keepalive auto-reconnects with no manual step. `MCP_BROWSER_EXTENSION_TOKEN` pins the token
 explicitly (and is never written to disk).
 
 **2. Install the extension** — **required**; the server can drive nothing without it.
@@ -175,8 +174,8 @@ or paste.
 <summary>Developers: load it unpacked instead</summary>
 
 The extension also ships inside the npm package, and every time the server boots
-it copies it to `~/chrome-mcp-extension` (`%USERPROFILE%\chrome-mcp-extension` on
-Windows; `CHROME_MCP_EXTENSION_DIR` moves it). `chrome://extensions` → enable
+it copies it to `~/mcp-browser-extension` (`%USERPROFILE%\mcp-browser-extension` on
+Windows; `MCP_BROWSER_EXTENSION_EXTENSION_DIR` moves it). `chrome://extensions` → enable
 **Developer mode** → **Load unpacked** → pick that folder. It pairs itself from a
 `pairing.json` the server writes there, and the server refreshes the files on each
 boot (never with an older build) so it reloads itself within 30 seconds.
@@ -207,9 +206,9 @@ stays in the toolbar. Hover it for the status in words.
 | red exclamation mark | token rejected; the server rotated it, re-pairs by itself in a moment |
 
 Manual fallback (the helper is turned off with `--no-native-host`, or Connect
-reports a problem): run `npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing`,
+reports a problem): run `npx -y mcp-browser-extension@latest --print-pairing`,
 open the extension's **Settings**, and paste the `port` + `token` from
-`~/.chrome-mcp/handshake.json`.
+`~/.mcp-browser-extension/handshake.json`.
 
 ### Extension missing after restarting Chrome
 
@@ -217,7 +216,7 @@ Run the read-only diagnostic to see the actual installation type, missing files,
 Chrome disable reasons, and any conflicting extension registrations:
 
 ```bash
-npx -y @mehmoodqureshi/chrome-mcp@latest extension doctor
+npx -y mcp-browser-extension@latest extension doctor
 ```
 
 Older unpacked copies could acquire a new ID when an update added the Web Store
@@ -226,13 +225,13 @@ skipped that folder on its next startup. Updates now preserve existing IDs.
 For an installation already affected by this exact conflict:
 
 ```bash
-npx -y @mehmoodqureshi/chrome-mcp@latest extension repair
+npx -y mcp-browser-extension@latest extension repair
 # Review the preview, fully quit Chrome and other Chromium browsers, then:
-npx -y @mehmoodqureshi/chrome-mcp@latest extension repair --apply
+npx -y mcp-browser-extension@latest extension repair --apply
 ```
 
 The repair backs up the original preferences under
-`~/.chrome-mcp/extension-repair-backups/`, removes only the confirmed obsolete
+`~/.mcp-browser-extension/extension-repair-backups/`, removes only the confirmed obsolete
 registration, and preserves the current extension and its saved settings. It
 refuses to write while a Chromium browser is running. Reopen Chrome afterwards.
 Use `--user-data-dir <directory>` for a custom browser data location, or
@@ -278,7 +277,7 @@ at startup or the `profile_use` tool at runtime.
 Naming is automatic. Chrome won't tell an extension which profile it runs in, so
 each install keeps a random id and the server names it: the first browser is
 `default`, the next `profile-2`, then `profile-3`, and so on. Names are stored in
-`~/.chrome-mcp/profiles.json`, so a browser keeps its name across restarts.
+`~/.mcp-browser-extension/profiles.json`, so a browser keeps its name across restarts.
 `chrome_status` lists every paired browser (with its active tab as a hint), and
 `profile_rename` gives one a friendly name (`profile-2` → `work`). To pin a name
 yourself instead, type it into the extension's Options → Profile; that always wins.
@@ -297,9 +296,9 @@ start. Wrap it in `cmd /c`:
 ```jsonc
 {
   "mcpServers": {
-    "chrome-mcp": {
+    "mcp-browser-extension": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@mehmoodqureshi/chrome-mcp@latest",
+      "args": ["/c", "npx", "-y", "mcp-browser-extension@latest",
                "--allow-domain", "example.com", "--enable-mutations",
                "--persist-token"]
     }
@@ -307,14 +306,14 @@ start. Wrap it in `cmd /c`:
 }
 ```
 
-Or from Claude Code: `claude mcp add chrome-mcp -- cmd /c npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain example.com`
+Or from Claude Code: `claude mcp add mcp-browser-extension -- cmd /c npx -y mcp-browser-extension@latest --allow-domain example.com`
 
 For normal use, install the extension from the Chrome Web Store as described
 above, then click **Connect**. Do not use **Load unpacked** as part of the normal
 Windows setup. The unpacked developer build has the same extension ID as the
 Store build, so loading it can replace the Store installation; Chrome may then
-disable the non-Store copy. If you are developing chrome-mcp, load
-`%USERPROFILE%\chrome-mcp-extension` in a separate Chrome profile.
+disable the non-Store copy. If you are developing mcp-browser-extension, load
+`%USERPROFILE%\mcp-browser-extension` in a separate Chrome profile.
 
 The tools cover tabs, navigation, interaction (`click`/`type`/`press`/`hover`/
 `scroll`/`select_option`), reads (`get_text`/`get_html`/`screenshot`/`eval`/`wait_for`),
@@ -334,7 +333,7 @@ Claude Code on another machine, or an agent running on a server.
 
 ```sh
 brew install cloudflared            # once (Windows: winget install --id Cloudflare.cloudflared)
-npx -y @mehmoodqureshi/chrome-mcp@latest --tunnel --allow-domain example.com --enable-mutations
+npx -y mcp-browser-extension@latest --tunnel --allow-domain example.com --enable-mutations
 ```
 
 It prints a connector URL like `https://<random>.trycloudflare.com/mcp/<key>`:
@@ -347,7 +346,7 @@ It prints a connector URL like `https://<random>.trycloudflare.com/mcp/<key>`:
 - **Claude Code elsewhere / agents:** use `<url>/mcp` with `Authorization: Bearer <key>`;
   the exact `claude mcp add` line is printed too.
 
-The key (32 random bytes, kept in `~/.chrome-mcp/remote-key`) guards every
+The key (32 random bytes, kept in `~/.mcp-browser-extension/remote-key`) guards every
 request; a wrong or missing key gets a bare 404. Anyone holding the URL can drive
 your browser within the allowed sites, so keep it private and keep the allowlist
 tight. `--rotate-remote-key` cuts every client off. The quick-tunnel URL changes on
@@ -499,7 +498,7 @@ snapshot  { "failOnAuthWall": true }
 For a harness, set it once instead of per call:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain app.example.com --enable-mutations --fail-on-auth-wall
+npx -y mcp-browser-extension@latest --allow-domain app.example.com --enable-mutations --fail-on-auth-wall
 ```
 
 With the flag on, every step that can move the tab (`navigate`, `click`, `type`,
@@ -539,7 +538,7 @@ tools are 28 KB of JSON Schema, about 7.1k tokens, on each one.
 Most runs need a handful of them. `--tools` advertises only those:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp@latest \
+npx -y mcp-browser-extension@latest \
   --allow-domain app.example.com --enable-mutations \
   --tools tabs_list,tab_new,navigate,snapshot,click,type,get_text
 ```
@@ -555,7 +554,7 @@ for a run that was never going to print a PDF or upload a file.
   `--unsafe-enable-eval`.
 - An unknown name fails at startup and prints the catalog, so a typo can never
   quietly drop `click` from the surface.
-- `chrome-mcp --help` prints the full catalog of 40 names to pick from.
+- `mcp-browser-extension --help` prints the full catalog of 42 names to pick from.
 
 ## Status
 
@@ -567,7 +566,7 @@ full-page and element capture), and focuses newly opened tabs by default. 111
 automated tests + a gated headed extension smoke.
 
 v0.2.0 — all six build phases complete and green. End-to-end working:
-`npx chrome-mcp` ⇄ bridge ⇄ extension ⇄ your real Chrome, with a Playwright CDP
+`npx mcp-browser-extension` ⇄ bridge ⇄ extension ⇄ your real Chrome, with a Playwright CDP
 fallback. v0.2 adds the accessibility `snapshot` + element refs, auto-wait,
 cookies/storage/`select_option`, trusted input (`chrome.debugger`), a toolbar
 status badge, and a stable pairing token (`--persist-token`).
@@ -614,11 +613,11 @@ status badge, and a stable pairing token (`--persist-token`).
 `eval` off, downloads off, mutating tools off. Opt in explicitly:
 
 ```
-chrome-mcp --allow-domain example.com --enable-mutations
-chrome-mcp --policy ./policy.json          # see policy.example.json
-chrome-mcp --unsafe-all-domains            # loud footgun
-chrome-mcp --enable-observers              # console/network/dialog capture (patches page globals)
-chrome-mcp --redact                        # scrub secret-shaped strings out of page reads
+mcp-browser-extension --allow-domain example.com --enable-mutations
+mcp-browser-extension --policy ./policy.json          # see policy.example.json
+mcp-browser-extension --unsafe-all-domains            # loud footgun
+mcp-browser-extension --enable-observers              # console/network/dialog capture (patches page globals)
+mcp-browser-extension --redact                        # scrub secret-shaped strings out of page reads
 ```
 
 **Allowing a site without a restart.** When a call is refused because its site
@@ -626,7 +625,7 @@ is not allowed, the extension's toolbar icon shows a `?`. Click it: the popup
 lists the blocked site with an **Allow** button, shows whether the site you are on
 is allowed (with its own Allow), and lists the allowed sites. The Options page
 (Settings in the popup) also has a box to allow any other site. An allowed site applies at once to every session sharing that Chrome, and
-is saved to `~/.chrome-mcp/allowed-sites.json` so it survives restarts. Sites
+is saved to `~/.mcp-browser-extension/allowed-sites.json` so it survives restarts. Sites
 allowed there can be removed there; sites from `--allow-domain` stay until the
 flags change. The catch-all `*` can only come from `--unsafe-all-domains`. The
 agent cannot approve a site itself: MCP Browser Extension never reads or drives the
@@ -654,12 +653,12 @@ policy verdict (`allowed`/`denied`), how long it took, how many bytes came back,
 and how many secrets were scrubbed — so "what did the agent do in my browser" has
 an answer after the fact.
 
-The per-boot 256-bit token in `~/.chrome-mcp/handshake.json` (mode 0600) is the
+The per-boot 256-bit token in `~/.mcp-browser-extension/handshake.json` (mode 0600) is the
 only trust boundary; it is never written to stdout/stderr. On POSIX the mode is
 re-verified after every write and the server **fails closed** if the file ends up
 group/other-accessible. Windows has no such bits — `chmod` there only toggles the
 read-only attribute — so the check is skipped and the token's confidentiality
-rests on the per-user ACL of `%USERPROFILE%\.chrome-mcp`.
+rests on the per-user ACL of `%USERPROFILE%\.mcp-browser-extension`.
 
 ## Updates
 
@@ -669,9 +668,9 @@ npm when it starts: if a newer version is published, it starts that version in
 its place, with the same arguments, so an MCP config written months ago still
 runs the newest release. The check gives up after 1.5 s when you are offline,
 and a copy run from a git checkout never updates itself. The new server also
-refreshes the unpacked extension in `~/chrome-mcp-extension`, which reloads
+refreshes the unpacked extension in `~/mcp-browser-extension`, which reloads
 itself; the Chrome Web Store copy updates through Chrome as usual. Turn it off
-with `--no-auto-update` or `CHROME_MCP_AUTO_UPDATE=0`.
+with `--no-auto-update` or `MCP_BROWSER_EXTENSION_AUTO_UPDATE=0`.
 
 ## Telemetry
 
@@ -679,7 +678,7 @@ The MCP Browser Extension **server** (not the extension) sends anonymous usage s
 project can see how many installs are active, which versions and platforms are
 in use, and which tools fail most. A notice is printed the first time it runs.
 
-What is sent: a random install id (kept in `~/.chrome-mcp/telemetry.json`), the
+What is sent: a random install id (kept in `~/.mcp-browser-extension/telemetry.json`), the
 server version, OS, CPU architecture and Node major version, whether the
 session owns the bridge port or shares it, how many browsers are paired, the
 paired extension's version and whether it is the store or an unpacked copy, and
@@ -707,7 +706,7 @@ The **browser extension sends nothing** — it only ever talks to `127.0.0.1`.
 Turn it off with any of:
 
 ```bash
-CHROME_MCP_TELEMETRY=0     # or false / off
+MCP_BROWSER_EXTENSION_TELEMETRY=0     # or false / off
 DO_NOT_TRACK=1
 --no-telemetry             # server flag
 ```
@@ -747,12 +746,12 @@ for local development; do not load this unpacked copy in the same Chrome profile
 as the Store extension. On Windows, Chrome may disable a non-Store build.
 
 `extension/` builds (esbuild) to `extension-dist/`, loaded via
-`chrome://extensions` → **Load unpacked** → select `~/chrome-mcp-extension`, the
+`chrome://extensions` → **Load unpacked** → select `~/mcp-browser-extension`, the
 mirror the server refreshes from `extension-dist/` on every boot (loading
 `extension-dist/` directly also works). It pairs itself from the `pairing.json`
 the server writes into that folder; the **Options** page paste of `port` +
-`token` from `~/.chrome-mcp/handshake.json` (run
-`npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing` to get the path) is only
+`token` from `~/.mcp-browser-extension/handshake.json` (run
+`npx -y mcp-browser-extension@latest --print-pairing` to get the path) is only
 the fallback.
 
 > **Reads/interaction use `chrome.scripting`/`chrome.tabs`** — no "is being

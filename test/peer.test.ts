@@ -1,5 +1,5 @@
 /**
- * Several chrome-mcp servers sharing one Chrome — one per Claude session.
+ * Several mcp-browser-extension servers sharing one Chrome — one per Claude session.
  *   A. a second server on a busy port joins as a peer instead of killing the hub.
  *   B. a peer's commands are relayed through the hub to the browser.
  *   C. a peer sees the hub's paired browsers, and errors keep their codes.

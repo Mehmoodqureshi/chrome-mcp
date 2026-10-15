@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(repoRoot, 'extension-dist');
 const { version } = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8'));
-const out = join(repoRoot, `chrome-mcp-extension-${version}.zip`);
+const out = join(repoRoot, `mcp-browser-extension-${version}.zip`);
 
 const stage = mkdtempSync(join(tmpdir(), 'mcp-ext-pack-'));
 try {

@@ -31,11 +31,11 @@ export function getLogLevel(): LogLevel {
 /** stderr only — never stdout in stdio mode. Suppressed at `--log-level silent`. */
 export function logErr(message: string): void {
   if (logLevel === 'silent') return;
-  process.stderr.write(`[chrome-mcp] ${message}\n`);
+  process.stderr.write(`[mcp-browser-extension] ${message}\n`);
 }
 
 /** Verbose tracing: emitted only at `--log-level debug`. */
 export function logDebug(message: string): void {
   if (logLevel !== 'debug') return;
-  process.stderr.write(`[chrome-mcp] [debug] ${message}\n`);
+  process.stderr.write(`[mcp-browser-extension] [debug] ${message}\n`);
 }

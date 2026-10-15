@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * src/cli.ts — `npx chrome-mcp` entrypoint.
+ * src/cli.ts — `npx mcp-browser-extension` entrypoint.
  *
  * Boot order: resolve config → ensure data dir → generate a per-boot token →
  * start the loopback bridge → write the 0600 handshake → configure the manager
@@ -9,6 +9,7 @@
  * prints the handshake path (for manual pairing), never serving MCP.
  */
 
+import { runtimeEnv } from './compat';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -85,7 +86,7 @@ function bundledExtensionVersion(): string | undefined {
 
 /**
  * Mirror the bundled extension into the visible install folder
- * (`~/chrome-mcp-extension`) and report where Chrome should load it from. On a
+ * (`~/mcp-browser-extension`) and report where Chrome should load it from. On a
  * read-only home the bundled folder is returned instead; both are loadable.
  */
 function installExtension(): string {
@@ -130,11 +131,11 @@ function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-const TASKS_HELP = `chrome-mcp tasks — inspect and prune per-profile task workspaces.
+const TASKS_HELP = `mcp-browser-extension tasks — inspect and prune per-profile task workspaces.
 
 Usage:
-  chrome-mcp tasks list [--json] [--data-dir <path>]
-  chrome-mcp tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>]
+  mcp-browser-extension tasks list [--json] [--data-dir <path>]
+  mcp-browser-extension tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>]
                         [--dry-run] [--data-dir <path>]
 
 gc removes a task only when it is NOT among the newest --keep AND is older than
@@ -151,7 +152,7 @@ function runTasksCommand(argv: string[]): boolean {
   const sub = args[0];
 
   const dataDirFlag = flag(args, '--data-dir');
-  if (dataDirFlag) process.env.CHROME_MCP_DATA = dataDirFlag;
+  if (dataDirFlag) process.env.MCP_BROWSER_EXTENSION_DATA = dataDirFlag;
   const dataDir = resolveDataDir();
 
   if (sub === 'list') {
@@ -253,7 +254,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Before anything binds the port: if npm has a newer chrome-mcp, run that
+  // Before anything binds the port: if npm has a newer mcp-browser-extension, run that
   // instead (stdio passes straight through), so no install stays on an old copy.
   const handedOff = await maybeHandOff({
     current: version(),
@@ -292,7 +293,7 @@ async function main(): Promise<void> {
     onRole: (role, info) => {
       if (role === 'hub') publishPairing(info.port, info.token);
       else {
-        logErr(`sharing the browsers of the chrome-mcp already on port ${info.port} (pid ${info.hubPid || '?'}) — several sessions can drive Chrome at once`);
+        logErr(`sharing the browsers of the mcp-browser-extension already on port ${info.port} (pid ${info.hubPid || '?'}) — several sessions can drive Chrome at once`);
         // Refresh the unpacked extension folder from this session too: the hub
         // may be an old process from a window left open for days, and it would
         // keep the folder on its old files. The mirror never downgrades.
@@ -314,12 +315,12 @@ async function main(): Promise<void> {
     // Drop the same port + token into the bundled extension folder so a Load
     // unpacked from there pairs itself. Best-effort: a read-only install just
     // falls back to the Options-page paste. Never take over a pairing file that
-    // a different, still-running chrome-mcp published (a second server with its
+    // a different, still-running mcp-browser-extension published (a second server with its
     // own data dir or port would otherwise re-point the user's extension).
     const extDir = installExtension();
     if (await bundledPairingHeldByOther(extDir, port)) {
       logErr(
-        `auto-pairing file at ${extDir} belongs to another running chrome-mcp — left as is; pair this server from the extension Options page if you want it`,
+        `auto-pairing file at ${extDir} belongs to another running mcp-browser-extension — left as is; pair this server from the extension Options page if you want it`,
       );
       return;
     }
@@ -374,8 +375,8 @@ async function main(): Promise<void> {
     })}`,
   );
   const handshakePath = handshakeFile(dataDir);
-  if (process.env.CHROME_MCP_TOKEN) {
-    logErr('token: pinned from CHROME_MCP_TOKEN (stable; pair once, never again).');
+  if (runtimeEnv('TOKEN')) {
+    logErr('token: pinned from MCP_BROWSER_EXTENSION_TOKEN (stable; pair once, never again).');
   } else if (cfg.persistToken) {
     logErr('token: persisted across restarts (--persist-token; pair once, never again).');
   }

@@ -4,7 +4,7 @@
 machine and prove it works.** MCP Browser Extension lets an MCP client drive the human's
 real Chrome browser: real logins, real cookies, no separate Chromium. It has two
 halves that must be paired: a stdio MCP server (npm package
-`@mehmoodqureshi/chrome-mcp`) and a Manifest V3 extension that ships inside the
+`mcp-browser-extension`) and a Manifest V3 extension that ships inside the
 same package. Work autonomously; pause only for the two actions that must happen
 inside Chrome's own UI (loading the extension, pasting the pairing token).
 
@@ -40,10 +40,10 @@ extension to a plain folder directly under the home directory, and prints its
 path:
 
 ```
-npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path
+npx -y mcp-browser-extension@latest --extension-path
 ```
 
-It prints `~/chrome-mcp-extension` (on Windows `%USERPROFILE%\chrome-mcp-extension`).
+It prints `~/mcp-browser-extension` (on Windows `%USERPROFILE%\mcp-browser-extension`).
 Verify with `ls` (or `dir`) that the folder holds `manifest.json` and
 `background.js`. Record the path; the human needs it in step 4. The install is
 small and downloads no browser: the server drives the Chrome the human already
@@ -62,14 +62,14 @@ unless they ask.
 **Claude Code** (registers for every project on this machine):
 
 ```
-claude mcp add chrome-mcp -s user -- \
-  npx -y @mehmoodqureshi/chrome-mcp@latest \
+claude mcp add mcp-browser-extension -s user -- \
+  npx -y mcp-browser-extension@latest \
   --allow-domain example.com --enable-mutations --persist-token
 ```
 
 Everything before `--` belongs to Claude Code. Everything after it is the
 server's own command line. Keep the `--` or `--allow-domain` gets read as a
-Claude Code option. Verify with `claude mcp list`: chrome-mcp should be listed.
+Claude Code option. Verify with `claude mcp list`: mcp-browser-extension should be listed.
 It will show as connected once the server boots, even before the extension has
 paired.
 
@@ -80,9 +80,9 @@ Code uses a top-level `servers` key instead of `mcpServers`).
 ```json
 {
   "mcpServers": {
-    "chrome-mcp": {
+    "mcp-browser-extension": {
       "command": "npx",
-      "args": ["-y", "@mehmoodqureshi/chrome-mcp@latest",
+      "args": ["-y", "mcp-browser-extension@latest",
                "--allow-domain", "example.com",
                "--enable-mutations",
                "--persist-token"]
@@ -92,13 +92,13 @@ Code uses a top-level `servers` key instead of `mcpServers`).
 ```
 
 **Windows:** the command must be `cmd` with args `["/c", "npx", "-y",
-"@mehmoodqureshi/chrome-mcp@latest", ...]`, or for Claude Code:
-`claude mcp add chrome-mcp -s user -- cmd /c npx -y @mehmoodqureshi/chrome-mcp@latest --allow-domain example.com --enable-mutations --persist-token`.
+"mcp-browser-extension@latest", ...]`, or for Claude Code:
+`claude mcp add mcp-browser-extension -s user -- cmd /c npx -y mcp-browser-extension@latest --allow-domain example.com --enable-mutations --persist-token`.
 
 Tell the human to restart the client (or run `/mcp` in Claude Code) so the
-server loads. The first boot writes `~/.chrome-mcp/handshake.json` (mode 0600)
+server loads. The first boot writes `~/.mcp-browser-extension/handshake.json` (mode 0600)
 holding the bridge port and the pairing token, and with `--persist-token` it
-also stores the token at `~/.chrome-mcp/token` for reuse.
+also stores the token at `~/.mcp-browser-extension/token` for reuse.
 
 ## Step 4 — Load the extension (human action inside Chrome)
 
@@ -106,7 +106,7 @@ You cannot do this step yourself. Give the human these exact instructions:
 
 1. Open `chrome://extensions` in Chrome.
 2. Turn on **Developer mode** (top right).
-3. Click **Load unpacked** and choose the `chrome-mcp-extension` folder in
+3. Click **Load unpacked** and choose the `mcp-browser-extension` folder in
    their home directory (the path from step 2).
 4. Confirm an extension named **MCP Browser Extension** now appears in the list.
 
@@ -149,7 +149,7 @@ retry the tool.
 ## Step 6 — Check the pairing
 
 Pairing needs no paste. Every time the server boots it writes `pairing.json`
-(mode 0600) into the same `chrome-mcp-extension` folder the human loaded in step 4.
+(mode 0600) into the same `mcp-browser-extension` folder the human loaded in step 4.
 The extension reads that file from its own folder and pairs itself. So make
 sure a server has booted at least once since step 2, in either of these ways:
 
@@ -157,13 +157,13 @@ sure a server has booted at least once since step 2, in either of these ways:
 - start one yourself in pairing mode and leave it running in the background:
 
   ```
-  npx -y @mehmoodqureshi/chrome-mcp@latest --print-pairing --persist-token
+  npx -y mcp-browser-extension@latest --print-pairing --persist-token
   ```
 
 Verify the file exists (do not print it):
 
 ```
-ls "$(npx -y @mehmoodqureshi/chrome-mcp@latest --extension-path)/pairing.json"
+ls "$(npx -y mcp-browser-extension@latest --extension-path)/pairing.json"
 ```
 
 Then tell the human where to look. The status badge is on the extension's
@@ -190,11 +190,11 @@ extension folder or a read-only global install): read the port without
 printing the token,
 
 ```
-node -e "console.log(require(require('os').homedir()+'/.chrome-mcp/handshake.json').port)"
+node -e "console.log(require(require('os').homedir()+'/.mcp-browser-extension/handshake.json').port)"
 ```
 
 then have the human open **Details** on MCP Browser Extension, then **Extension
-options**, enter that **Port**, open `~/.chrome-mcp/handshake.json` in a text
+options**, enter that **Port**, open `~/.mcp-browser-extension/handshake.json` in a text
 editor and paste its `token` into the **Token** field, leave **Profile** as
 `default`, and click **Save**. The status line should read **connected** within
 a few seconds. Values saved by hand take precedence over the bundled file.
@@ -225,7 +225,7 @@ not stick. Re-check the port and token before anything else.
 Summarize for the human:
 
 - Node and package versions installed.
-- The absolute `chrome-mcp-extension` path they loaded.
+- The absolute `mcp-browser-extension` path they loaded.
 - Which MCP client was configured, at which scope, with which domains and gates.
 - Whether the badge went green, and whether `tabs_list`, an allowed
   navigation, and a refused navigation each verified.
@@ -233,4 +233,4 @@ Summarize for the human:
 
 For any failure, name the exact symptom, what you tried, and the matching
 section of the README's troubleshooting notes at
-`https://github.com/Mehmoodqureshi/chrome-mcp#readme`.
+`https://github.com/Mehmoodqureshi/mcp-browser-extension#readme`.

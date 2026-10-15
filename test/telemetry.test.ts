@@ -1,6 +1,6 @@
 /**
  * Anonymous usage statistics from the server.
- *   A. off by CHROME_MCP_TELEMETRY=0/false/off, DO_NOT_TRACK=1, --no-telemetry, or no key.
+ *   A. off by MCP_BROWSER_EXTENSION_TELEMETRY=0/false/off, DO_NOT_TRACK=1, --no-telemetry, or no key.
  *   B. the install id is random, persisted, and the notice shows only once.
  *   C. a summary carries counts and error codes — never args, URLs or content.
  *   D. an idle session sends no summary; a failing send never throws.
@@ -41,14 +41,14 @@ function start(env: NodeJS.ProcessEnv = {}, extra: { dataDir?: string; disabledB
 }
 
 test('telemetry is off by env, flag, or a missing key', () => {
-  for (const v of ['0', 'false', 'off', 'OFF', 'no']) assert.ok(telemetryDisabled({ CHROME_MCP_TELEMETRY: v }), v);
+  for (const v of ['0', 'false', 'off', 'OFF', 'no']) assert.ok(telemetryDisabled({ MCP_BROWSER_EXTENSION_TELEMETRY: v }), v);
   assert.ok(telemetryDisabled({ DO_NOT_TRACK: '1' }));
   assert.ok(telemetryDisabled({ DO_NOT_TRACK: 'true' }));
   assert.equal(telemetryDisabled({ DO_NOT_TRACK: '0' }), false);
   assert.equal(telemetryDisabled({}), false);
   assert.ok(telemetryDisabled({}, true));
 
-  assert.equal(start({ CHROME_MCP_TELEMETRY: '0' }).on, false);
+  assert.equal(start({ MCP_BROWSER_EXTENSION_TELEMETRY: '0' }).on, false);
   assert.equal(start({}, { disabledByFlag: true }).on, false);
   assert.equal(start({}, { key: '' }).on, false);
   resetTelemetryForTesting();
@@ -57,7 +57,7 @@ test('telemetry is off by env, flag, or a missing key', () => {
 test('install id persists and the notice shows only on first run', async () => {
   const first = start();
   assert.equal(first.logs.length, 1);
-  assert.match(first.logs[0], /CHROME_MCP_TELEMETRY=0/);
+  assert.match(first.logs[0], /MCP_BROWSER_EXTENSION_TELEMETRY=0/);
   const id = JSON.parse(readFileSync(join(first.dataDir, 'telemetry.json'), 'utf8')).installId;
   assert.match(id, /^[0-9a-f-]{36}$/);
   await stopTelemetry();

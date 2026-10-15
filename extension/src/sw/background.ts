@@ -51,7 +51,7 @@ let currentPolicy: WirePolicy | null = null;
 // The executor reads the live policy so a frame-scoped command can be gated
 // against the FRAME's origin, not just the tab's.
 const executor = new ChromeExecutor(() => currentPolicy);
-// Outlines the tabs chrome-mcp is working in; follows the live policy.
+// Outlines the tabs mcp-browser-extension is working in; follows the live policy.
 const border = new TabBorder(() => currentPolicy);
 // --- reconnect backoff --------------------------------------------------------
 // Waiting for the 30s keepalive alarm after a drop (server restart, laptop
@@ -95,7 +95,7 @@ const ws = new WsClient({
     currentPolicy = policy;
     // The observer hook is registered from the policy, so it covers exactly the
     // allowlisted sites and only when the operator opted in.
-    void syncObserverScript(policy, (m) => console.debug('[chrome-mcp]', m));
+    void syncObserverScript(policy, (m) => console.debug('[mcp-browser-extension]', m));
     void onAllowlist(policy);
   },
   // Shown on the Options page, so you can tell which name this browser got.
@@ -103,13 +103,13 @@ const ws = new WsClient({
   onGranted: (granted) => void chrome.storage.local.set({ grantedSites: granted }),
   onBlocked: (host, method) => void rememberBlocked(host, method),
   onLatestExtension: (version) => void chrome.storage.local.set({ latestExtension: version }),
-  log: (m) => console.debug('[chrome-mcp]', m),
+  log: (m) => console.debug('[mcp-browser-extension]', m),
 });
 const router = new CommandRouter({
   exec: executor,
   send: (frame) => ws.send(frame),
   getPolicy: () => currentPolicy,
-  log: (m) => console.debug('[chrome-mcp]', m),
+  log: (m) => console.debug('[mcp-browser-extension]', m),
   border,
 });
 
@@ -120,7 +120,7 @@ interface BundledPairing {
 }
 
 /**
- * Read `pairing.json` from this extension's own folder. The chrome-mcp server
+ * Read `pairing.json` from this extension's own folder. The mcp-browser-extension server
  * writes it into its bundled `extension-dist/` on every boot, so an extension
  * loaded unpacked from that folder can pair with no Options-page paste. Absent
  * (a copied folder, a read-only install, or the server never ran) → null.
@@ -174,7 +174,7 @@ async function reloadIfFilesChanged(): Promise<void> {
     const { reloadedFor } = await chrome.storage.local.get('reloadedFor');
     if (reloadedFor === onDisk.version) return; // already tried this version once
     await chrome.storage.local.set({ reloadedFor: onDisk.version });
-    console.info(`[chrome-mcp] extension files updated on disk (${loaded} -> ${onDisk.version}); reloading`);
+    console.info(`[mcp-browser-extension] extension files updated on disk (${loaded} -> ${onDisk.version}); reloading`);
     chrome.runtime.reload();
   } catch {
     /* packed install, or the folder is unreadable — nothing to do */
@@ -396,9 +396,9 @@ async function healFromHelper(): Promise<boolean> {
 /** Apply the Options page's proxy setting; a failure is logged, never fatal. */
 async function syncProxy(): Promise<void> {
   try {
-    await applyProxy((m) => console.debug('[chrome-mcp]', m));
+    await applyProxy((m) => console.debug('[mcp-browser-extension]', m));
   } catch (err) {
-    console.warn('[chrome-mcp] could not apply the proxy setting', err);
+    console.warn('[mcp-browser-extension] could not apply the proxy setting', err);
   }
 }
 

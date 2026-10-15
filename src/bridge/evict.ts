@@ -1,9 +1,9 @@
 /**
- * src/bridge/evict.ts — take a pinned port back from a stale chrome-mcp.
+ * src/bridge/evict.ts — take a pinned port back from a stale mcp-browser-extension.
  *
- * A second session normally JOINS the chrome-mcp holding the port as a peer
+ * A second session normally JOINS the mcp-browser-extension holding the port as a peer
  * (see ./peer) and nobody is stopped. This is the fallback for when joining
- * fails: an older chrome-mcp that can't share the port, or a hung one. It will
+ * fails: an older mcp-browser-extension that can't share the port, or a hung one. It will
  * never release the port on its own, so rather than fail with EADDRINUSE and
  * make the user kill it by hand, we do that for them.
  *
@@ -12,7 +12,7 @@
  *   - the handshake names that port (so it describes *this* listener), and
  *   - the pid is not us, and
  *   - the pid is alive, and
- *   - its command line mentions chrome-mcp.
+ *   - its command line mentions mcp-browser-extension.
  * If any check fails we leave the process alone and let the caller surface the
  * plain-English port-busy error instead. Refusing to evict is always safe; a
  * wrong kill is not.
@@ -43,7 +43,7 @@ function isAlive(pid: number): boolean {
  * Full command line of `pid`, or null if it can't be read.
  *
  * Windows needs PowerShell/CIM: `tasklist` reports only the image name
- * ("node.exe"), which can't distinguish chrome-mcp from any other Node process
+ * ("node.exe"), which can't distinguish mcp-browser-extension from any other Node process
  * — far too weak a signal to kill on.
  */
 function commandLine(pid: number): string | null {
@@ -70,9 +70,9 @@ function commandLine(pid: number): string | null {
   }
 }
 
-/** Does this command line belong to a chrome-mcp server? */
-export function looksLikeChromeMcp(cmdline: string): boolean {
-  return /chrome-mcp/i.test(cmdline);
+/** Does this command line belong to a mcp-browser-extension server? */
+export function looksLikeMcpBrowserExtension(cmdline: string): boolean {
+  return /(?:mcp-browser-extension|chrome-mcp)/i.test(cmdline);
 }
 
 export interface EvictDeps {
@@ -83,7 +83,7 @@ export interface EvictDeps {
 }
 
 /**
- * Try to free `port` by terminating the chrome-mcp that owns it.
+ * Try to free `port` by terminating the mcp-browser-extension that owns it.
  * Returns true only if an owner was found, killed, and confirmed gone.
  */
 export async function evictPortOwner(
@@ -113,15 +113,15 @@ export async function evictPortOwner(
   if (!alive(pid)) return false;
 
   const cmdline = cmdOf(pid);
-  if (!cmdline || !looksLikeChromeMcp(cmdline)) {
+  if (!cmdline || !looksLikeMcpBrowserExtension(cmdline)) {
     log(
-      `port ${port} is held by pid ${pid}, which does not look like chrome-mcp — ` +
+      `port ${port} is held by pid ${pid}, which does not look like mcp-browser-extension — ` +
         `leaving it alone. Stop it yourself, or use a different --port.`,
     );
     return false;
   }
 
-  log(`port ${port} is held by chrome-mcp pid ${pid} (another session) — taking the port over`);
+  log(`port ${port} is held by mcp-browser-extension pid ${pid} (another session) — taking the port over`);
   try {
     kill(pid, 'SIGTERM');
   } catch {

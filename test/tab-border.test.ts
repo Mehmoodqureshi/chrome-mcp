@@ -1,6 +1,6 @@
 /**
  * pickBorderColor / borderCss — the pure half of the tab border the extension
- * draws around tabs chrome-mcp is working in. Verified without Chrome.
+ * draws around tabs mcp-browser-extension is working in. Verified without Chrome.
  */
 
 import { test } from 'node:test';

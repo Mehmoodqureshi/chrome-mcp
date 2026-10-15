@@ -2,7 +2,7 @@
  * src/mcp/server.ts — MCP server bootstrap over stdio.
  *
  * Wires the SDK `Server` to a `StdioServerTransport` so an MCP host (Claude)
- * drives chrome-mcp over JSON-RPC on stdin/stdout. CRITICAL: in stdio mode
+ * drives mcp-browser-extension over JSON-RPC on stdin/stdout. CRITICAL: in stdio mode
  * NOTHING may be written to stdout except the JSON-RPC stream — all diagnostics
  * go to stderr via `logErr`.
  */

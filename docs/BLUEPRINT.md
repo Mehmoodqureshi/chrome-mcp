@@ -21,11 +21,11 @@ over **stdio**; the extension speaks the canonical frame protocol over a
 ```
             ┌──────────────────────────────────────────────────────────────┐
  WORLD 1    │  MCP HOST (Claude Desktop / Claude Code)                      │
- (the model)│  spawns:  npx chrome-mcp                                      │
+ (the model)│  spawns:  npx mcp-browser-extension                                      │
             └───────────────┬──────────────────────────────────────────────┘
                             │ JSON-RPC over stdio  (stdout = SACRED)
             ┌───────────────▼──────────────────────────────────────────────┐
- WORLD 2    │  chrome-mcp CLI  (one Node process)                           │
+ WORLD 2    │  mcp-browser-extension CLI  (one Node process)                           │
  (server)   │                                                              │
             │  ┌────────────┐   ┌──────────────────┐   ┌─────────────────┐ │
             │  │ MCP Server │──▶│  tools.ts        │──▶│ ExecutorManager │ │
@@ -70,13 +70,13 @@ takes over from CDP and vice-versa on disconnect.
 
 ## 2. Repository Layout
 
-Single sibling repo `chrome-mcp/` (NOT a workspace). Two build roots in one git
+Single sibling repo `mcp-browser-extension/` (NOT a workspace). Two build roots in one git
 repo so the wire protocol version-locks between server and extension. The shared
 `protocol.ts` lives at the top so both builds import the *same file*.
 
 ```
-chrome-mcp/
-├── package.json                 # bin: chrome-mcp -> dist/cli.js; deps sdk, ws, playwright
+mcp-browser-extension/
+├── package.json                 # bin: mcp-browser-extension -> dist/cli.js; deps sdk, ws, playwright
 ├── tsconfig.json
 ├── README.md
 ├── .gitignore                   # dist/, extension-dist/, test-targets.json, *.handshake
@@ -107,7 +107,7 @@ chrome-mcp/
 │   │   ├── server.ts            # BridgeServer: ws on 127.0.0.1, token gate, id-correlation, heartbeat
 │   │   ├── connection.ts        # ExtensionConnection: pending-map, timeouts, reject-all-on-close
 │   │   ├── auth.ts              # token gen, atomic 0600 handshake.json, hashed constant-time compare
-│   │   └── datadir.ts           # Electron-free CHROME_MCP_DATA || ~/.chrome-mcp
+│   │   └── datadir.ts           # Electron-free MCP_BROWSER_EXTENSION_DATA || ~/.mcp-browser-extension
 │   └── security/
 │       └── policy.ts            # Policy type, loadPolicy, assertUrlAllowed (default-deny, gates reads)
 │
@@ -331,8 +331,8 @@ export type ExecutorErrorCode =
 ```
 
 **Auth handshake (the canonical, ONLY model):** [RESOLVED — security blocker 1, minor 7]
-1. Server, at boot, generates a **fresh 256-bit token every boot**, never persisted/reused: `crypto.randomBytes(32).toString('base64url')`. It writes `{ v, port, token, pid, ts, expectedExtensionId? }` **atomically** (tmp + `rename`) to `$CHROME_MCP_DATA/handshake.json` with mode **0600**, verifies the mode after write, and **fails closed** if it cannot. The token is **never** written to stdout or stderr or any log. A test asserts this.
-2. The extension acquires `{port, token}` from the handshake file via a **native-messaging trampoline** (`extension/src/nm/`) — the only component that can read a 0600 file the model/attacker cannot. v1 ships a **manual fallback**: the user runs `npx chrome-mcp --print-pairing` which prints a **redacted confirmation + the file path** (`handshake.json written to …; open the extension and click Pair`) and the trampoline reads it. **No token on stdout/stderr, no `/connect` HTTP endpoint.** [RESOLVED — security blocker 3]
+1. Server, at boot, generates a **fresh 256-bit token every boot**, never persisted/reused: `crypto.randomBytes(32).toString('base64url')`. It writes `{ v, port, token, pid, ts, expectedExtensionId? }` **atomically** (tmp + `rename`) to `$MCP_BROWSER_EXTENSION_DATA/handshake.json` with mode **0600**, verifies the mode after write, and **fails closed** if it cannot. The token is **never** written to stdout or stderr or any log. A test asserts this.
+2. The extension acquires `{port, token}` from the handshake file via a **native-messaging trampoline** (`extension/src/nm/`) — the only component that can read a 0600 file the model/attacker cannot. v1 ships a **manual fallback**: the user runs `npx mcp-browser-extension --print-pairing` which prints a **redacted confirmation + the file path** (`handshake.json written to …; open the extension and click Pair`) and the trampoline reads it. **No token on stdout/stderr, no `/connect` HTTP endpoint.** [RESOLVED — security blocker 3]
 3. Extension dials `ws://127.0.0.1:<port>` (port read from handshake via trampoline; see §6 for re-read-on-reconnect) and sends `hello` within 5000ms.
 4. Server compares tokens by **hashing both sides to SHA-256 and `timingSafeEqual`-ing the digests** (no length precondition, no length leak). Match → `welcome`, flip to ACTIVE; mismatch / `v!==1` / timeout → send `unauthorized` then close **4401**. No `command`/`result`/`event` is processed before `welcome`.
 
@@ -456,7 +456,7 @@ truth). The extension learns both via the native-messaging trampoline. **Wheneve
 a WS dial FAILS** (server restarted → fresh token + possibly fresh port), the SW
 re-invokes the trampoline to re-read `{port, token}` before the next dial. This
 makes ephemeral ports work: the extension never holds a stale port. The single
-default fixed port is **`38017`** (override `CHROME_MCP_WS_PORT`); ephemeral
+default fixed port is **`38017`** (override `MCP_BROWSER_EXTENSION_WS_PORT`); ephemeral
 port `0` is supported precisely because the extension re-reads on failure. The
 port is **not** a security boundary — the token is.
 
@@ -529,7 +529,7 @@ or `launchPersistentContext(userDataDir)` (self-spawn). **Lifted from
 Decisions:
 - **Ownership flag `launched`**: `dispose()` closes the context only when `launched===true`; attach mode drops refs only.
 - **Do NOT set `PLAYWRIGHT_BROWSERS_PATH`** (rely on the postinstall cache; respect a pre-set override). Drop the Electron `useBundledBrowsersIfPackaged` branch.
-- **Self-launch profile dir must NOT be the user's real Chrome profile** (`CHROME_MCP_USERDATA` || `~/.chrome-mcp/cdp-profile`) — it would conflict with the real Chrome the extension drives.
+- **Self-launch profile dir must NOT be the user's real Chrome profile** (`MCP_BROWSER_EXTENSION_USERDATA` || `~/.mcp-browser-extension/cdp-profile`) — it would conflict with the real Chrome the extension drives.
 - `screenshot` → `page.screenshot({fullPage})` → base64; `eval` → `page.evaluate` wrapped so a page throw becomes `{ok:false}` not a transport-killing throw.
 - **tabId stamping**: CDP guids are prefixed `cdp:<sessionId>:<guid>`; extension ids `ext:<sessionId>:<targetId>`. A handle whose prefix doesn't match the current backend/session → `STALE_TAB` ('call tabs_list again'). [RESOLVED — mv3 major tabId / integration]
 
@@ -588,7 +588,7 @@ Build: `manifest.json`, `sw/background.ts` (top-level listeners, keepalive inter
 Build: server-side `extract_links`/`read_as_markdown`/`fill_form` over `Runtime.evaluate`; server-side CDP-fetch `download_file` with sanitized names/size cap; policy enforced at executor + router. *Verify:* `test/hitl/` (cloned harness, Executor handle) — read steps free; mutating steps (`download_file`, `fill_form+submit`, `eval`-side-effect) behind classification + `--include-mutating` + literal `yes` + `test-targets.json` allowlist. Human verdict gate; never CI.
 
 **Phase 6 — Packaging & docs.**
-Build: `files` whitelist incl. `extension-dist/`, `--print-pairing`/`--print-extension-path`, `.mcp.json` snippet, README (banner caveat, load-unpacked-only, policy/safe-mode defaults, kill switch). *Verify:* `npx chrome-mcp` from a packed tarball boots, prints the pairing file path (no token leak), and a fresh Chrome load-unpacked round-trips one navigate→get_text.
+Build: `files` whitelist incl. `extension-dist/`, `--print-pairing`/`--print-extension-path`, `.mcp.json` snippet, README (banner caveat, load-unpacked-only, policy/safe-mode defaults, kill switch). *Verify:* `npx mcp-browser-extension` from a packed tarball boots, prints the pairing file path (no token leak), and a fresh Chrome load-unpacked round-trips one navigate→get_text.
 
 ---
 

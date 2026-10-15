@@ -4,9 +4,10 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { ProgressNotification } from '@modelcontextprotocol/sdk/types.js';
+import { runtimeEnv } from './compat';
 
 type AccessState = { deviceId: string; deviceSecret: string; challengeId?: string; verified?: boolean };
-const SITE = (process.env.CHROME_MCP_ACCESS_API ?? 'https://mcp-browser-extension.com/api/access').replace(/\/$/, '');
+const SITE = (runtimeEnv('ACCESS_API') ?? 'https://mcp-browser-extension.com/api/access').replace(/\/$/, '');
 let accessPollMs = 2_000;
 let accessWaitMs = 45_000;
 type AccessOutcome = { status: 'verified' | 'pending' | 'expired' | 'denied' | 'unavailable' | 'cancelled'; message: string };

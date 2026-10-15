@@ -114,7 +114,7 @@ function parseTabId(wire: string): number {
 }
 
 /**
- * Tabs chrome-mcp created, so tab_new can reuse its own blank tabs without ever
+ * Tabs mcp-browser-extension created, so tab_new can reuse its own blank tabs without ever
  * touching one of the person's. Kept in session storage: it survives the service
  * worker being evicted, and is cleared when the browser closes (tab ids are
  * per-session anyway).
@@ -757,7 +757,7 @@ export class ChromeExecutor {
           const present = new Set(tabs.map((t) => t.id).filter((id): id is number => id !== undefined));
           for (const id of claimedTabs) if (!present.has(id)) claimedTabs.delete(id);
 
-          // Only a blank tab chrome-mcp opened itself may be reused. A New Tab
+          // Only a blank tab mcp-browser-extension opened itself may be reused. A New Tab
           // page the person opened is theirs, often the one they are about to
           // type into, and must never be taken over.
           const ours = await openedByUs();

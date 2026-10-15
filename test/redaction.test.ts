@@ -209,7 +209,7 @@ test('snapshotAfter reports what a click changed without a second read', async (
 });
 
 test('switching profile forgets remembered snapshots (a different browser entirely)', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'chrome-mcp-snap-'));
+  const root = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-snap-'));
   resetActiveWorkspaceForTesting();
   setActiveWorkspace(ensureWorkspace(root, 'default', 'default', { createdAt: 'T0' }));
   configure(OPEN, { activeUrl: 'https://example.com' });
@@ -273,7 +273,7 @@ test('mixing a selector and a locator is rejected rather than silently preferrin
 // ---------------------------------------------------------------------------
 
 test('the action log records the URL touched, the policy verdict, and bytes returned', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'chrome-mcp-audit-'));
+  const root = mkdtempSync(join(tmpdir(), 'mcp-browser-extension-audit-'));
   resetActiveWorkspaceForTesting();
   setActiveWorkspace(ensureWorkspace(root, 'default', 'default', { createdAt: 'T0' }));
   const historyPath = getActiveWorkspace().historyPath;

@@ -1,23 +1,23 @@
 {
-  "name": "@mehmoodqureshi/chrome-mcp",
-  "mcpName": "io.github.Mehmoodqureshi/chrome-mcp",
-  "version": "0.9.25",
+  "name": "mcp-browser-extension",
+  "mcpName": "io.github.Mehmoodqureshi/mcp-browser-extension",
+  "version": "0.9.26",
   "description": "Drive your real Chrome browser over MCP \u2014 real logins, real cookies. A stdio MCP server (CLI) plus an MV3 extension, driving Chrome via chrome.scripting/chrome.tabs. Multi-tab batch automation, accessibility snapshots, deny-all security by default.",
   "author": "Mehmood Ur Rehman Qureshi",
   "license": "MIT",
   "homepage": "https://mcp-browser-extension.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mehmoodqureshi/chrome-mcp.git"
+    "url": "git+https://github.com/Mehmoodqureshi/mcp-browser-extension.git"
   },
   "bugs": {
-    "url": "https://github.com/Mehmoodqureshi/chrome-mcp/issues"
+    "url": "https://github.com/Mehmoodqureshi/mcp-browser-extension/issues"
   },
   "publishConfig": {
     "access": "public"
   },
   "bin": {
-    "chrome-mcp": "dist/src/cli.js"
+    "mcp-browser-extension": "dist/src/cli.js"
   },
   "files": [
     "dist/src/**/*.js",

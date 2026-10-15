@@ -1,10 +1,10 @@
 /**
- * src/bridge/peer.ts — let several chrome-mcp servers share one Chrome.
+ * src/bridge/peer.ts — let several mcp-browser-extension servers share one Chrome.
  *
- * Every MCP host session (each Claude terminal/tab) spawns its own chrome-mcp,
+ * Every MCP host session (each Claude terminal/tab) spawns its own mcp-browser-extension,
  * but a browser's extension dials exactly one port. So the first server to bind
  * the port is the HUB: it owns the extension connections. A later server that
- * finds the port held by a live chrome-mcp joins it as a PEER over the same
+ * finds the port held by a live mcp-browser-extension joins it as a PEER over the same
  * port and relays its commands through the hub, instead of killing it. If the
  * hub exits, its peers race to bind the port; the winner becomes the new hub
  * (with the same token, so the extension re-pairs on its own) and the rest join
@@ -123,7 +123,7 @@ export class HubLink {
 
   /**
    * Join the hub on `port` with `token`. Resolves null when nothing answers as a
-   * chrome-mcp hub in time: a wrong token, an older server that doesn't speak
+   * mcp-browser-extension hub in time: a wrong token, an older server that doesn't speak
    * the peer protocol (it ignores the frame and times us out), or no listener.
    */
   static join(

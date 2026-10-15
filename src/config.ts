@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 
 import { DEFAULT_WS_PORT } from '../shared/protocol';
 import { type Policy, resolvePolicy } from './security/policy';
+import { renamedDirectory, runtimeEnv } from './compat';
 
 /** Local port for `--http` (one above the bridge's). */
 export const DEFAULT_HTTP_PORT = 38018;
@@ -50,7 +51,7 @@ export interface CliConfig {
   /** `--no-site-grants`: the allowlist is exactly what the flags say; the
    *  extension's Options page cannot add sites at runtime. */
   noSiteGrants: boolean;
-  /** `--no-auto-update`: run this copy even when npm has a newer chrome-mcp. */
+  /** `--no-auto-update`: run this copy even when npm has a newer mcp-browser-extension. */
   noAutoUpdate: boolean;
   /** `--no-native-host`: don't register the one-click pairing helper with Chrome. */
   noNativeHost: boolean;
@@ -73,9 +74,9 @@ export interface CliConfig {
   logLevel: LogLevel;
 }
 
-/** Resolve the data dir: `$CHROME_MCP_DATA` or `~/.chrome-mcp`. */
+/** Resolve the data dir: `$MCP_BROWSER_EXTENSION_DATA` or `~/.mcp-browser-extension`. */
 export function resolveDataDir(): string {
-  return process.env.CHROME_MCP_DATA ?? join(homedir(), '.chrome-mcp');
+  return runtimeEnv('DATA') ?? renamedDirectory(homedir(), '.mcp-browser-extension', '.chrome-mcp');
 }
 
 const DEFAULT_PROFILE = 'default';
@@ -94,14 +95,14 @@ export function sanitizeName(name: string, kind: 'profile' | 'task'): string {
   return clean;
 }
 
-/** Active profile: `$CHROME_MCP_PROFILE` (set by `--profile`) or "default". */
+/** Active profile: `$MCP_BROWSER_EXTENSION_PROFILE` (set by `--profile`) or "default". */
 export function resolveProfile(): string {
-  return sanitizeName(process.env.CHROME_MCP_PROFILE ?? DEFAULT_PROFILE, 'profile');
+  return sanitizeName(runtimeEnv('PROFILE') ?? DEFAULT_PROFILE, 'profile');
 }
 
-/** Active task: `$CHROME_MCP_TASK` (set by `--task`) or "default". */
+/** Active task: `$MCP_BROWSER_EXTENSION_TASK` (set by `--task`) or "default". */
 export function resolveTask(): string {
-  return sanitizeName(process.env.CHROME_MCP_TASK ?? DEFAULT_TASK, 'task');
+  return sanitizeName(runtimeEnv('TASK') ?? DEFAULT_TASK, 'task');
 }
 
 /** `profiles/<profile>/` — holds the Chrome user-data dir and this profile's tasks. */
@@ -129,7 +130,7 @@ function readPolicyFile(path: string): Partial<Policy> {
  * read triggered by `--policy <path>`.
  */
 export function parseArgs(argv: string[]): CliConfig {
-  let wsPort = envInt('CHROME_MCP_WS_PORT') ?? DEFAULT_WS_PORT;
+  let wsPort = envInt('MCP_BROWSER_EXTENSION_WS_PORT') ?? DEFAULT_WS_PORT;
   // Extension-only by default: never launch/attach a Chromium of our own unless
   // the operator explicitly opts in with --cdp-fallback (or --prefer cdp / --cdp-endpoint).
   let cdpFallback = false;
@@ -143,7 +144,7 @@ export function parseArgs(argv: string[]): CliConfig {
   let noAutoUpdate = false;
   let noNativeHost = false;
   let http = false;
-  let httpPort = envInt('CHROME_MCP_HTTP_PORT') ?? DEFAULT_HTTP_PORT;
+  let httpPort = envInt('MCP_BROWSER_EXTENSION_HTTP_PORT') ?? DEFAULT_HTTP_PORT;
   let tunnel = false;
   let rotateRemoteKey = false;
   let showHelp = false;
@@ -177,13 +178,13 @@ export function parseArgs(argv: string[]): CliConfig {
         wsPort = requireInt(argv[++i], '--port');
         break;
       case '--data-dir':
-        process.env.CHROME_MCP_DATA = requireValue(argv[++i], '--data-dir');
+        process.env.MCP_BROWSER_EXTENSION_DATA = requireValue(argv[++i], '--data-dir');
         break;
       case '--profile':
-        process.env.CHROME_MCP_PROFILE = requireValue(argv[++i], '--profile');
+        process.env.MCP_BROWSER_EXTENSION_PROFILE = requireValue(argv[++i], '--profile');
         break;
       case '--task':
-        process.env.CHROME_MCP_TASK = requireValue(argv[++i], '--task');
+        process.env.MCP_BROWSER_EXTENSION_TASK = requireValue(argv[++i], '--task');
         break;
       case '--policy':
         policyFile = readPolicyFile(requireValue(argv[++i], '--policy'));
@@ -354,7 +355,7 @@ export function parseArgs(argv: string[]): CliConfig {
 // ---------------------------------------------------------------------------
 
 function envInt(name: string): number | undefined {
-  const raw = process.env[name];
+  const raw = runtimeEnv(name.replace(/^MCP_BROWSER_EXTENSION_/, ''));
   if (raw === undefined) return undefined;
   const n = Number.parseInt(raw, 10);
   if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer`);
@@ -391,17 +392,17 @@ function requireLogLevel(value: string | undefined): LogLevel {
 }
 
 /** Help text for `--help`. */
-export const HELP_TEXT = `chrome-mcp — the MCP Browser Extension server: drive your real Chrome over MCP.
+export const HELP_TEXT = `mcp-browser-extension — the MCP Browser Extension server: drive your real Chrome over MCP.
 
-Usage: chrome-mcp [options]
-       chrome-mcp extension doctor [--json] [--user-data-dir <browser directory>]
-       chrome-mcp extension repair [--apply] [--user-data-dir <browser directory>]
-       chrome-mcp tasks list [--json]
-       chrome-mcp tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>] [--dry-run]
+Usage: mcp-browser-extension [options]
+       mcp-browser-extension extension doctor [--json] [--user-data-dir <browser directory>]
+       mcp-browser-extension extension repair [--apply] [--user-data-dir <browser directory>]
+       mcp-browser-extension tasks list [--json]
+       mcp-browser-extension tasks gc   [--older-than <days>] [--keep <n>] [--profile <name>] [--dry-run]
 
 Connection:
   --port <n>             WebSocket bridge port (default ${DEFAULT_WS_PORT}; 0 = ephemeral)
-  --data-dir <path>      Override the data dir (default ~/.chrome-mcp)
+  --data-dir <path>      Override the data dir (default ~/.mcp-browser-extension)
   --profile <name>       Default browser profile / identity (default "default").
                          Artifacts live under profiles/<name>/. At runtime, switch
                          with the profile_use tool. Several browsers can pair to the
@@ -413,31 +414,31 @@ Connection:
                          land in profiles/<profile>/tasks/<task>/.
   --print-pairing        Write the handshake, print its path, and keep the bridge
                          up until Ctrl-C (manual pairing; never serves MCP)
-  --extension-path       Install the extension to ~/chrome-mcp-extension (or
-                         CHROME_MCP_EXTENSION_DIR) and print that path — the folder
+  --extension-path       Install the extension to ~/mcp-browser-extension (or
+                         MCP_BROWSER_EXTENSION_EXTENSION_DIR) and print that path — the folder
                          to pick in chrome://extensions -> Load unpacked. The server
                          also refreshes it on every boot.
   --persist-token        Reuse a stable on-disk token across restarts so the
                          extension never has to re-pair (default: fresh per boot).
-                         CHROME_MCP_TOKEN env, if set, pins the token explicitly.
+                         MCP_BROWSER_EXTENSION_TOKEN env, if set, pins the token explicitly.
   --no-native-host       Don't register the helper behind the extension's one-click
                          Connect button (pairing is then by pasting port and token)
   --http                 Serve MCP over HTTP on 127.0.0.1 instead of stdio, so a
                          client elsewhere can connect. Runs until Ctrl-C. Every
                          request needs the remote key (kept in <data-dir>/remote-key):
                          in the path, /mcp/<key>, or as Authorization: Bearer <key>.
-  --http-port <n>        Port for --http (default 38018; env CHROME_MCP_HTTP_PORT)
+  --http-port <n>        Port for --http (default 38018; env MCP_BROWSER_EXTENSION_HTTP_PORT)
   --tunnel               --http plus a Cloudflare quick tunnel, and print a public
                          connector URL for claude.ai, ChatGPT or any MCP client.
                          Needs cloudflared. The URL changes on every start.
   --rotate-remote-key    Make a new remote key: every remote client is cut off and
                          needs the new URL.
-  --no-auto-update       Run this copy even when a newer chrome-mcp is published.
+  --no-auto-update       Run this copy even when a newer mcp-browser-extension is published.
                          By default an installed copy (npx or global) checks npm at
                          startup and hands off to the latest release, so you never
-                         run a stale version. Same as CHROME_MCP_AUTO_UPDATE=0.
+                         run a stale version. Same as MCP_BROWSER_EXTENSION_AUTO_UPDATE=0.
   --no-telemetry         Send no anonymous usage statistics. Same as
-                         CHROME_MCP_TELEMETRY=0 or DO_NOT_TRACK=1. Only counts are
+                         MCP_BROWSER_EXTENSION_TELEMETRY=0 or DO_NOT_TRACK=1. Only counts are
                          ever sent (version, OS, tool calls, error codes) — never
                          URLs, page content or arguments.
 

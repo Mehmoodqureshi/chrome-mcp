@@ -2,10 +2,12 @@ node_modules/
 dist/
 extension-dist/
 *.tsbuildinfo
+mcp-browser-extension-*.zip
 chrome-mcp-extension-*.zip
 
 # Local, secret, or machine-specific
 .claude/settings.local.json
+.mcp-browser-extension/
 .chrome-mcp/
 profile-photo.png
 token

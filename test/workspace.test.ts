@@ -26,7 +26,7 @@ import {
 import { getLogLevel, setLogLevel } from '../src/mcp/log';
 
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), 'chrome-mcp-ws-'));
+  return mkdtempSync(join(tmpdir(), 'mcp-browser-extension-ws-'));
 }
 
 /** Install a fresh active workspace rooted at a new temp data dir; return its root. */

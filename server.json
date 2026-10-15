@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.Mehmoodqureshi/chrome-mcp",
-  "title": "chrome-mcp",
+  "name": "io.github.Mehmoodqureshi/mcp-browser-extension",
+  "title": "MCP Browser Extension",
   "description": "Drive your real Chrome over MCP: real logins and cookies, multi-tab automation, deny-all by default.",
   "websiteUrl": "https://mcp-browser-extension.com",
   "repository": {
-    "url": "https://github.com/Mehmoodqureshi/chrome-mcp",
+    "url": "https://github.com/Mehmoodqureshi/mcp-browser-extension",
     "source": "github"
   },
-  "version": "0.9.25",
+  "version": "0.9.26",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@mehmoodqureshi/chrome-mcp",
-      "version": "0.9.25",
+      "identifier": "mcp-browser-extension",
+      "version": "0.9.26",
       "transport": {
         "type": "stdio"
       },

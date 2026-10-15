@@ -1,6 +1,6 @@
 /**
  * extension-install: the bundled extension is mirrored into a plain folder under
- * the home dir (or CHROME_MCP_EXTENSION_DIR). Copies only what changed, never
+ * the home dir (or MCP_BROWSER_EXTENSION_EXTENSION_DIR). Copies only what changed, never
  * touches pairing.json in the target, never throws, and always returns a
  * loadable folder.
  */
@@ -66,16 +66,16 @@ test('syncExtension: leaves the target pairing.json alone and never throws on a 
   assert.match(noManifest.error ?? '', /manifest\.json/);
 });
 
-test('extensionInstallDir: defaults to ~/chrome-mcp-extension; CHROME_MCP_EXTENSION_DIR overrides', () => {
-  const prev = process.env.CHROME_MCP_EXTENSION_DIR;
+test('extensionInstallDir: defaults to ~/mcp-browser-extension; MCP_BROWSER_EXTENSION_EXTENSION_DIR overrides', () => {
+  const prev = process.env.MCP_BROWSER_EXTENSION_EXTENSION_DIR;
   try {
-    delete process.env.CHROME_MCP_EXTENSION_DIR;
+    delete process.env.MCP_BROWSER_EXTENSION_EXTENSION_DIR;
     assert.ok(extensionInstallDir().endsWith(EXTENSION_DIR_NAME));
-    process.env.CHROME_MCP_EXTENSION_DIR = join(tmpdir(), 'custom-ext');
+    process.env.MCP_BROWSER_EXTENSION_EXTENSION_DIR = join(tmpdir(), 'custom-ext');
     assert.equal(extensionInstallDir(), join(tmpdir(), 'custom-ext'));
   } finally {
-    if (prev === undefined) delete process.env.CHROME_MCP_EXTENSION_DIR;
-    else process.env.CHROME_MCP_EXTENSION_DIR = prev;
+    if (prev === undefined) delete process.env.MCP_BROWSER_EXTENSION_EXTENSION_DIR;
+    else process.env.MCP_BROWSER_EXTENSION_EXTENSION_DIR = prev;
   }
 });
 

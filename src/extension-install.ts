@@ -6,13 +6,13 @@
  * folders deep under `npm root -g`, and an npx run hides it in a cache. So on
  * every boot (and on `--extension-path`) the server mirrors the bundled
  * `extension-dist/` into a plain, visible folder directly under the home
- * directory — `~/chrome-mcp-extension` — and that is the folder the docs, the
+ * directory — `~/mcp-browser-extension` — and that is the folder the docs, the
  * pairing file, and `--extension-path` all point at.
  *
  * The copy is a one-way mirror of top-level regular files, written only when
  * content differs, so an unchanged boot touches nothing. It never deletes: the
  * target may hold `pairing.json` (ours) and, if the operator pointed
- * CHROME_MCP_EXTENSION_DIR somewhere of their own, files that are not ours to
+ * MCP_BROWSER_EXTENSION_EXTENSION_DIR somewhere of their own, files that are not ours to
  * remove. It never throws — a read-only home just falls back to the bundled
  * folder, which still works for Load unpacked.
  */
@@ -21,9 +21,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { writeFileAtomic } from './atomic-file';
+import { renamedDirectory, runtimeEnv } from './compat';
 
 /** Folder name under the home directory. */
-export const EXTENSION_DIR_NAME = 'chrome-mcp-extension';
+export const EXTENSION_DIR_NAME = 'mcp-browser-extension';
 
 /** The auto-pairing file the server writes; never copied, never overwritten by the mirror. */
 export const PAIRING_FILE = 'pairing.json';
@@ -33,10 +34,11 @@ export function bundledExtensionDir(): string {
   return resolve(__dirname, '..', '..', 'extension-dist');
 }
 
-/** Where the extension is mirrored for Load unpacked. `CHROME_MCP_EXTENSION_DIR` overrides. */
+/** Where the extension is mirrored for Load unpacked. `MCP_BROWSER_EXTENSION_EXTENSION_DIR` overrides. */
 export function extensionInstallDir(): string {
-  const override = process.env.CHROME_MCP_EXTENSION_DIR;
-  return override && override.trim() ? resolve(override.trim()) : join(homedir(), EXTENSION_DIR_NAME);
+  const override = runtimeEnv('EXTENSION_DIR');
+  return override && override.trim() ? resolve(override.trim())
+    : renamedDirectory(homedir(), EXTENSION_DIR_NAME, 'chrome-mcp-extension');
 }
 
 export interface SyncResult {

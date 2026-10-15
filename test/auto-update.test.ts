@@ -13,8 +13,8 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 
 import { HANDOFF_ENV, autoUpdateDisabled, isInstalledCopy, isNewer, maybeHandOff } from '../src/auto-update';
 
-const NPX_DIR = join('/home/u/.npm/_npx/abc/node_modules/@mehmoodqureshi/chrome-mcp');
-const DEV_DIR = join('/home/u/Work/chrome-mcp');
+const NPX_DIR = join('/home/u/.npm/_npx/abc/node_modules/mcp-browser-extension');
+const DEV_DIR = join('/home/u/Work/mcp-browser-extension');
 
 /** A stand-in child process the test drives by hand. */
 function fakeSpawn(behaviour: 'exit' | 'fail') {
@@ -49,8 +49,8 @@ test('only an installed copy updates, and the opt-outs work', () => {
   assert.equal(isInstalledCopy(NPX_DIR), true);
   assert.equal(isInstalledCopy(DEV_DIR), false);
   assert.equal(autoUpdateDisabled({}), false);
-  assert.equal(autoUpdateDisabled({ CHROME_MCP_AUTO_UPDATE: '0' }), true);
-  assert.equal(autoUpdateDisabled({ CHROME_MCP_AUTO_UPDATE: 'off' }), true);
+  assert.equal(autoUpdateDisabled({ MCP_BROWSER_EXTENSION_AUTO_UPDATE: '0' }), true);
+  assert.equal(autoUpdateDisabled({ MCP_BROWSER_EXTENSION_AUTO_UPDATE: 'off' }), true);
   assert.equal(autoUpdateDisabled({}, true), true);
   assert.equal(autoUpdateDisabled({ [HANDOFF_ENV]: '0.9.15' }), true, 'the handed-off copy never hands off again');
 });
@@ -69,7 +69,7 @@ test('a newer release takes over with the exact version and the same args', asyn
   assert.equal(code, 3, "leaves with the new copy's exit code");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].cmd, 'npx');
-  assert.deepEqual(calls[0].args, ['-y', '@mehmoodqureshi/chrome-mcp@0.9.16', '--persist-token', '--allow-domain', 'example.com']);
+  assert.deepEqual(calls[0].args, ['-y', 'mcp-browser-extension@0.9.16', '--persist-token', '--allow-domain', 'example.com']);
   assert.equal(calls[0].opts.stdio, 'inherit');
   assert.equal((calls[0].opts.env as NodeJS.ProcessEnv)[HANDOFF_ENV], '0.9.15');
 });

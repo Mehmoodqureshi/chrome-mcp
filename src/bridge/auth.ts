@@ -3,7 +3,7 @@
  * drafts was deleted on purpose).
  *
  *   - Fresh 256-bit token EVERY boot by default, never persisted across restarts.
- *     Persistence is OPT-IN (`--persist-token` / `CHROME_MCP_TOKEN`) for hosts
+ *     Persistence is OPT-IN (`--persist-token` / `MCP_BROWSER_EXTENSION_TOKEN`) for hosts
  *     that want a stable token so the extension never has to re-pair.
  *   - Written atomically (tmp + rename) to `handshake.json` at mode 0600; the
  *     mode is re-verified after write and we FAIL CLOSED if it can't be set.
@@ -20,6 +20,7 @@ import { connect } from 'node:net';
 
 import { PROTOCOL_VERSION, type HandshakeFile } from '../../shared/protocol';
 import { handshakePath } from './datadir';
+import { runtimeEnv } from '../compat';
 
 /** A fresh 256-bit token, base64url. Generated once per server boot. */
 export function generateToken(): string {
@@ -82,13 +83,13 @@ export function writePersistedToken(dir: string, token: string): string {
 
 /**
  * Resolve the token for this boot:
- *   1. `CHROME_MCP_TOKEN` env — an explicit pin; used verbatim, never written to disk.
+ *   1. `MCP_BROWSER_EXTENSION_TOKEN` env — an explicit pin; used verbatim, never written to disk.
  *   2. `persist` on — reuse the on-disk token (creating + saving one on first run),
  *      so the extension stays paired across restarts.
  *   3. otherwise — a fresh per-boot token (the secure default; never persisted).
  */
 export function resolveToken(dir: string, opts: { persist: boolean }): string {
-  const fromEnv = process.env.CHROME_MCP_TOKEN?.trim();
+  const fromEnv = runtimeEnv('TOKEN')?.trim();
   if (fromEnv) return fromEnv;
   if (opts.persist) {
     const existing = readPersistedToken(dir);
@@ -174,7 +175,7 @@ export function portIsListening(port: number, timeoutMs = 500): Promise<boolean>
 /**
  * Should a hub on `port` leave `<extDir>/pairing.json` alone? Yes when the file
  * already points the extension at a DIFFERENT port that is still live: another
- * chrome-mcp (e.g. one started with its own CHROME_MCP_DATA / --ws-port) owns
+ * mcp-browser-extension (e.g. one started with its own MCP_BROWSER_EXTENSION_DATA / --ws-port) owns
  * that pairing, and overwriting it would silently steal the user's extension.
  * A file naming our own port, a dead port, or no file at all is fair game.
  */

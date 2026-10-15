@@ -23,7 +23,7 @@ export interface RouterDeps {
   /** The policy delivered in `welcome`, or null before one arrives. */
   getPolicy: () => WirePolicy | null;
   log: (message: string) => void;
-  /** The "chrome-mcp is working here" tab border; optional so tests can omit it. */
+  /** The "mcp-browser-extension is working here" tab border; optional so tests can omit it. */
   border?: {
     used(tabId: number): Promise<void>;
     opened(tabId: number): Promise<void>;

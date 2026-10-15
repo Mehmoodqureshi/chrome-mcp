@@ -461,7 +461,7 @@ function capabilityStatus(policy: Policy): Record<string, unknown> {
     capabilityHint:
       'These tools are not available in this session because their capability is off. ' +
       'If the user asks for one of them, tell them to add the listed flag to the MCP Browser Extension ' +
-      "server's entry (chrome-mcp) in their MCP config and restart the client.",
+      "server's entry (mcp-browser-extension) in their MCP config and restart the client.",
   };
 }
 

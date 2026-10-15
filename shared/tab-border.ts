@@ -1,5 +1,5 @@
 /**
- * shared/tab-border.ts — the pure half of the "chrome-mcp is working here"
+ * shared/tab-border.ts — the pure half of the "mcp-browser-extension is working here"
  * border: choosing its colour from the page's theme and writing the CSS.
  *
  * The extension paints the border with `chrome.scripting.insertCSS` on

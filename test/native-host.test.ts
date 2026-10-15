@@ -3,7 +3,7 @@
  *   A. registration writes the launcher + manifest for installed browsers only,
  *      allows only our extension id, and uses the registry on Windows.
  *   B. the reply is the live handshake, never a dead server's.
- *   C. `chrome-mcp --native-host` speaks Chrome's framing end to end.
+ *   C. `mcp-browser-extension --native-host` speaks Chrome's framing end to end.
  */
 
 import { test } from 'node:test';
@@ -62,7 +62,7 @@ test('the reply is the live handshake, and a dead server is not a pairing', () =
   assert.equal(pairingReply(dir).ok, false, 'its process is gone');
 });
 
-test('chrome-mcp --native-host answers one framed request, as Chrome starts it', () => {
+test('mcp-browser-extension --native-host answers one framed request, as Chrome starts it', () => {
   const dir = tmp();
   writeFileSync(join(dir, 'handshake.json'), JSON.stringify({ v: 1, port: 40000, token: 'abc', pid: process.pid }));
   writeFileSync(join(dir, 'access.json'), JSON.stringify({ verified: true }));
