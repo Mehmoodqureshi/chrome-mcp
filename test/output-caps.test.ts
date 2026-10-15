@@ -10,6 +10,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ensureWorkspace } from '../src/bridge/datadir';
+import { setActiveWorkspace, resetActiveWorkspaceForTesting } from '../src/bridge/workspace';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { dispatchToolCall, resetRateLimiter } from '../src/mcp/tools';
@@ -273,5 +278,31 @@ test('--log-level debug enables the verbose tracing', () => {
     assert.match(out, /\[debug\] traced/);
   } finally {
     setLogLevel(previous);
+  }
+});
+
+
+test('truncated reads reveal the existing full artifact and never claim a failed save', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mcp-read-results-'));
+  const full = 'complete page text '.repeat(1000);
+  try {
+    setActiveWorkspace(ensureWorkspace(root, 'default', 'test'));
+    configure({ textPayload: full, htmlPayload: `<p>${full}</p>` });
+    const out = jsonOf(await dispatchToolCall('get_text', { tabId: TAB, maxBytes: 2048 }));
+    assert.equal(out.truncated, true);
+    assert.equal(JSON.parse(readFileSync(out.savedTo as string, 'utf8')).text, full);
+    const md = textOf(await dispatchToolCall('read_as_markdown', { tabId: TAB, maxBytes: 2048 }));
+    const path = md.match(/; full document saved to (.+)\]$/)?.[1];
+    assert.ok(path);
+    assert.equal(readFileSync(path, 'utf8'), full.trim());
+    resetActiveWorkspaceForTesting();
+    const noSave = jsonOf(await dispatchToolCall('get_text', { tabId: TAB, maxBytes: 2048 }));
+    assert.equal(noSave.savedTo, undefined);
+    const unsaved = textOf(await dispatchToolCall('read_as_markdown', { tabId: TAB, maxBytes: 2048 }));
+    assert.match(unsaved, /full document could not be saved/);
+    assert.doesNotMatch(unsaved, /full document saved to/);
+  } finally {
+    resetActiveWorkspaceForTesting();
+    rmSync(root, { recursive: true, force: true });
   }
 });

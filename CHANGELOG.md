@@ -1,3 +1,16 @@
+## 0.9.27 - 2026-10-15
+
+Link extraction works with the default safety settings.
+
+- fix: handle a denied eval by parsing the allowed page's HTML; unrelated
+  browser errors still propagate. Resolve relative links, decode entities,
+  honor the page or frame origin, and filter fragment and executable URLs.
+- fix: return the full saved result path from text reads and truncated markdown;
+  do not claim a file was saved when persistence failed.
+- dependencies: update the MCP SDK and transitive runtime dependencies to patched
+  releases; runtime dependency audit reports no known vulnerabilities.
+- extension: unchanged at 0.9.26; the existing Store ZIP remains current.
+
 ## 0.9.26 - 2026-10-15
 
 One package and command: MCP Browser Extension.

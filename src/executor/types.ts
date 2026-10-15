@@ -321,7 +321,7 @@ export interface Executor {
 
   // --- read (policy-gated by current tab URL) ---
   getText(t?: Target, opts?: { tabId?: TabId } & FrameOpts): Promise<{ text: string; ref?: string }>;
-  getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean } & FrameOpts): Promise<{ html: string }>;
+  getHtml(t?: Target, opts?: { tabId?: TabId; outer?: boolean } & FrameOpts): Promise<{ html: string; frameId?: number }>;
   /** Accessibility snapshot: interactive/landmark elements with stable refs the model can target. */
   snapshot(opts?: { tabId?: TabId; interactiveOnly?: boolean; max?: number; locator?: SnapshotLocator } & FrameOpts): Promise<SnapshotResult>;
   /** Read cookies visible to the active tab's URL (or a given url). */

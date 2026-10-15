@@ -984,7 +984,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     const res = await ctx.ex.getText(optionalTarget(a), { tabId: tabId(a), ...frameOpts(a) });
     // Save the FULL read before capping — the artifact on disk stays lossless;
     // only what crosses into the caller's context is bounded.
-    saveResult('get_text', 'json', JSON.stringify(res, null, 2));
+    const savedTo = saveResult('get_text', 'json', JSON.stringify(res, null, 2));
     const clean = redactText(res.text, redaction(ctx.policy));
     noteRedactions(clean.redactions);
     const capped = capText(clean.value, maxBytes(a));
@@ -992,6 +992,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     return jsonResult({
       ...res,
       text: capped.text,
+      ...(savedTo ? { savedTo } : {}),
       ...truncationMeta(capped),
       ...(clean.redactions ? { redactions: clean.redactions } : {}),
     });
@@ -1121,7 +1122,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       tabId: tabId(a),
       ...frameOpts(a),
     });
-    saveResult('read_as_markdown', 'md', md);
+    const savedTo = saveResult('read_as_markdown', 'md', md);
     const clean = redactText(md, redaction(ctx.policy));
     noteRedactions(clean.redactions);
     const capped = capText(clean.value, maxBytes(a));
@@ -1130,7 +1131,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     // the body rather than as sibling JSON fields.
     return textResult(
       capped.truncated
-        ? `${capped.text}\n\n[truncated: ${capped.returnedBytes} of ${capped.totalBytes} bytes — raise maxBytes or narrow with selector; the full document was saved to the task's results/ dir]`
+        ? `${capped.text}\n\n[truncated: ${capped.returnedBytes} of ${capped.totalBytes} bytes — raise maxBytes or narrow with selector${savedTo ? `; full document saved to ${savedTo}` : '; full document could not be saved'}]`
         : capped.text,
     );
   },

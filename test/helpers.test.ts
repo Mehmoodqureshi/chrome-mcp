@@ -167,3 +167,60 @@ test('fillForm falls back to per-field writes when the extension predates fill_f
   assert.deepEqual(sent.map((s) => s.method), ['type', 'click']);
   assert.equal(sent[0].params.clear, true);
 });
+
+test('extractLinks handles thrown eval denial, decoded attributes and relative URLs', async () => {
+  const calls: unknown[] = [];
+  const ex = new StubExecutor({ activeUrl: 'https://example.com/articles/start' });
+  ex.eval = async () => { throw new ExecutorError('POLICY_DENIED', 'eval is disabled'); };
+  ex.getHtml = async (...args: unknown[]) => {
+    calls.push(args);
+    return { html: `
+      <!-- <a href="/comment">Not a link</a> -->
+      <script>const fake = '<a href="/script">Not a link</a>';</script>
+      <template><a href="/template">Not a live link</a></template>
+      <a data-href="/wrong" href = "../docs?a=1&amp;b=2">A &amp; <b>B</b> &#x26; C</a>
+      <a href='/docs?a=1&amp;b=2'></a>
+      <a href=https://other.example/path>External</a>
+      <a href="//example.com/network">Network relative</a>
+      <a href="?q=hello&amp;page=2">Query</a>
+      <a href="#part">Fragment</a><a href="java&#x73;cript:alert(1)">Script</a>
+      <a href="data:text/plain,test">Data</a><a href="blob:https://example.com/id">Blob</a>
+      <a href="https://example.com.evil.test/">Prefix trap</a>
+      <a href="https://example.com:444/">Different port</a>
+    ` };
+  };
+  const { links } = await extractLinks(ex, { selector: '#content', tabId: 'extension:stub:1', sameOriginOnly: true, dedupe: true });
+  assert.deepEqual(links, [
+    { href: 'https://example.com/docs?a=1&b=2', text: 'A & B & C' },
+    { href: 'https://example.com/network', text: 'Network relative' },
+    { href: 'https://example.com/articles/start?q=hello&page=2', text: 'Query' },
+  ]);
+  assert.deepEqual(calls[0], [{ selector: '#content' }, { tabId: 'extension:stub:1', frameId: undefined, allFrames: undefined }]);
+  assert.equal((await extractLinks(ex, { limit: 1 })).links.length, 1);
+});
+
+test('extractLinks propagates non-policy eval errors without reading HTML', async () => {
+  const ex = new StubExecutor();
+  const err = new ExecutorError('EXTENSION_DISCONNECTED', 'browser disconnected');
+  ex.eval = async () => { throw err; };
+  ex.getHtml = async () => assert.fail('must not mask a disconnected browser');
+  await assert.rejects(extractLinks(ex, {}), e => e === err);
+});
+
+test('extractLinks resolves against the requested tab, the returned frame, and HTML base', async () => {
+  const ex = new StubExecutor({
+    activeUrl: 'https://wrong.example/',
+    backgroundTabs: [{ tabId: 'extension:stub:2', url: 'https://example.com/nested/page' }],
+    htmlPayload: '<base href="/assets/"><a href="one">One</a><a href="https://example.com">Absolute</a>',
+    frames: [{ frameId: 3, top: false, url: 'https://frame.example/sub/page', title: '' }],
+  });
+  ex.eval = async () => { throw new ExecutorError('POLICY_DENIED', 'eval is disabled'); };
+  assert.deepEqual((await extractLinks(ex, { tabId: 'extension:stub:2' })).links, [
+    { href: 'https://example.com/assets/one', text: 'One' },
+    { href: 'https://example.com', text: 'Absolute' },
+  ]);
+  ex.getHtml = async () => ({ html: '<a href="child">Child</a>', frameId: 3 });
+  assert.deepEqual((await extractLinks(ex, { allFrames: true, selector: 'main' })).links, [
+    { href: 'https://frame.example/sub/child', text: 'Child' },
+  ]);
+});
