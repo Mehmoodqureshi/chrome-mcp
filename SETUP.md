@@ -124,8 +124,19 @@ The first browser tool call opens an email prompt in the MCP client. Ask the
 human to enter an email address. The website sends a Firebase sign-in link;
 the human opens it in their browser and returns to the MCP client. Do not ask
 them to copy or paste a verification code. The server detects the verified
-link automatically. Wait a few seconds, then click **Connect** in the
-extension if Chrome is not already paired. This requires the MCP client to
+link automatically and reports the result to the waiting tool call. On success,
+the result includes **Email verified** and the requested browser action continues.
+The user does not need to send another chat message. Progress updates and status
+notifications are also sent to clients that display them.
+
+Each verification wait lasts up to 45 seconds. If the result says
+`ACCESS_PENDING`, call `chrome_status` again to continue waiting on the same
+link. Expired or denied verification returns a clear failure; browser actions
+remain blocked until access is confirmed. Cancellation stops the waiting action,
+while background verification can still activate the local installation.
+
+Click **Connect** in the extension if the result says Chrome is not already
+paired. This requires the MCP client to
 support elicitation; clients that cannot show the prompt cannot activate
 through this flow.
 

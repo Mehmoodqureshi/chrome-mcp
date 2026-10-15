@@ -12,7 +12,8 @@ npm run pack:ext
 
 Produces `chrome-mcp-extension-<version>.zip` at the repo root from a fresh
 `extension-dist/` build, with `pairing.json` excluded. The manifest `version`
-must be higher than the last one uploaded; it tracks `package.json`.
+must be higher than the last one uploaded. It comes from
+`extension/manifest.json` and changes when the extension changes.
 
 ## 2. Store listing
 
@@ -30,6 +31,7 @@ MCP Browser Extension is an open-source MCP server and extension (MIT) that lets
 
 How it works
 - You start the MCP Browser Extension server (npm package @mehmoodqureshi/chrome-mcp) from your MCP client (Claude Code, Claude Desktop, Cursor, Windsurf, or any other MCP host).
+- On first use, enter your email in the client's prompt and open the sign-in link. The server reports verification and continues the waiting browser action.
 - This extension connects to that server on 127.0.0.1 and carries out its commands: tabs, navigation, clicks, typing, page reads, screenshots, downloads.
 - The extension sends browser results to your local server, which forwards them to your configured MCP client. An optional tunnel allows remote clients to connect using a private access key. Optional proxy IP checks contact ipinfo.io or api.ipify.org.
 
@@ -39,22 +41,25 @@ Safety
 - Every call is recorded to a local history file so you can see what the agent did afterwards.
 
 Setup
-1. Install and register the server: see https://github.com/Mehmoodqureshi/chrome-mcp
+1. Install and register the server: see https://mcp-browser-extension.com/docs/quickstart
 2. Install this extension.
-3. Click the toolbar icon, open Settings, and click Connect to pair with your local server. Manual port and token pairing is also available. A green badge means connected.
+3. Complete email verification from your MCP client's first browser tool call.
+4. Click the toolbar icon, open Settings, and click Connect to pair with your local server if it is not already paired. Manual port and token pairing is also available. A green badge means connected.
 
+Website and docs: https://mcp-browser-extension.com
 Source, docs, and issues: https://github.com/Mehmoodqureshi/chrome-mcp
 
 **Category:** Developer Tools
 **Language:** English
+**Official URL:** https://mcp-browser-extension.com/ (select this verified site in Additional fields; changing the manifest does not update it)
 **Homepage URL:** https://mcp-browser-extension.com
 **Support URL:** https://github.com/Mehmoodqureshi/chrome-mcp/issues
 
 ## 3. Graphic assets
 
 - Icon 128x128: `extension/icons/icon128.png` (uploaded automatically from the manifest).
-- Screenshots, at least one, 1280x800 or 640x400 PNG: take one of the Options page showing the green "connected" status, and one of Chrome with the toolbar badge. Real screenshots only; the store rejects mockups.
-- Small promo tile 440x280 (optional).
+- Screenshots, at least one, 1280x800 or 640x400 JPEG or 24-bit PNG without alpha: capture the current Settings page and its connection and proxy controls. Use actual product screens with credentials hidden.
+- Small promo tile 440x280 (required).
 
 ## 4. Privacy tab
 

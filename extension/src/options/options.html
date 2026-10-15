@@ -4,12 +4,17 @@
     <meta charset="utf-8" />
     <title>MCP Browser Extension — Settings</title>
     <style>
+      :root {
+        --site-primary: oklch(0.58 0.19 255);
+        --site-primary-foreground: oklch(0.99 0 0);
+        --site-ring: oklch(0.58 0.19 255);
+      }
       body { font: 14px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
       h1 { font-size: 1.2rem; }
       label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
       input { width: 100%; padding: 0.5rem; box-sizing: border-box; font: inherit; }
       button { margin-top: 1rem; padding: 0.5rem 1rem; font: inherit; cursor: pointer; }
-      .status { margin-top: 1rem; padding: 0.5rem 0.75rem; border-radius: 0.4rem; background: #eef; }
+      .status { margin-top: 1rem; padding: 0.5rem 0.75rem; border-radius: 0.4rem; background: color-mix(in oklch, var(--site-primary) 7%, white); border: 1px solid color-mix(in oklch, var(--site-primary) 25%, white); }
       code { background: #f3f3f3; padding: 0 0.25rem; }
       .hint { color: #555; font-size: 0.9rem; }
       label.check { display: flex; gap: 0.5rem; align-items: center; font-weight: 600; margin-top: 1rem; }
@@ -23,8 +28,13 @@
       .blocked li { background: #fff7ed; padding-left: 0.5rem; }
       .row { display: flex; gap: 0.5rem; }
       .row button { margin-top: 0; }
-      .quick { margin: 1rem 0 1.25rem; padding: 1rem; border-radius: 0.6rem; background: #eef4ff; border: 1px solid #c9dafc; }
-      .quick button.primary { margin-top: 0; width: 100%; padding: 0.7rem; font-weight: 600; color: #fff; border: 0; border-radius: 0.5rem; background: linear-gradient(135deg, #2563eb, #7c3aed); }
+      .quick { margin: 1rem 0 1.25rem; padding: 1rem; border-radius: 0.6rem; background: color-mix(in oklch, var(--site-primary) 7%, white); border: 1px solid color-mix(in oklch, var(--site-primary) 25%, white); }
+      .quick button.primary { margin-top: 0; width: 100%; padding: 0.7rem; font-weight: 600; color: var(--site-primary-foreground); border: 0; border-radius: 0.5rem; background: var(--site-primary); transition: background-color 150ms, box-shadow 150ms; }
+      .quick button.primary:hover { background: color-mix(in oklch, var(--site-primary) 88%, #0f172a); }
+      .quick button.primary:focus-visible { outline: 2px solid var(--site-ring); outline-offset: 2px; }
+      #save { color: var(--site-primary-foreground); background: var(--site-primary); border: 0; border-radius: 0.5rem; }
+      #save:hover { background: color-mix(in oklch, var(--site-primary) 88%, #0f172a); }
+      #save:focus-visible { outline: 2px solid var(--site-ring); outline-offset: 2px; }
       .quick .hint { margin: 0.5rem 0 0; }
       .quick .hint.error { color: #b45309; }
       select { width: 100%; padding: 0.5rem; font: inherit; }

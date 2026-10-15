@@ -1595,11 +1595,20 @@ export function registerTools(server: McpServer, policy?: Policy, accessGuard: t
     server.registerTool(
       d.name,
       { description: d.description, inputSchema: d.inputSchema },
-      async (args: Record<string, unknown>, extra?: { _meta?: unknown }) => {
+      async (args, extra) => {
         noteMcpModel(modelFromMeta(extra?._meta));
-        const accessError = await accessGuard(server.server, resolveDataDir());
+        let verifiedNow = false;
+        const accessError = await accessGuard(server.server, resolveDataDir(), {
+          signal: extra.signal,
+          requestId: extra.requestId,
+          progressToken: extra._meta?.progressToken,
+          sendNotification: extra.sendNotification,
+          onVerified: () => { verifiedNow = true; },
+        });
         if (accessError) return accessError;
-        return dispatchToolCall(d.name, args);
+        const result = await dispatchToolCall(d.name, args);
+        if (verifiedNow) result.content.unshift({ type: 'text', text: 'Email verified. MCP Browser Extension access is active.' });
+        return result;
       },
     );
     registered.push(d.name);

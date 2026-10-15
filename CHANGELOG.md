@@ -1,3 +1,15 @@
+## 0.9.25 - 2026-10-15
+
+Clear email verification feedback and consistent extension controls.
+
+- fix: keep the original browser tool waiting for email verification, report
+  progress and completion, and resume its action once access is confirmed.
+- fix: reuse pending sign-in links across retries and distinguish cancellation,
+  expired links, revoked access, and temporary service outages.
+- style: use the website's blue controls in Settings and the toolbar popup,
+  with matching hover and keyboard focus states.
+- docs: refresh Store setup instructions and website links.
+
 ## 0.9.24 - 2026-10-15
 
 Email-verified access, freehand drawing, and extension polish.
