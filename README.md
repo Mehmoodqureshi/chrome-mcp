@@ -140,6 +140,15 @@ By default everything is **deny-all** (no domains, no eval, no mutations). Grant
 exactly what you need with `--allow-domain <glob>` (repeatable), `--enable-mutations`,
 `--enable-downloads`, `--enable-uploads`, `--unsafe-enable-eval`, or `--unsafe-all-domains`.
 
+Email verification is on by default. For a trusted, local unattended setup, you
+can opt out with `--no-email-verification` (or set
+`MCP_BROWSER_EXTENSION_EMAIL_VERIFICATION=0`). This skips the email prompt and
+the Firebase access service, so no email or device grant is sent there. The
+local MCP client can then use the browser within the configured domain and
+capability policy without an account check. Treat every process that can launch
+or reach this local server as trusted. This option is rejected with `--tunnel`
+and does not turn off telemetry or the npm update check.
+
 > `--enable-uploads` permits `upload_file` (setting local file(s) on a page's file
 > `<input>`). It is **off by default** because sending local files to a page is an
 > exfiltration risk; it is also gated by the destination-domain allowlist. Pair it

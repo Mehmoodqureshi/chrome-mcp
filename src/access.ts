@@ -207,6 +207,9 @@ export async function requireAccess(server: Server, dataDir: string, request: Ac
   return outcome ? result(outcome.message) : null;
 }
 
+/** Explicit local-only opt-out; the CLI rejects it when a public tunnel is enabled. */
+export const bypassEmailVerification: typeof requireAccess = async () => null;
+
 async function check(server: Server, dataDir: string, request: AccessRequest): Promise<AccessCheck> {
   const state = loadOrCreate(dataDir);
   try {

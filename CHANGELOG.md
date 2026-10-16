@@ -1,3 +1,15 @@
+## 0.9.28 - 2026-10-17
+
+Run trusted local browser automation without an email prompt.
+
+- feat: allow trusted local and unattended MCP clients to skip email
+  verification with `--no-email-verification` or
+  `MCP_BROWSER_EXTENSION_EMAIL_VERIFICATION=0`; public tunnels reject this mode.
+- fix: keep the browser allowlist and capability checks active when email
+  verification is disabled, and make the server explain its local trust mode.
+- docs: explain what the local verification opt-out disables and the trust
+  implications.
+
 ## 0.9.27 - 2026-10-15
 
 Link extraction works with the default safety settings.

@@ -48,6 +48,8 @@ export interface CliConfig {
   persistToken: boolean;
   /** `--no-telemetry`: send no anonymous usage statistics (see src/telemetry.ts). */
   noTelemetry: boolean;
+  /** `--no-email-verification`: bypass the hosted access gate for trusted local use. */
+  noEmailVerification: boolean;
   /** `--no-site-grants`: the allowlist is exactly what the flags say; the
    *  extension's Options page cannot add sites at runtime. */
   noSiteGrants: boolean;
@@ -140,6 +142,9 @@ export function parseArgs(argv: string[]): CliConfig {
   let printPairing = false;
   let persistToken = false;
   let noTelemetry = false;
+  let noEmailVerification = ['0', 'false', 'off'].includes(
+    (runtimeEnv('EMAIL_VERIFICATION') ?? '').toLowerCase(),
+  );
   let noSiteGrants = false;
   let noAutoUpdate = false;
   let noNativeHost = false;
@@ -252,6 +257,9 @@ export function parseArgs(argv: string[]): CliConfig {
       case '--no-telemetry':
         noTelemetry = true;
         break;
+      case '--no-email-verification':
+        noEmailVerification = true;
+        break;
       case '--no-site-grants':
         noSiteGrants = true;
         break;
@@ -295,6 +303,12 @@ export function parseArgs(argv: string[]): CliConfig {
   cdpEndpoint = undefined;
   prefer = 'extension';
 
+  // The local verification bypass is intended for trusted processes on this
+  // machine. Do not expose it through a public Cloudflare tunnel.
+  if (noEmailVerification && tunnel) {
+    throw new Error('--no-email-verification cannot be used with --tunnel');
+  }
+
   // File first, then flags win.
   const policy = resolvePolicy({ ...policyFile, ...policyFlags });
 
@@ -335,6 +349,7 @@ export function parseArgs(argv: string[]): CliConfig {
     printPairing,
     persistToken,
     noTelemetry,
+    noEmailVerification,
     noSiteGrants,
     noAutoUpdate,
     noNativeHost,
@@ -441,6 +456,11 @@ Connection:
                          MCP_BROWSER_EXTENSION_TELEMETRY=0 or DO_NOT_TRACK=1. Only counts are
                          ever sent (version, OS, tool calls, error codes) — never
                          URLs, page content or arguments.
+  --no-email-verification  Skip the hosted email/device access gate for trusted local use.
+                         Email and device data are not sent to the access service.
+                         Same as MCP_BROWSER_EXTENSION_EMAIL_VERIFICATION=0.
+                         Cannot be combined with --tunnel; the domain allowlist,
+                         deny-all defaults, and other safety gates still apply.
 
 Backend:
   This build is EXTENSION-ONLY — it drives ONLY your real Chrome via the paired

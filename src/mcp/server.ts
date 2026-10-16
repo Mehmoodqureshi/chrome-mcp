@@ -12,7 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { logErr } from './log';
 import { registerTools } from './tools';
-import { requireAccess } from '../access';
+import { bypassEmailVerification, requireAccess } from '../access';
 import { noteMcpInitialize } from '../telemetry';
 import type { Policy } from '../security/policy';
 
@@ -39,6 +39,12 @@ export const SERVER_INSTRUCTIONS =
   "Work in your own tab: tab_new opens one in the background, and calls without a tabId go to it, never to the tab the user is on. " +
   "To act on the user's current page, pass its tabId from tabs_list.";
 
+const LOCAL_BYPASS_INSTRUCTIONS =
+  'Email verification is disabled by the local operator for this server. Only trusted local MCP clients should connect; the browser-domain allowlist and other capability safety gates remain active. ' +
+  'Start with chrome_status. If it reports no paired browser (or any tool fails with NO_BACKEND), give the user the steps in its `setup` field. ' +
+  'If a tool fails with POLICY_DENIED because a site is not allowed, ask the user to allow it from the extension\'s toolbar icon. ' +
+  "Work in your own tab: tab_new opens one in the background. To act on the user's current page, pass its tabId from tabs_list.";
+
 /** Default version reported when no explicit version is passed in (legacy callers/tests). */
 const DEFAULT_VERSION = SERVER_VERSION;
 
@@ -56,7 +62,10 @@ let transport: StdioServerTransport | null = null;
 export function createServer(version: string = DEFAULT_VERSION, policy?: Policy, accessGuard: typeof requireAccess = requireAccess): McpServer {
   const srv = new McpServer(
     { name: SERVER_NAME, version },
-    { capabilities: { tools: {}, logging: {} }, instructions: SERVER_INSTRUCTIONS },
+    {
+      capabilities: { tools: {}, logging: {} },
+      instructions: accessGuard === bypassEmailVerification ? LOCAL_BYPASS_INSTRUCTIONS : SERVER_INSTRUCTIONS,
+    },
   );
   const advertised = registerTools(srv, policy, accessGuard);
   watchInitialize(srv, advertised);
@@ -89,12 +98,12 @@ function watchInitialize(srv: McpServer, advertised: string[]): void {
 }
 
 /** Start over stdio. Idempotent. */
-export async function startMcpServer(version: string = DEFAULT_VERSION, policy?: Policy): Promise<void> {
+export async function startMcpServer(version: string = DEFAULT_VERSION, policy?: Policy, accessGuard: typeof requireAccess = requireAccess): Promise<void> {
   if (server) {
     logErr('startMcpServer called but already running; ignoring.');
     return;
   }
-  const srv = createServer(version, policy);
+  const srv = createServer(version, policy, accessGuard);
   const tx = new StdioServerTransport();
   try {
     await srv.connect(tx);

@@ -59,6 +59,12 @@ if they want the agent to click, type, and navigate (almost always yes). Add
 `--persist-token` so the pairing survives restarts. Leave every other gate off
 unless they ask.
 
+Email verification stays enabled by default. Only if the human asks for a
+trusted local or unattended setup, add `--no-email-verification`. It skips the
+email prompt and Firebase access check, while the domain allowlist and other
+capability gates still apply. Do not combine it with `--tunnel` or use it when
+untrusted clients can reach the local server.
+
 **Claude Code** (registers for every project on this machine):
 
 ```
@@ -128,6 +134,10 @@ link automatically and reports the result to the waiting tool call. On success,
 the result includes **Email verified** and the requested browser action continues.
 The user does not need to send another chat message. Progress updates and status
 notifications are also sent to clients that display them.
+
+If the human explicitly configured `--no-email-verification`, there is no email
+step; continue to pairing. This option is intended only for trusted local
+clients and cannot be combined with a public tunnel.
 
 Each verification wait lasts up to 45 seconds. If the result says
 `ACCESS_PENDING`, call `chrome_status` again to continue waiting on the same

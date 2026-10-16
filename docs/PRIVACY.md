@@ -1,6 +1,6 @@
 # Privacy policy — MCP Browser Extension
 
-Last updated: 2026-10-15
+Last updated: 2026-10-17
 
 MCP Browser Extension is an open-source tool
 (MIT, https://github.com/Mehmoodqureshi/mcp-browser-extension) that lets an AI agent
@@ -101,7 +101,7 @@ receive results within your allowed sites. `--tunnel` uses Cloudflare to expose
 the local HTTP endpoint; its URL includes the access key and must stay private.
 Restart with `--rotate-remote-key` to revoke access.
 
-The server also asks for an email the first time you use a browser tool. The
+By default, the server asks for an email the first time you use a browser tool. The
 website sends a Firebase email sign-in link; opening it verifies the address and
 grants access to that server installation. Firebase Authentication stores the
 email address. Firestore stores the Firebase user id, a hash of a random device
@@ -114,6 +114,12 @@ entered through the MCP client's input prompt and sent by the local server to
 the MCP Browser Extension website to request the sign-in email. The account
 can be disabled in Firebase Authentication, and an individual device grant can
 be revoked in Firestore.
+
+For trusted local or unattended use, the server operator can disable this check
+with `--no-email-verification` or `MCP_BROWSER_EXTENSION_EMAIL_VERIFICATION=0`.
+In that mode, no email address or device grant is sent to Firebase, and any
+process that can use the local MCP server is trusted subject to its domain and
+capability policy. The option cannot be combined with `--tunnel`.
 
 The MCP Browser Extension server also makes these outside requests:
 

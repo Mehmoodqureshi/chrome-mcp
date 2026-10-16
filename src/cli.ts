@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { HELP_TEXT, parseArgs, resolveDataDir } from './config';
+import { bypassEmailVerification, requireAccess } from './access';
 import { type GcOptions, gcTasks, listTasks } from './bridge/tasks';
 import { configureManager } from './executor/manager';
 import { createSelector } from './executor/select';
@@ -239,6 +240,8 @@ async function main(): Promise<void> {
   // to sit after startup.
   setLogLevel(cfg.logLevel);
 
+  const accessGuard = cfg.noEmailVerification ? bypassEmailVerification : requireAccess;
+
   if (cfg.showHelp) {
     process.stdout.write(HELP_TEXT);
     // The catalog is what `--tools` takes, so `--help` has to name it.
@@ -264,6 +267,10 @@ async function main(): Promise<void> {
     log: (m) => logErr(m),
   });
   if (handedOff !== null) process.exit(handedOff);
+
+  if (cfg.noEmailVerification) {
+    logErr('SECURITY: hosted email verification is disabled; only trusted local MCP clients should connect. The browser-domain allowlist and other safety gates remain active.');
+  }
 
   // Before the bridge binds a port or writes a handshake: a typo'd `--tools`
   // name should fail as a plain startup error, not leave a half-started server.
@@ -475,7 +482,7 @@ async function main(): Promise<void> {
 
   // The resolved policy shapes the advertised catalog: a capability that is off
   // means its tools are never described to the model.
-  await startMcpServer(version(), cfg.policy);
+  await startMcpServer(version(), cfg.policy, accessGuard);
 }
 
 /**
@@ -489,7 +496,14 @@ async function serveRemote(
 ): Promise<void> {
   const key = resolveRemoteKey(dataDir, { rotate: cfg.rotateRemoteKey });
   if (cfg.rotateRemoteKey) logErr('remote key rotated: every earlier connector URL stops working.');
-  const http = await startHttpMcp({ port: cfg.httpPort, key, version: version(), policy: cfg.policy, log: (m) => logErr(m) });
+  const http = await startHttpMcp({
+    port: cfg.httpPort,
+    key,
+    version: version(),
+    policy: cfg.policy,
+    log: (m) => logErr(m),
+    accessGuard: cfg.noEmailVerification ? bypassEmailVerification : undefined,
+  });
   let tunnel: Tunnel | null = null;
   let shuttingDown = false;
   const shutdown = (): void => {
