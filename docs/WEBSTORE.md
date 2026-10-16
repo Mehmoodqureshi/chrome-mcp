@@ -60,6 +60,10 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/mcp-browser-extensio
 - Icon 128x128: `extension/icons/icon128.png` (uploaded automatically from the manifest).
 - Screenshots, at least one, 1280x800 or 640x400 JPEG or 24-bit PNG without alpha: capture the current Settings page and its connection and proxy controls. Use actual product screens with credentials hidden.
 - Small promo tile 440x280 (required).
+- Marquee promo tile 1400x560 (optional). Use the current product name and
+  `mcp-browser-extension` command in both promotional images.
+- Promo video: https://www.youtube.com/watch?v=1Jx6TsKKF-I
+  (the owner's published form-filling demonstration, with embedding available).
 
 ## 4. Privacy tab
 
@@ -88,11 +92,22 @@ Source, docs, and issues: https://github.com/Mehmoodqureshi/mcp-browser-extensio
 
 **Privacy policy URL:** https://mcp-browser-extension.com/docs/privacy
 
-## 5. Distribution
+## 5. Reviewer test instructions
 
-Start with **Unlisted**: anyone with the link can install, nothing shows in search, and the review is the same. Switch to Public once a version has passed review.
+The extension uses email-link verification rather than a shared test password.
+Leave the username and password fields blank. Paste the following into
+**Additional instructions** (500 characters maximum):
 
-## 6. Known difference from the unpacked install
+```text
+Use an MCP client with interactive input prompts. Register: npx -y mcp-browser-extension@latest --allow-domain example.com --enable-mutations --persist-token. Call chrome_status, enter your own email and open its sign-in link. If ACCESS_PENDING, call chrome_status again. Install this extension, open Settings and click Connect if unpaired. Ask the agent to open https://example.com and read its heading. No shared password is needed. Setup: https://mcp-browser-extension.com/docs/quickstart
+```
+
+## 6. Distribution
+
+The existing listing is **Public**, free of charge, and available in all regions.
+Keep those settings when updating its branding or setup instructions.
+
+## 7. Known difference from the unpacked install
 
 A store-installed extension lives in Chrome's own profile folder, which the
 server cannot write into, so the zero-paste pairing that works for

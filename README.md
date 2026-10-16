@@ -82,8 +82,8 @@ or load from the folder the server unpacks.
 ### Up and running in one paste
 
 Hand this to your AI agent (Claude Code, Cursor, Windsurf, anything MCP) and it
-installs the server, wires it into the client, and walks you through the two
-steps that must happen inside Chrome:
+installs the server, wires it into the client, and walks you through installing
+the extension, verifying your email, and pairing Chrome:
 
 ```text
 Set up MCP Browser Extension on this machine by fetching and following
@@ -162,7 +162,19 @@ explicitly (and is never written to disk).
 One click, no Developer mode, and **Chrome keeps it updated for you**. This is
 the way to install it.
 
-**3. Click Connect.** A fresh install opens the extension's Settings with a
+**3. Verify your email.** In your MCP client, ask the agent to call
+`chrome_status`. On this first browser tool call, the client shows an email
+prompt. Enter an address you can access, then open the sign-in link sent to
+that address. The waiting tool reports **Email verified** and continues.
+
+If the tool returns `ACCESS_PENDING`, ask the agent to call `chrome_status`
+again to keep waiting on the same link. You do not need another email or a
+verification code. The MCP client must support interactive input prompts
+(MCP elicitation). If no prompt appears, enable interactive prompts in your
+client and retry; installing the extension alone does not activate access.
+
+**4. Click Connect if Chrome is not already paired.** A fresh install opens the
+extension's Settings with a
 **Connect** button (it is in the toolbar popup too). Click it, allow the one
 permission Chrome asks for, and you are paired: the server registers a small
 helper with Chrome every time it starts, and the button asks it for the port and
